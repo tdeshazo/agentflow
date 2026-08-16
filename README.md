@@ -64,6 +64,8 @@ Read [`docs/agentflow-v1alpha1.md`](docs/agentflow-v1alpha1.md) for the field se
 
 See [`ROADMAP.md`](ROADMAP.md) for the planned progression from the current `v1alpha1` foundation to a GitHub-Actions-like YAML authoring model, broader Go runtime support, explicit DAG execution, typed artifacts, extensibility, security, observability, composition, and `v1beta1` conformance.
 
+The project's minimum viable product is **self-hosting**: AgentFlow plus its Go interpreter must be capable of orchestrating a real, validated, resumable change to `agentflow-spec` itself without a bespoke shell script owning phase advancement, repair, checkpointing, or completion.
+
 ## Go interpreter
 
 The repository now includes an experimental interpreter for the executable core of `v1alpha1`. It keeps durable orchestration state in Git objects and namespaced refs rather than a separate database, and exposes AI execution through the public [`provider.Provider`](provider/provider.go) interface. The initial adapter uses non-interactive Codex CLI execution.
