@@ -92,21 +92,21 @@ type Tool struct {
 }
 
 type Check struct {
-	ID                     string   `yaml:"id"`
-	When                   string   `yaml:"when"`
-	Type                   string   `yaml:"type"`
-	Path                   string   `yaml:"path"`
-	Text                   string   `yaml:"text"`
-	Paths                  []string `yaml:"paths"`
-	Commands               []string `yaml:"commands"`
-	Object                 string   `yaml:"object"`
-	Base                   string   `yaml:"base"`
-	Ancestor               string   `yaml:"ancestor"`
-	Descendant             string   `yaml:"descendant"`
-	Expected               string   `yaml:"expected"`
-	RequireAncestorOfHead  bool     `yaml:"require_ancestor_of_head"`
-	RequireBranch          string   `yaml:"require_branch"`
-	Policy                 string   `yaml:"policy"`
+	ID                    string   `yaml:"id"`
+	When                  string   `yaml:"when"`
+	Type                  string   `yaml:"type"`
+	Path                  string   `yaml:"path"`
+	Text                  string   `yaml:"text"`
+	Paths                 []string `yaml:"paths"`
+	Commands              []string `yaml:"commands"`
+	Object                string   `yaml:"object"`
+	Base                  string   `yaml:"base"`
+	Ancestor              string   `yaml:"ancestor"`
+	Descendant            string   `yaml:"descendant"`
+	Expected              string   `yaml:"expected"`
+	RequireAncestorOfHead bool     `yaml:"require_ancestor_of_head"`
+	RequireBranch         string   `yaml:"require_branch"`
+	Policy                string   `yaml:"policy"`
 }
 
 type ProgressSpec struct {

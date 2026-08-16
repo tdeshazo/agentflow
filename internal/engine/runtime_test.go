@@ -131,7 +131,7 @@ func TestRunCheckGitLineage(t *testing.T) {
 	w := &workflow.Workflow{
 		Metadata: workflow.Metadata{Name: "lineage-check"},
 		Spec: workflow.Spec{
-			Workspace: workflow.WorkspaceSpec{Root: repo},
+			Workspace:  workflow.WorkspaceSpec{Root: repo},
 			Parameters: map[string]workflow.Parameter{"repo_root": {Type: "path", Default: repo}},
 		},
 	}
