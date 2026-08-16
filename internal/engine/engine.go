@@ -331,6 +331,35 @@ func (e *Engine) runCheck(c workflow.Check) error {
 		if !e.Repo.IsAncestor(a, d) {
 			return fmt.Errorf("%s is not ancestor of %s", a, d)
 		}
+	case "git-lineage":
+		base, err := x.Expand(c.Base)
+		if err != nil {
+			return err
+		}
+		if base == "" {
+			base, err = x.Expand(c.Ancestor)
+			if err != nil {
+				return err
+			}
+		}
+		if c.RequireAncestorOfHead && base != "" {
+			if !e.Repo.IsAncestor(base, "HEAD") {
+				return fmt.Errorf("%s is not ancestor of HEAD", base)
+			}
+		}
+		if c.RequireBranch != "" {
+			want, err := x.Expand(c.RequireBranch)
+			if err != nil {
+				return err
+			}
+			got, err := e.Repo.Branch()
+			if err != nil {
+				return err
+			}
+			if got != want {
+				return fmt.Errorf("branch %q != %q", got, want)
+			}
+		}
 	case "git-current-branch-equals":
 		want, err := x.Expand(c.Expected)
 		if err != nil {

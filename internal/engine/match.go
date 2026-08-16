@@ -19,6 +19,7 @@ func globMatch(pattern, name string) bool {
 			} else {
 				b.WriteString("[^/]*")
 				i++
+			}
 		case '?':
 			b.WriteString("[^/]")
 			i++

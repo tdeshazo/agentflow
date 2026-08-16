@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 	"github.com/tdeshazo/agentflow-spec/provider"
 )
@@ -97,5 +99,49 @@ func TestRunPersistsCompletionInGitRefs(t *testing.T) {
 	}
 	if p.calls != 1 {
 		t.Fatalf("provider reran after persisted completion; calls = %d", p.calls)
+	}
+}
+
+func TestRunCheckGitLineage(t *testing.T) {
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, b)
+		}
+		return string(b)
+	}
+	git("init", "-q")
+	git("config", "user.name", "AgentFlow Test")
+	git("config", "user.email", "agentflow@example.invalid")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "README.md")
+	git("commit", "-qm", "base")
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-qb", "feature")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "-am", "feature")
+
+	w := &workflow.Workflow{
+		Metadata: workflow.Metadata{Name: "lineage-check"},
+		Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{Root: repo},
+			Parameters: map[string]workflow.Parameter{"repo_root": {Type: "path", Default: repo}},
+		},
+	}
+	e := &Engine{Workflow: w, Repo: gitstate.Repo{Root: repo}, Parameters: map[string]any{"repo_root": repo}}
+	if err := e.runCheck(workflow.Check{
+		Type:                  "git-lineage",
+		Base:                  strings.TrimSpace(base),
+		RequireAncestorOfHead: true,
+		RequireBranch:         "feature",
+	}); err != nil {
+		t.Fatalf("git-lineage check failed: %v", err)
 	}
 }
