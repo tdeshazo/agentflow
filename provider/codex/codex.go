@@ -65,6 +65,9 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 
 func buildArgs(req provider.Request, lastMessage string) []string {
 	args := []string{"exec", "--cd", req.Workspace}
+	// Codex loads user configuration by default. Override its approval setting so
+	// the workflow's only supported policy remains authoritative for this run.
+	args = append(args, "-c", `approval_policy="never"`)
 	if req.Sandbox != "" {
 		args = append(args, "--sandbox", req.Sandbox)
 	}

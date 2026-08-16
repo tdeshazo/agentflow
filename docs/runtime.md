@@ -168,9 +168,10 @@ unavailable values fail closed.
 
 The Codex adapter uses headless `codex exec`. It supports the workflow's `never`
 approval policy and fails closed for other approval policies rather than silently
-ignoring them. The adapter passes the declared model, reasoning effort, sandbox,
-color, and ephemeral execution settings and captures the final message using
-`--output-last-message`.
+ignoring them. It explicitly passes `-c approval_policy="never"`, which overrides
+any user configuration for that process, as well as the declared model, reasoning
+effort, sandbox, color, and ephemeral execution settings. It captures the final
+message using `--output-last-message`.
 
 ## Current limits
 
