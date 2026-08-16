@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -238,6 +239,7 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		if !strings.Contains(out.String(), "state: uninitialized") {
 			t.Fatalf("status = %s", out.String())
 		}
+		assertJSONStatus(t, e, "uninitialized")
 	})
 
 	t.Run("active", func(t *testing.T) {
@@ -255,6 +257,10 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		if !strings.Contains(out.String(), "state: active") || !strings.Contains(out.String(), "active_phase: implement") {
 			t.Fatalf("status = %s", out.String())
 		}
+		status := assertJSONStatus(t, e, "active")
+		if status.ActivePhase != "implement" || status.PhaseStartCommit == "" {
+			t.Fatalf("active JSON status = %+v", status)
+		}
 	})
 
 	t.Run("validation failed recoverable", func(t *testing.T) {
@@ -271,11 +277,16 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		if !strings.Contains(out.String(), "state: validation-failed/recoverable") || !strings.Contains(out.String(), "validation_failed: implementation-gate") {
 			t.Fatalf("status = %s", out.String())
 		}
+		status := assertJSONStatus(t, e, "validation-failed/recoverable")
+		if status.FailureKind != string(PhaseFailureValidation) || status.ValidationFailed != "implementation-gate" {
+			t.Fatalf("validation JSON status = %+v", status)
+		}
 	})
 
 	t.Run("human gated", func(t *testing.T) {
 		repo := newSelfHostingRepo(t)
-		e := newSelfHostingEngine(t, selfHostingWorkflow(t, repo), &selfHostingFakeProvider{})
+		w := selfHostingWorkflow(t, repo)
+		e := newSelfHostingEngine(t, w, &selfHostingFakeProvider{})
 		e.In = strings.NewReader("")
 		if err := e.Run(context.Background()); err == nil {
 			t.Fatal("human gate unexpectedly accepted empty input")
@@ -287,6 +298,21 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "state: human-gated") || !strings.Contains(out.String(), "human_gate: self-host-review") {
 			t.Fatalf("status = %s", out.String())
+		}
+		status := assertJSONStatus(t, e, "human-gated")
+		if status.HumanGate != "self-host-review" {
+			t.Fatalf("human-gated JSON status = %+v", status)
+		}
+
+		// State-only inspection is the CLI path used by self-hosting operators;
+		// it must identify a parameter-free pending gate without the task.
+		stateOnly, err := New(w, map[string]provider.Provider{"fake": &selfHostingFakeProvider{}}, Options{RepoRoot: repo, StateOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		status = assertJSONStatus(t, stateOnly, "human-gated")
+		if status.HumanGate != "self-host-review" {
+			t.Fatalf("state-only human-gated JSON status = %+v", status)
 		}
 	})
 
@@ -308,10 +334,34 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		if !strings.Contains(out.String(), "state: completed") {
 			t.Fatalf("status = %s", out.String())
 		}
+		status := assertJSONStatus(t, e, "completed")
+		if !status.Complete || status.CompleteCommit == "" {
+			t.Fatalf("completed JSON status = %+v", status)
+		}
 		if err := newSelfHostingEngine(t, w, p).Run(context.Background()); err != nil || len(p.calls) != calls {
 			t.Fatalf("completion was not idempotent: err=%v calls=%v", err, p.calls)
 		}
 	})
+}
+
+func assertJSONStatus(t *testing.T, e *Engine, wantState string) StatusSnapshot {
+	t.Helper()
+	var out bytes.Buffer
+	e.Out = &out
+	if err := e.StatusJSON(); err != nil {
+		t.Fatal(err)
+	}
+	var status StatusSnapshot
+	if err := json.Unmarshal(out.Bytes(), &status); err != nil {
+		t.Fatalf("status JSON = %q: %v", out.String(), err)
+	}
+	if status.SchemaVersion != 1 || status.State != wantState {
+		t.Fatalf("status JSON = %+v, want schema/state 1/%q", status, wantState)
+	}
+	if strings.Contains(out.String(), "exercise the deterministic") || strings.Contains(out.String(), "gpt-5") {
+		t.Fatalf("status JSON exposed run input: %s", out.String())
+	}
+	return status
 }
 
 func selfHostingWorkflow(t *testing.T, repo string) *workflow.Workflow {

@@ -38,22 +38,30 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) < 2 {
+	return runArgs(os.Args[1:])
+}
+
+func runArgs(args []string) error {
+	if len(args) == 0 {
 		return usage()
 	}
-	cmd := os.Args[1]
+	cmd := args[0]
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	file := fs.String("f", "", "workflow YAML file")
 	repo := fs.String("C", "", "repository root override")
 	codexBin := fs.String("codex-bin", "codex", "Codex CLI binary")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON (status only)")
 	var overrides sets
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
-	if err := fs.Parse(os.Args[2:]); err != nil {
+	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if *file == "" {
 		return fmt.Errorf("-f workflow YAML is required")
+	}
+	if *jsonOutput && cmd != "status" {
+		return fmt.Errorf("--json is only supported with status")
 	}
 	result := workflow.ValidateFile(*file)
 	if cmd == "validate" {
@@ -91,6 +99,9 @@ func run() error {
 	case "run":
 		return e.Run(ctx)
 	case "status":
+		if *jsonOutput {
+			return e.StatusJSON()
+		}
 		return e.Status()
 	case "reset":
 		return e.Reset()
@@ -100,7 +111,7 @@ func run() error {
 }
 
 func usage() error {
-	fmt.Fprintln(os.Stderr, "usage: agentflow <validate|run|status|reset> -f workflow.yaml [-C repo] [--set key=value]")
+	fmt.Fprintln(os.Stderr, "usage: agentflow <validate|run|status|reset> -f workflow.yaml [-C repo] [--json] [--set key=value]")
 	return fmt.Errorf("invalid command")
 }
 

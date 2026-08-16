@@ -21,6 +21,7 @@ State can be inspected or reset independently:
 
 ```sh
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
+go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo --json
 go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
 ```
 
@@ -97,6 +98,13 @@ workflow. Stale completion markers are not reported as completed when their
 commit is no longer an ancestor of `HEAD`. Status only needs the workspace
 location; it does not require the original task, model values, or other run
 parameters.
+
+Pass `--json` for one machine-readable object instead of the default text. It
+contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
+`complete`, plus available `base`, `branch`, phase, gate, and commit context.
+Validation failure output is represented by its non-secret validation name and
+failure kind; prompts, reasoning, parameter values, environment values, and
+command output are not included.
 
 `reset` is an explicit state operation. It removes only this workflow's
 namespaced records and preserves repository history and source changes; when

@@ -67,11 +67,21 @@ go run ./cmd/agentflow status \
   -C .
 ```
 
+Automation can request the same durable view as one JSON object:
+
+```sh
+go run ./cmd/agentflow status --json \
+  -f examples/develop-agentflow.agent-workflow.yaml \
+  -C .
+```
+
 It reports a durable state such as `uninitialized`, `ready`, `active`,
 `validation-failed/recoverable`, `safety-failed/terminal`, `human-gated`, or
 `completed`, along with the saved base/branch, active phase, failed validation,
-and human gate when present. Status does not require the original task or model
-parameters.
+commit, and human-gate context when present. The JSON form keeps this context
+machine-readable and excludes prompts, reasoning, task/secret parameters,
+environment values, and command output. Status does not require the original
+task or model parameters.
 
 ## Resume
 
