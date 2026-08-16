@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
@@ -26,8 +27,10 @@ type Engine struct {
 	In         io.Reader
 	Out        io.Writer
 
-	lastFailure string
-	phase       *workflow.Phase
+	lastFailure   string
+	phase         *workflow.Phase
+	invocationID  string
+	tempDirectory string
 }
 
 type ActivePhase struct {
@@ -43,6 +46,7 @@ type ActivePhase struct {
 type IntegrityBaseline map[string]string
 
 var errFlowStoppedSuccessfully = errors.New("workflow stopped successfully")
+var invocationSequence uint64
 
 type Options struct {
 	RepoRoot  string
@@ -71,7 +75,25 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	return &Engine{Workflow: w, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout}, nil
+	e := &Engine{Workflow: w, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1))}
+	if w.Spec.Temp.Directory != "" {
+		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
+		if err != nil {
+			return nil, err
+		}
+		pattern = strings.ReplaceAll(pattern, "${TMPDIR:-/tmp}", os.TempDir())
+		parent, prefix := filepath.Dir(pattern), filepath.Base(pattern)
+		prefix = strings.TrimRight(prefix, "X")
+		if prefix == "" {
+			prefix = "agentflow-"
+		}
+		directory, err := os.MkdirTemp(parent, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("create temp directory: %w", err)
+		}
+		e.tempDirectory = directory
+	}
+	return e, nil
 }
 
 func resolveParameters(w *workflow.Workflow, overrides map[string]string) (map[string]any, error) {
@@ -182,6 +204,9 @@ func coerce(kind string, v any) (any, error) {
 }
 
 func (e *Engine) Run(ctx context.Context) error {
+	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
+		defer os.RemoveAll(e.tempDirectory)
+	}
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
@@ -204,7 +229,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		return err
 	}
 
-	complete, completeSHA, err := e.validCommitMarker("complete")
+	complete, completeSHA, err := e.validCommitMarker(e.workflowCompleteMarker())
 	if err != nil {
 		return err
 	}
@@ -213,7 +238,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		return nil
 	}
 	var active ActivePhase
-	activeExists, err := e.Store.GetJSON("active", &active)
+	activeExists, err := e.Store.GetJSON(e.activeRecord(), &active)
 	if err != nil {
 		return err
 	}
@@ -238,6 +263,31 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (e *Engine) workflowCompleteMarker() string {
+	if e.Workflow.Spec.State.Records.WorkflowComplete != "" {
+		return e.Workflow.Spec.State.Records.WorkflowComplete
+	}
+	return "complete"
+}
+
+func configuredRecord(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (e *Engine) baseRecord() string {
+	return configuredRecord(e.Workflow.Spec.State.Records.BaseCommit, "base")
+}
+func (e *Engine) branchRecord() string {
+	return configuredRecord(e.Workflow.Spec.State.Records.Branch, "branch")
+}
+func (e *Engine) activeRecord() string {
+	return configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active")
+}
+func (e *Engine) integrityRecord() string { return "integrity" }
 
 func (e *Engine) resumeEnabled() bool {
 	if e.Workflow.Spec.State.Resume.Enabled == nil {
@@ -290,7 +340,7 @@ func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error 
 		}
 	}
 	if step.Human != "" {
-		if err := e.runHuman(step.Human); err != nil {
+		if err := e.runHuman(ctx, step.Human); err != nil {
 			return err
 		}
 	}
@@ -321,29 +371,31 @@ func (e *Engine) Reset() error {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
-	dirty, err := e.implementationDirtyFiles()
-	if err != nil {
-		return err
-	}
-	if len(dirty) != 0 {
-		return fmt.Errorf("reset requires clean implementation workspace; dirty: %s", strings.Join(dirty, ", "))
+	if e.Workflow.Spec.State.Reset.RequireCleanWorkspace || e.Workflow.Spec.State.Reset.RequireCleanImplementationWorkspace || e.Workflow.Spec.State.Reset.When != "" {
+		dirty, err := e.implementationDirtyFiles()
+		if err != nil {
+			return err
+		}
+		if len(dirty) != 0 {
+			return fmt.Errorf("reset requires clean implementation workspace; dirty: %s", strings.Join(dirty, ", "))
+		}
 	}
 	return e.Store.Reset()
 }
 
 func (e *Engine) Status() error {
-	base, bok, err := e.Store.Resolve("base")
+	base, bok, err := e.Store.Resolve(e.baseRecord())
 	if err != nil {
 		return err
 	}
-	complete, cok, err := e.Store.Resolve("complete")
+	complete, cok, err := e.Store.Resolve(e.workflowCompleteMarker())
 	if err != nil {
 		return err
 	}
 	var branch string
-	_, _ = e.Store.GetJSON("branch", &branch)
+	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
 	var active ActivePhase
-	aok, _ := e.Store.GetJSON("active", &active)
+	aok, _ := e.Store.GetJSON(e.activeRecord(), &active)
 	fmt.Fprintf(e.Out, "workflow: %s\nrepo: %s\ninitialized: %v\n", e.Workflow.Metadata.Name, e.Repo.Root, bok)
 	if bok {
 		fmt.Fprintf(e.Out, "base: %s\nbranch: %s\n", base, branch)
@@ -499,26 +551,26 @@ func (e *Engine) runCheck(c workflow.Check) error {
 }
 
 func (e *Engine) initializeOrResumeState() error {
-	base, ok, err := e.Store.Resolve("base")
+	base, ok, err := e.Store.Resolve(e.baseRecord())
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return e.initializeState()
 	}
-	if !e.Repo.ObjectExists(base + "^{commit}") {
+	if (e.Workflow.Spec.State.Lineage.RequireBaseCommitExists || e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead || e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead) && !e.Repo.ObjectExists(base+"^{commit}") {
 		return fmt.Errorf("saved base no longer exists: %s", base)
 	}
-	if !e.Repo.IsAncestor(base, "HEAD") {
+	if (e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead || e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead) && !e.Repo.IsAncestor(base, "HEAD") {
 		return fmt.Errorf("HEAD no longer descends from workflow base %s", base)
 	}
 	var branch string
-	branchOK, err := e.Store.GetJSON("branch", &branch)
+	branchOK, err := e.Store.GetJSON(e.branchRecord(), &branch)
 	if err != nil {
 		return err
 	}
 	var integrity IntegrityBaseline
-	integrityOK, err := e.Store.GetJSON("integrity", &integrity)
+	integrityOK, err := e.Store.GetJSON(e.integrityRecord(), &integrity)
 	if err != nil {
 		return err
 	}
@@ -528,43 +580,57 @@ func (e *Engine) initializeOrResumeState() error {
 		}
 		return e.initializeState()
 	}
-	current, err := e.Repo.Branch()
-	if err != nil {
-		return fmt.Errorf("workflow requires its initialized named branch; detached HEAD is not supported")
-	}
-	if current != branch {
-		return fmt.Errorf("current branch %q differs from workflow branch %q", current, branch)
+	if e.Workflow.Spec.State.Lineage.RequireSameNamedBranch || e.Workflow.Spec.State.Resume.RequireSameBranch {
+		current, err := e.Repo.Branch()
+		if err != nil {
+			return fmt.Errorf("workflow requires its initialized named branch; detached HEAD is not supported")
+		}
+		if current != branch {
+			return fmt.Errorf("current branch %q differs from workflow branch %q", current, branch)
+		}
 	}
 	return e.assertIntegrity()
 }
 
 func (e *Engine) initializeState() error {
-	dirty, err := e.implementationDirtyFiles()
-	if err != nil {
-		return err
-	}
-	if len(dirty) > 0 {
-		return fmt.Errorf("first run requires clean implementation workspace: %s", strings.Join(dirty, ", "))
+	if e.Workflow.Spec.State.Initialize.RequireCleanWorkspace || e.Workflow.Spec.State.Initialize.RequireCleanImplementationWorkspace || e.Workflow.Spec.Workspace.Cleanliness.BeforeFirstRun == "required" {
+		dirty, err := e.implementationDirtyFiles()
+		if err != nil {
+			return err
+		}
+		if len(dirty) > 0 {
+			return fmt.Errorf("first run requires clean implementation workspace: %s", strings.Join(dirty, ", "))
+		}
 	}
 	branch, err := e.Repo.Branch()
-	if err != nil || branch == "" {
+	if (e.Workflow.Spec.State.Initialize.RequireNamedBranch || e.Workflow.Spec.State.Lineage.RequireSameNamedBranch) && (err != nil || branch == "") {
 		return fmt.Errorf("workflow requires a named branch")
 	}
 	head, err := e.Repo.Head()
 	if err != nil {
 		return err
 	}
-	if err := e.Store.SetCommit("base", head); err != nil {
+	if err := e.Store.SetCommit(e.baseRecord(), head); err != nil {
 		return err
 	}
-	if err := e.Store.SetJSON("branch", branch); err != nil {
+	if err := e.Store.SetJSON(e.branchRecord(), branch); err != nil {
 		return err
 	}
 	baseline, err := e.computeIntegrity()
 	if err != nil {
 		return err
 	}
-	return e.Store.SetJSON("integrity", baseline)
+	if err := e.Store.SetJSON(e.integrityRecord(), baseline); err != nil {
+		return err
+	}
+	for id, hash := range baseline {
+		if record := e.Workflow.Spec.State.Records.Integrity[id]; record != "" {
+			if err := e.Store.SetJSON(record, hash); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *Engine) resetInterruptedInitialization() error {
@@ -572,8 +638,12 @@ func (e *Engine) resetInterruptedInitialization() error {
 	if err != nil {
 		return err
 	}
+	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true}
+	for _, record := range e.Workflow.Spec.State.Records.Integrity {
+		allowed[record] = true
+	}
 	for _, name := range names {
-		if name != "base" && name != "branch" && name != "integrity" {
+		if !allowed[name] {
 			return fmt.Errorf("workflow state is incomplete and contains execution evidence %q", name)
 		}
 	}
@@ -615,12 +685,12 @@ func (e *Engine) integer(p *workflow.Phase, expression string) (int, error) {
 }
 
 func (e *Engine) contextWithoutProgress(p *workflow.Phase) workflow.Context {
-	base, baseOK, _ := e.Store.Resolve("base")
+	base, baseOK, _ := e.Store.Resolve(e.baseRecord())
 	var branch string
-	_, _ = e.Store.GetJSON("branch", &branch)
-	complete, completeOK, _ := e.Store.Resolve("complete")
+	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
+	complete, completeOK, _ := e.Store.Resolve(e.workflowCompleteMarker())
 	var active ActivePhase
-	activeOK, _ := e.Store.GetJSON("active", &active)
+	activeOK, _ := e.Store.GetJSON(e.activeRecord(), &active)
 	head, _ := e.Repo.Head()
 	state := map[string]any{
 		"initialized":       baseOK,
@@ -635,7 +705,46 @@ func (e *Engine) contextWithoutProgress(p *workflow.Phase) workflow.Context {
 			"unchecked_count_before": active.UncheckedBefore,
 		},
 	}
-	return workflow.Context{Metadata: e.Workflow.Metadata, Parameters: e.Parameters, Paths: e.Workflow.Spec.Paths, State: state, Phase: p, WorkflowFile: e.Workflow.File, FailureLog: e.lastFailure, HeadCommit: head}
+	for name, value := range stateRecordValues(e.Workflow.Spec.State.Records) {
+		if _, reserved := state[name]; !reserved {
+			state[name] = value
+		}
+	}
+	return workflow.Context{Metadata: e.Workflow.Metadata, Parameters: e.Parameters, Paths: e.Workflow.Spec.Paths, State: state, Phase: p, WorkflowFile: e.Workflow.File, FailureLog: e.lastFailure, HeadCommit: head, InvocationID: e.invocationID, TempDirectory: e.tempDirectory}
+}
+
+func stateRecordValues(records workflow.StateRecords) map[string]any {
+	return map[string]any{
+		"base_commit":             records.BaseCommit,
+		"branch":                  records.Branch,
+		"active_phase":            records.ActivePhase,
+		"completed_phase_pattern": records.CompletedPhasePattern,
+		"completed_phases":        records.CompletedPhases,
+		"manual_confirmation":     records.ManualConfirmation,
+		"human_verification":      records.HumanVerification,
+		"workflow_complete":       records.WorkflowComplete,
+	}
+}
+
+func (e *Engine) recordName(template string, p *workflow.Phase) (string, error) {
+	if template == "" {
+		return "", nil
+	}
+	name, err := e.context(p).Expand(template)
+	if err != nil {
+		return "", err
+	}
+	// The state.* record aliases are names, while state.active_phase and
+	// state.workflow_complete are structured runtime values. Resolve the two
+	// structured aliases explicitly when used as marker destinations.
+	trimmed := strings.TrimSpace(template)
+	if trimmed == "{{ state.active_phase }}" {
+		return e.Workflow.Spec.State.Records.ActivePhase, nil
+	}
+	if trimmed == "{{ state.workflow_complete }}" {
+		return e.Workflow.Spec.State.Records.WorkflowComplete, nil
+	}
+	return strings.TrimPrefix(name, "/"), nil
 }
 
 func (e *Engine) resetRequested() (bool, error) {

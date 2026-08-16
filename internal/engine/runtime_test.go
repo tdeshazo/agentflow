@@ -56,12 +56,20 @@ func TestRunPersistsCompletionInGitRefs(t *testing.T) {
 			},
 			Agents: map[string]workflow.Agent{"worker": {Runner: "test"}},
 			Tools: map[string]workflow.Tool{
-				"scope": {Type: "workspace-policy"},
-				"gate":  {Type: "shell", Command: "true"},
+				"scope":      {Type: "workspace-policy"},
+				"gate":       {Type: "shell", Command: "true"},
+				"checkpoint": {Type: "git-checkpoint"},
 			},
 			Validation: map[string]workflow.Validation{
 				"phaseGate": {Steps: []workflow.ToolUse{{Uses: "scope"}, {Uses: "gate"}}},
 			},
+			PhaseDefaults: workflow.PhaseDefaults{After: []workflow.PhaseAction{
+				{Validate: "phaseGate"},
+				{Checkpoint: "checkpoint"},
+				{AssertNetRepositoryChangeSincePhaseStart: true},
+				{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+				{ClearActivePhase: true},
+			}},
 			Phases:     []workflow.Phase{{ID: "01", Kind: "implementation", Label: "write", Actor: "worker", RequiresChange: true, Prompt: "write"}},
 			Flow:       []workflow.FlowStep{{Phase: "01"}, {Complete: "workflow"}},
 			Completion: map[string]workflow.Completion{"workflow": {}},

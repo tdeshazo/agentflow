@@ -148,14 +148,21 @@ func (r Repo) HasStagedChanges() (bool, error) {
 func (r Repo) HasNetChange(start string) (bool, error) {
 	cmd := exec.Command("git", "-C", r.Root, "diff", "--quiet", start, "HEAD")
 	err := cmd.Run()
-	if err == nil {
-		return false, nil
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return true, nil
+		}
+		return false, err
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) && ee.ExitCode() == 1 {
-		return true, nil
+	// A phase may have produced a new untracked file. Git's commit-to-commit
+	// diff intentionally omits it, but it is still a net repository/workspace
+	// change and the checkpoint policy will either stage it or reject it.
+	dirty, err := r.DirtyFiles()
+	if err != nil {
+		return false, err
 	}
-	return false, err
+	return len(dirty) > 0, nil
 }
 
 func (r Repo) LogSince(base string) (string, error) {

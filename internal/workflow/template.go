@@ -12,15 +12,17 @@ import (
 // evaluator never exposes Go values, filesystem access, commands, indexing, or
 // arbitrary function calls to a workflow document.
 type Context struct {
-	Metadata     Metadata
-	Parameters   map[string]any
-	Paths        map[string]string
-	State        map[string]any
-	Phase        *Phase
-	Progress     ProgressContext
-	WorkflowFile string
-	FailureLog   string
-	HeadCommit   string
+	Metadata      Metadata
+	Parameters    map[string]any
+	Paths         map[string]string
+	State         map[string]any
+	Phase         *Phase
+	Progress      ProgressContext
+	WorkflowFile  string
+	FailureLog    string
+	HeadCommit    string
+	InvocationID  string
+	TempDirectory string
 }
 
 // ProgressContext provides the small amount of progress information control
@@ -405,6 +407,19 @@ type callExpression struct {
 
 func (x callExpression) eval(c Context) (any, error) {
 	switch x.name {
+	case "mktemp":
+		if len(x.args) != 1 {
+			return nil, fmt.Errorf("mktemp requires exactly one argument")
+		}
+		value, err := x.args[0].eval(c)
+		if err != nil {
+			return nil, err
+		}
+		pattern, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("mktemp pattern is %s, not string", valueType(value))
+		}
+		return pattern, nil
 	case "tail":
 		if len(x.args) != 2 {
 			return nil, fmt.Errorf("tail requires exactly two arguments")
@@ -647,8 +662,16 @@ func (c Context) reference(name string) (any, error) {
 		return c.Progress.NextUnchecked, nil
 	case "validation.failure.log":
 		return c.FailureLog, nil
-	case "invocation.id", "temp.directory":
-		return nil, fmt.Errorf("expression reference %q is unavailable in this runtime", name)
+	case "invocation.id":
+		if c.InvocationID == "" {
+			return nil, fmt.Errorf("expression reference %q is unavailable in this runtime", name)
+		}
+		return c.InvocationID, nil
+	case "temp.directory":
+		if c.TempDirectory == "" {
+			return nil, fmt.Errorf("expression reference %q is unavailable in this runtime", name)
+		}
+		return c.TempDirectory, nil
 	}
 	if strings.HasPrefix(name, "env.") {
 		key := strings.TrimPrefix(name, "env.")

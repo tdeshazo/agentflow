@@ -477,6 +477,18 @@ func visitStrings(value reflect.Value, path string, visit func(string, string)) 
 }
 
 func (v validator) runtimeSurface() {
+	if backend := v.w.Spec.State.Backend; backend != "" && backend != "git-dir" {
+		v.add(Unsupported, "spec.state.backend", "state backend %q is not implemented by this runtime", backend)
+	}
+	if vcs := v.w.Spec.Workspace.VCS; vcs != "" && vcs != "git" {
+		v.add(Unsupported, "spec.workspace.vcs", "workspace VCS %q is not implemented by this runtime", vcs)
+	}
+	if cleanup := v.w.Spec.Temp.Cleanup; cleanup != "" && cleanup != "on-exit" {
+		v.add(Unsupported, "spec.temp.cleanup", "temp cleanup policy %q is not implemented by this runtime", cleanup)
+	}
+	if sourceType := v.w.Spec.Progress.Source.Type; sourceType != "" && sourceType != "markdown-checklist" {
+		v.add(Unsupported, "spec.progress.source.type", "progress source type %q is not implemented by this runtime", sourceType)
+	}
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
 		a := v.w.Spec.Agents[name]
 		if a.Runner != "codex" {
@@ -489,26 +501,9 @@ func (v validator) runtimeSurface() {
 	for _, name := range sortedKeys(v.w.Spec.Tools) {
 		t := v.w.Spec.Tools[name]
 		switch t.Type {
-		case "shell", "workspace-policy", "git-checkpoint", "file-regex":
+		case "shell", "workspace-policy", "git-checkpoint", "file-regex", "markdown-checklist-progress":
 		default:
 			v.add(Unsupported, "spec.tools."+name+".type", "tool type %q is not implemented by this runtime", t.Type)
-		}
-		if !reflect.DeepEqual(t.Capture, Capture{}) {
-			v.add(Unsupported, "spec.tools."+name+".capture", "tool output capture is not implemented by this runtime")
-		}
-	}
-	if !reflect.DeepEqual(v.w.Spec.Recovery, Recovery{}) {
-		v.add(Unsupported, "spec.recovery", "declarative recovery is not implemented by this runtime")
-	}
-	for i, g := range v.w.Spec.HumanGates {
-		if len(g.After) > 0 || g.Evidence.Record != "" || g.IdempotentRecord != "" {
-			v.add(Unsupported, fmt.Sprintf("spec.humanGates[%d]", i), "human-gate placement/evidence declarations are not implemented by this runtime")
-		}
-	}
-	for _, name := range sortedKeys(v.w.Spec.Completion) {
-		c := v.w.Spec.Completion[name]
-		if c.WriteMarker.Record != "" || !reflect.DeepEqual(c.Summary, Summary{}) {
-			v.add(Unsupported, "spec.completion."+name, "custom completion marker/summary declarations are not implemented by this runtime")
 		}
 	}
 }

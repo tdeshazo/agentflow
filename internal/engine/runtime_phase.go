@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
@@ -49,7 +51,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 		}
 	}
 
-	if ok, sha, err := e.validCommitMarker("phases/" + id); err != nil {
+	if ok, sha, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if ok {
 		fmt.Fprintf(e.Out, "==> Skipping completed phase %s: %s (%s)\n", id, p.Label, sha)
@@ -61,8 +63,20 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 			return err
 		}
 		if checked {
+			skip := e.Workflow.Spec.PhaseDefaults.Skip.CriterionAlreadyChecked
+			if skip.ValidateBeforeMarking {
+				for _, action := range e.Workflow.Spec.PhaseDefaults.After {
+					if action.Validate == "" {
+						continue
+					}
+					if err := e.runValidation(ctx, action.Validate, p); err != nil {
+						return &phaseValidationFailure{err: err}
+					}
+					break
+				}
+			}
 			head, _ := e.Repo.Head()
-			if err := e.Store.SetCommit("phases/"+id, head); err != nil {
+			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return err
 			}
 			fmt.Fprintf(e.Out, "==> Criterion already checked; marking phase %s complete\n", id)
@@ -87,7 +101,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	}
 	// A durable active record is a runtime safety invariant even for compact
 	// workflows that omit the verbose lifecycle declarations.
-	if err := e.Store.SetJSON("active", active); err != nil {
+	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
 		return err
 	}
 
@@ -101,63 +115,22 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
 	actions = append(actions, p.After...)
 	if len(actions) == 0 {
-		return e.finishPhaseLegacy(ctx, p, active)
+		actions = []workflow.PhaseAction{
+			{AssertProgressIfApplicable: true},
+			{Checkpoint: ""},
+			{AssertNetRepositoryChangeSincePhaseStart: p.RequiresChange},
+			{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+			{ClearActivePhase: true},
+		}
 	}
 	if err := e.runPhaseActions(ctx, p, &active, actions); err != nil {
 		return err
 	}
 	return e.requirePhaseCompletion(p)
 }
-
-func (e *Engine) finishPhaseLegacy(ctx context.Context, p *workflow.Phase, active ActivePhase) error {
-	if err := e.assertScope(); err != nil {
-		return err
-	}
-	if _, ok := e.Workflow.Spec.Validation["phaseGate"]; ok {
-		if err := e.runValidation(ctx, "phaseGate", p); err != nil {
-			return &phaseValidationFailure{err: err}
-		}
-	}
-	if p.Kind == "criterion" {
-		if err := e.assertProgress(p, active); err != nil {
-			return err
-		}
-	}
-	if err := e.assertAgentCommitPolicy(p, active); err != nil {
-		return err
-	}
-	active.CheckpointPending = true
-	if err := e.Store.SetJSON("active", active); err != nil {
-		return err
-	}
-	if err := e.checkpoint(p.Label, p); err != nil {
-		return err
-	}
-	head, err := e.Repo.Head()
-	if err != nil {
-		return err
-	}
-	active.CheckpointCommit = head
-	active.CheckpointPending = false
-	if err := e.Store.SetJSON("active", active); err != nil {
-		return err
-	}
-	if p.RequiresChange {
-		if err := e.assertNetChange(p, active); err != nil {
-			return err
-		}
-	}
-	if err := e.markPhaseComplete(p); err != nil {
-		return err
-	}
-	if err := e.Store.Delete("active"); err != nil {
-		return err
-	}
-	return e.requirePhaseCompletion(p)
-}
 func (e *Engine) recoverActive(ctx context.Context) error {
 	var a ActivePhase
-	ok, err := e.Store.GetJSON("active", &a)
+	ok, err := e.Store.GetJSON(e.activeRecord(), &a)
 	if err != nil || !ok {
 		return err
 	}
@@ -172,13 +145,13 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 		return fmt.Errorf("HEAD no longer descends from interrupted phase start %s", a.StartCommit)
 	}
 	fmt.Fprintf(e.Out, "==> Recovering interrupted phase %s: %s\n", p.ID, p.Label)
-	if marked, _, err := e.validCommitMarker("phases/" + p.ID); err != nil {
+	if marked, _, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if marked {
 		// A process may be interrupted between writing the commit-valued phase
 		// marker and clearing active state. The marker is the acceptance record;
 		// clear only the stale in-progress record and never rerun the actor.
-		return e.Store.Delete("active")
+		return e.Store.Delete(e.activeRecord())
 	}
 	if p.Kind == "criterion" && p.Criterion != "" {
 		checked, err := e.criterionChecked(p.Criterion)
@@ -231,7 +204,13 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 	if err != nil {
 		return err
 	}
-	_, err = prov.Run(ctx, provider.Request{Workspace: e.Repo.Root, Model: model, Reasoning: reasoning, Prompt: prompt, Sandbox: a.Sandbox, Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color, Metadata: map[string]string{"actor": actorName}})
+	metadata := map[string]string{"actor": actorName}
+	if p != nil {
+		metadata["phase"] = p.ID
+		metadata["phase_kind"] = p.Kind
+		metadata["criterion"] = p.Criterion
+	}
+	_, err = prov.Run(ctx, provider.Request{Workspace: e.Repo.Root, Model: model, Reasoning: reasoning, Prompt: prompt, Sandbox: a.Sandbox, Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color, Metadata: metadata})
 	if err != nil {
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
 	}
@@ -239,6 +218,15 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 }
 func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) error {
 	v, ok := e.Workflow.Spec.Validation[name]
+	if !ok {
+		for _, step := range e.Workflow.Spec.Flow {
+			if step.ID == name && step.Validate != "" {
+				name = step.Validate
+				v, ok = e.Workflow.Spec.Validation[name]
+				break
+			}
+		}
+	}
 	if !ok {
 		return fmt.Errorf("unknown validation %q", name)
 	}
@@ -277,7 +265,7 @@ func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max 
 		return true, nil
 	}
 	var active ActivePhase
-	ok, err := e.Store.GetJSON("active", &active)
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
 	if err != nil {
 		return false, err
 	}
@@ -291,7 +279,7 @@ func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max 
 		active.RepairAttempts = map[string]int{}
 	}
 	active.RepairAttempts[validation]++
-	if err := e.Store.SetJSON("active", active); err != nil {
+	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -332,14 +320,31 @@ func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workfl
 		}
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
 		cmd.Dir = e.Repo.Root
-		var buf bytes.Buffer
-		cmd.Stdout = &buf
-		cmd.Stderr = &buf
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 		err = cmd.Run()
-		fmt.Fprint(e.Out, buf.String())
+		output := stdout.String() + stderr.String()
+		fmt.Fprint(e.Out, output)
+		if t.Capture.Log != "" {
+			logPath, expandErr := e.context(p).Expand(t.Capture.Log)
+			if expandErr != nil {
+				return expandErr
+			}
+			target := logPath
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(e.Repo.Root, target)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, []byte(output), 0o644); err != nil {
+				return err
+			}
+		}
 		if err != nil {
-			e.lastFailure = buf.String()
-			return fmt.Errorf("shell tool %s failed: %w\n%s", name, err, buf.String())
+			e.lastFailure = output
+			return fmt.Errorf("shell tool %s failed: %w\n%s", name, err, output)
 		}
 		return nil
 	case "git-checkpoint":
@@ -354,6 +359,14 @@ func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workfl
 			return err
 		}
 		return e.assertFileRegex(path, regex)
+	case "markdown-checklist-progress":
+		if e.Workflow.Spec.Progress.Source.Path == "" {
+			return fmt.Errorf("markdown-checklist-progress requires spec.progress.source.path")
+		}
+		if _, err := e.progressSnapshot(); err != nil {
+			return err
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported tool type %q for %s", t.Type, name)
 	}

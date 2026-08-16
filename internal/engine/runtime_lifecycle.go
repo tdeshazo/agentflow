@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
@@ -55,7 +56,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			active.CheckedBefore = progress.CheckedTexts()
 		}
 		if len(action.PersistActivePhase.Fields) > 0 {
-			if err := e.Store.SetJSON("active", *active); err != nil {
+			if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 				return err
 			}
 		}
@@ -79,7 +80,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				return err
 			}
 			active.CheckpointPending = true
-			if err := e.Store.SetJSON("active", *active); err != nil {
+			if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 				return err
 			}
 			if err := e.runTool(ctx, action.Checkpoint, phase); err != nil {
@@ -91,7 +92,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 			active.CheckpointCommit = head
 			active.CheckpointPending = false
-			if err := e.Store.SetJSON("active", *active); err != nil {
+			if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 				return err
 			}
 		}
@@ -100,7 +101,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				return err
 			}
 		}
-		if action.MarkPhaseComplete != nil || action.MarkPhaseCompleteLegacy {
+		if action.MarkPhaseComplete != nil || action.MarkPhaseCompleteFlag {
 			if active.CheckpointCommit == "" {
 				// A marker is acceptance evidence, not a progress hint. Compact
 				// lifecycle declarations may omit an explicit checkpoint, but they
@@ -110,7 +111,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 					return err
 				}
 				active.CheckpointPending = true
-				if err := e.Store.SetJSON("active", *active); err != nil {
+				if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 					return err
 				}
 				if err := e.checkpoint(phase.Label, phase); err != nil {
@@ -122,7 +123,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				}
 				active.CheckpointCommit = head
 				active.CheckpointPending = false
-				if err := e.Store.SetJSON("active", *active); err != nil {
+				if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 					return err
 				}
 			}
@@ -131,7 +132,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 		}
 		if action.ClearActivePhase {
-			if err := e.Store.Delete("active"); err != nil {
+			if err := e.Store.Delete(e.activeRecord()); err != nil {
 				return err
 			}
 		}
@@ -188,22 +189,37 @@ func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
 	if err != nil {
 		return err
 	}
-	return e.Store.SetCommit("phases/"+phase.ID, head)
+	return e.Store.SetCommit(e.phaseMarkerName(phase), head)
 }
 
 func (e *Engine) requirePhaseCompletion(phase *workflow.Phase) error {
-	ok, head, err := e.validCommitMarker("phases/" + phase.ID)
+	ok, head, err := e.validCommitMarker(e.phaseMarkerName(phase))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("phase %s finished without markPhaseComplete", phase.ID)
 	}
-	if _, active, err := e.Store.Resolve("active"); err != nil {
+	if _, active, err := e.Store.Resolve(e.activeRecord()); err != nil {
 		return err
 	} else if active {
 		return fmt.Errorf("phase %s finished without clearActivePhase", phase.ID)
 	}
 	fmt.Fprintf(e.Out, "==> Phase %s complete at %s\n", phase.ID, shortSHA(head))
 	return nil
+}
+
+func (e *Engine) phaseMarkerName(phase *workflow.Phase) string {
+	pattern := e.Workflow.Spec.State.Records.CompletedPhasePattern
+	if pattern == "" {
+		if prefix := e.Workflow.Spec.State.Records.CompletedPhases; prefix != "" {
+			return strings.TrimSuffix(prefix, "/") + "/" + phase.ID
+		}
+		return "phases/" + phase.ID
+	}
+	name, err := e.context(phase).Expand(pattern)
+	if err != nil || name == "" {
+		return "phases/" + phase.ID
+	}
+	return name
 }

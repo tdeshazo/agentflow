@@ -56,7 +56,7 @@ func (e *Engine) implementationDirtyFiles() ([]string, error) {
 	return e.filterIgnored(files), nil
 }
 func (e *Engine) changedImplementationFiles() ([]string, error) {
-	base, ok, err := e.Store.Resolve("base")
+	base, ok, err := e.Store.Resolve(e.baseRecord())
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,9 @@ func (e *Engine) filterIgnored(files []string) []string {
 }
 func (e *Engine) ignoredPatterns() []string {
 	var out []string
-	for _, p := range e.Workflow.Spec.Workspace.LocalControl.Ignored {
+	patterns := append([]string{}, e.Workflow.Spec.Workspace.LocalControl.Ignored...)
+	patterns = append(patterns, e.Workflow.Spec.Workspace.MutationPolicy.IgnoredControlFiles...)
+	for _, p := range patterns {
 		expanded, err := e.context(nil).Expand(p)
 		if err != nil {
 			continue
@@ -124,7 +126,7 @@ func (e *Engine) computeIntegrity() (IntegrityBaseline, error) {
 }
 func (e *Engine) assertIntegrity() error {
 	var baseline IntegrityBaseline
-	ok, err := e.Store.GetJSON("integrity", &baseline)
+	ok, err := e.Store.GetJSON(e.integrityRecord(), &baseline)
 	if err != nil {
 		return err
 	}

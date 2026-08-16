@@ -437,7 +437,12 @@ func durableWorkflow(repo, name string) *workflow.Workflow {
 		Metadata: workflow.Metadata{Name: name},
 		Spec: workflow.Spec{
 			Parameters: map[string]workflow.Parameter{"repo_root": {Type: "path", Default: repo}},
-			State:      workflow.StateSpec{Resume: workflow.StateResume{Enabled: boolPtr(true)}},
+			State: workflow.StateSpec{
+				Initialize: workflow.StateInitialize{RequireCleanImplementationWorkspace: true, RequireNamedBranch: true},
+				Resume:     workflow.StateResume{Enabled: boolPtr(true), RequireBaseIsAncestorOfHead: true, RequireSameBranch: true},
+				Lineage:    workflow.StateLineage{RequireBaseCommitExists: true, RequireBaseIsAncestorOfHead: true, RequireSameNamedBranch: true},
+				Reset:      workflow.StateReset{RequireCleanImplementationWorkspace: true},
+			},
 			Workspace: workflow.WorkspaceSpec{
 				Root:           "{{ parameters.repo_root }}",
 				MutationPolicy: workflow.MutationPolicy{Allowed: []string{"work.txt"}},
@@ -445,11 +450,21 @@ func durableWorkflow(repo, name string) *workflow.Workflow {
 			},
 			Agents: map[string]workflow.Agent{"worker": {Runner: "test", MayCommit: true}},
 			Tools: map[string]workflow.Tool{
-				"scope": {Type: "workspace-policy"},
-				"gate":  {Type: "shell", Command: "grep -qx complete work.txt"},
+				"scope":      {Type: "workspace-policy"},
+				"gate":       {Type: "shell", Command: "grep -qx complete work.txt"},
+				"checkpoint": {Type: "git-checkpoint"},
 			},
 			Validation: map[string]workflow.Validation{
 				"phaseGate": {Steps: []workflow.ToolUse{{Uses: "scope"}, {Uses: "gate"}}},
+			},
+			PhaseDefaults: workflow.PhaseDefaults{
+				After: []workflow.PhaseAction{
+					{Validate: "phaseGate"},
+					{Checkpoint: "checkpoint"},
+					{AssertNetRepositoryChangeSincePhaseStart: true},
+					{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+					{ClearActivePhase: true},
+				},
 			},
 			Phases: []workflow.Phase{{ID: "change", Kind: "implementation", Label: "change", Actor: "worker", RequiresChange: true, Prompt: "complete the work"}},
 			Flow:   []workflow.FlowStep{{Phase: "change"}, {Complete: "done"}},

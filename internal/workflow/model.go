@@ -307,7 +307,7 @@ type PhaseAction struct {
 	ClearActivePhase                         bool               `yaml:"clearActivePhase"`
 	Return                                   string             `yaml:"return"`
 	AssertProgressIfApplicable               bool               `yaml:"assert_progress_if_applicable"`
-	MarkPhaseCompleteLegacy                  bool               `yaml:"mark_phase_complete"`
+	MarkPhaseCompleteFlag                    bool               `yaml:"mark_phase_complete"`
 	RunRepairPolicy                          string             `yaml:"run_repair_policy"`
 	IfStillIncomplete                        IncompleteAction   `yaml:"if_still_incomplete"`
 }
@@ -404,7 +404,7 @@ type Recovery struct {
 type RecoveryAction struct {
 	ReadActivePhase                  PersistActivePhase `yaml:"readActivePhase"`
 	RestorePhaseDefinition           bool               `yaml:"restorePhaseDefinition"`
-	RestorePhaseDefinitionLegacy     bool               `yaml:"restore_phase_definition"`
+	RestorePhaseDefinitionFlag       bool               `yaml:"restore_phase_definition"`
 	AssertPhaseStartCommitExists     bool               `yaml:"assertPhaseStartCommitExists"`
 	AssertPhaseStartIsAncestorOfHead bool               `yaml:"assertPhaseStartIsAncestorOfHead"`
 	If                               string             `yaml:"if"`

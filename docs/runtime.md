@@ -5,6 +5,8 @@ AgentFlow includes an experimental Go interpreter for the executable core of
 
 The runtime is intentionally conservative: implemented constructs execute, while
 unknown preconditions, tools, assertions, or template expressions fail closed.
+The validator rejects a valid-but-unsupported provider, backend, tool, or policy
+before a repository is opened.
 This prevents descriptive fields from being silently treated as enforcement.
 
 ## CLI
@@ -39,6 +41,10 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/complete
 ```
+
+The names above are the defaults. `spec.state.records` may configure the base,
+branch, active-phase, completed-phase, human, completion, and integrity record
+names; the interpreter uses those names within the same workflow namespace.
 
 Commit-valued records point directly at repository commits. Structured records
 such as the active phase, branch name, and integrity baseline are JSON blobs
@@ -109,15 +115,19 @@ The current runtime supports the following executable core:
 - Markdown checklist progress and one-criterion progress invariants;
 - first-unchecked progress selection and bounded next-unchecked loops;
 - named AI phases with provider-neutral actors;
-- shell and workspace-policy validation tools;
+- shell, workspace-policy, Git-checkpoint, file-regex, and Markdown-checklist
+  validation tools;
+- captured shell output and bounded validation failure logs;
 - one bounded repair attempt;
 - automatic Git checkpoints of allowed dirty files;
 - resumable active phases and commit-aware phase markers;
-- interactive human gates with durable commit evidence;
+- interactive human gates with conditional skip, placement prerequisites, and
+  durable configured evidence records;
 - conditional flow steps, validation steps, phase lifecycle actions, phases,
-  and human gates;
+  declarative active-phase recovery, and human gates;
 - flow assertions for clean workspace and empty progress; and
-- completion assertions, final validation, checkpoint, and complete marker.
+- completion assertions, final validation, checkpoint, configured completion
+  marker, and deterministic summary fields.
 
 The expression evaluator is deliberately small and parsed before execution. It
 supports typed literals, a finite list of workflow/state/progress references,
@@ -137,7 +147,11 @@ color, and ephemeral execution settings and captures the final message using
 ## Current limits
 
 This is an interpreter MVP, not yet a complete implementation of every field in
-the descriptive specification. In particular, parallel DAG scheduling, arbitrary
-programming-language expressions, provider APIs other than Codex, and custom tool
-plugins are future work. Unsupported executable constructs produce an error
-rather than being ignored.
+the descriptive specification. The following are explicitly non-executable in
+this runtime and are rejected by validation: provider runners other than
+`codex`, approval policies other than `never`, state backends other than
+`git-dir`, non-Git workspaces, non-Markdown progress sources, non-`on-exit` temp
+cleanup, and tool types outside the list above. Parallel DAG scheduling,
+arbitrary programming-language expressions, and custom tool plugins remain
+future work. Unsupported executable constructs produce an error rather than
+being ignored.

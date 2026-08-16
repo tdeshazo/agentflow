@@ -37,7 +37,7 @@ func (e *Engine) runFlowAssertion(a workflow.Assertion) error {
 		return fmt.Errorf("unsupported flow assertion %q", typeName)
 	}
 }
-func (e *Engine) runHuman(id string) error {
+func (e *Engine) runHuman(ctx context.Context, id string) error {
 	var gate *workflow.HumanGate
 	for i := range e.Workflow.Spec.HumanGates {
 		if e.Workflow.Spec.HumanGates[i].ID == id {
@@ -48,11 +48,42 @@ func (e *Engine) runHuman(id string) error {
 	if gate == nil {
 		return fmt.Errorf("unknown human gate %q", id)
 	}
-	if ok, _, err := e.validCommitMarker("human/" + id); err != nil {
+	record := "human/" + id
+	if gate.IdempotentRecord != "" {
+		var err error
+		record, err = e.recordName(gate.IdempotentRecord, nil)
+		if err != nil {
+			return err
+		}
+	}
+	if ok, _, err := e.validCommitMarker(record); err != nil {
 		return err
 	} else if ok {
 		fmt.Fprintf(e.Out, "==> Human gate %s already recorded\n", id)
 		return nil
+	}
+	for _, prerequisite := range gate.Requires {
+		phase, err := e.phaseByID(prerequisite)
+		if err != nil {
+			return err
+		}
+		if ok, _, err := e.validCommitMarker(e.phaseMarkerName(phase)); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("human gate %s requires completed phase %q", id, prerequisite)
+		}
+	}
+	for _, after := range gate.After {
+		if after.Phase != "" {
+			if err := e.runPhase(ctx, after.Phase); err != nil {
+				return err
+			}
+		}
+		if after.Validation != "" {
+			if err := e.runValidation(ctx, after.Validation, nil); err != nil {
+				return err
+			}
+		}
 	}
 	condition := gate.When
 	if gate.If != "" {
@@ -70,10 +101,37 @@ func (e *Engine) runHuman(id string) error {
 		return err
 	}
 	if !required {
+		if gate.Skip.AllowedWhen != "" {
+			allowed, err := e.bool(nil, gate.Skip.AllowedWhen)
+			if err != nil {
+				return fmt.Errorf("human gate %s skip condition: %w", id, err)
+			}
+			if !allowed {
+				return fmt.Errorf("human gate %s is not required but its skip is not allowed", id)
+			}
+		}
 		if gate.Skip.Warning != "" {
 			fmt.Fprintf(e.Out, "WARNING: %s\n", gate.Skip.Warning)
 		}
-		return e.Store.SetCommit("human/"+id, head)
+		if gate.Skip.Record != "" {
+			resolved, err := e.recordName(gate.Skip.Record, nil)
+			if err != nil {
+				return err
+			}
+			if resolved != "" {
+				record = resolved
+			}
+		}
+		if gate.Skip.Evidence.Record != "" {
+			resolved, err := e.recordName(gate.Skip.Evidence.Record, nil)
+			if err != nil {
+				return err
+			}
+			if resolved != "" {
+				record = resolved
+			}
+		}
+		return e.persistHumanEvidence(gate, record, head)
 	}
 	fmt.Fprintf(e.Out, "\n=== Human verification: %s ===\n%s\n", id, gate.Instructions)
 	for i, item := range gate.Checklist {
@@ -92,7 +150,32 @@ func (e *Engine) runHuman(id string) error {
 	if line != gate.Acknowledgement.Value {
 		return fmt.Errorf("human gate %s not confirmed", id)
 	}
-	return e.Store.SetCommit("human/"+id, head)
+	if gate.Evidence.Record != "" {
+		evidence, err := e.recordName(gate.Evidence.Record, nil)
+		if err != nil {
+			return err
+		}
+		if evidence != "" {
+			record = evidence
+		}
+	}
+	return e.persistHumanEvidence(gate, record, head)
+}
+
+func (e *Engine) persistHumanEvidence(gate *workflow.HumanGate, record, head string) error {
+	if err := e.Store.SetCommit(record, head); err != nil {
+		return err
+	}
+	if gate.IdempotentRecord != "" {
+		idempotent, err := e.recordName(gate.IdempotentRecord, nil)
+		if err != nil {
+			return err
+		}
+		if idempotent != "" && idempotent != record {
+			return e.Store.SetCommit(idempotent, head)
+		}
+	}
+	return nil
 }
 func (e *Engine) runCompletion(ctx context.Context, name string) error {
 	c, ok := e.Workflow.Spec.Completion[name]
@@ -110,7 +193,7 @@ func (e *Engine) runCompletion(ctx context.Context, name string) error {
 		}
 	}
 	if c.Checkpoint.Uses != "" {
-		if err := e.checkpoint(c.Checkpoint.Label, nil); err != nil {
+		if err := e.runTool(ctx, c.Checkpoint.Uses, nil); err != nil {
 			return err
 		}
 	}
@@ -123,12 +206,27 @@ func (e *Engine) runCompletion(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := e.Store.SetCommit("complete", head); err != nil {
+	marker := "complete"
+	if c.WriteMarker.Record != "" {
+		resolved, err := e.recordName(c.WriteMarker.Record, nil)
+		if err != nil {
+			return err
+		}
+		if resolved != "" {
+			marker = resolved
+		}
+	}
+	if err := e.Store.SetCommit(marker, head); err != nil {
 		return err
 	}
-	base, _, _ := e.Store.Resolve("base")
+	if marker != e.workflowCompleteMarker() {
+		if err := e.Store.SetCommit(e.workflowCompleteMarker(), head); err != nil {
+			return err
+		}
+	}
+	base, _, _ := e.Store.Resolve(e.baseRecord())
 	var branch string
-	_, _ = e.Store.GetJSON("branch", &branch)
+	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
 	changed, _ := e.changedImplementationFiles()
 	log, _ := e.Repo.LogSince(base)
 	fmt.Fprintf(e.Out, "\nWorkflow %s complete.\nBranch: %s\nBase: %s\nHead: %s\n", e.Workflow.Metadata.Name, branch, base, head)
@@ -137,6 +235,32 @@ func (e *Engine) runCompletion(ctx context.Context, name string) error {
 	}
 	if len(changed) > 0 {
 		fmt.Fprintf(e.Out, "Changed files:\n- %s\n", strings.Join(changed, "\n- "))
+	}
+	if c.Summary.Title != "" {
+		fmt.Fprintf(e.Out, "Summary: %s\n", c.Summary.Title)
+	}
+	for _, item := range c.Summary.Include {
+		switch item {
+		case "branch":
+			fmt.Fprintf(e.Out, "Branch: %s\n", branch)
+		case "base_commit":
+			fmt.Fprintf(e.Out, "Base: %s\n", base)
+		case "head_commit":
+			fmt.Fprintf(e.Out, "Head: %s\n", head)
+		case "state_directory":
+			fmt.Fprintf(e.Out, "State directory: %s\n", e.Workflow.Spec.State.Directory)
+		case "workspace_clean":
+			dirty, err := e.implementationDirtyFiles()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(e.Out, "Workspace clean: %t\n", len(dirty) == 0)
+		case "canonical_gate_green":
+			fmt.Fprintln(e.Out, "Canonical gate: green")
+		case "commits_since_base", "changed_files_since_base":
+			// The detailed values are already emitted above; keep this summary
+			// vocabulary deterministic without inventing a second data model.
+		}
 	}
 	return nil
 }
@@ -189,7 +313,7 @@ func (e *Engine) assertFileRegex(path, pattern string) error {
 	if err != nil {
 		return err
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := regexp.Compile("(?m)" + pattern)
 	if err != nil {
 		return err
 	}
