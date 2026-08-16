@@ -152,12 +152,12 @@ func (e *Engine) assertIntegrity() error {
 }
 
 func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
-	tracked, err := e.Repo.TrackedFiles()
+	filesInWorkspace, err := e.Repo.PresentFiles()
 	if err != nil {
 		return "", err
 	}
 	var files []string
-	for _, f := range tracked {
+	for _, f := range filesInWorkspace {
 		if matchesAny(rule.Paths, f) && !matchesAny(rule.Exclude, f) {
 			files = append(files, f)
 		}

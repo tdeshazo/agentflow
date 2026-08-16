@@ -104,6 +104,17 @@ func (r Repo) TrackedFiles() ([]string, error) {
 	return out, nil
 }
 
+// PresentFiles returns version-controlled and untracked, non-ignored files
+// that currently exist in the implementation workspace. Integrity policies
+// must include untracked files: otherwise a new path protected by a glob could
+// evade the pre-checkpoint hash until after Git had already committed it.
+func (r Repo) PresentFiles() ([]string, error) {
+	return r.collectPaths(
+		[]string{"ls-files"},
+		[]string{"ls-files", "--others", "--exclude-standard"},
+	)
+}
+
 func (r Repo) Add(paths []string) error {
 	if len(paths) == 0 {
 		return nil

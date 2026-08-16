@@ -197,6 +197,7 @@ func TestSelfHostingValidationRepairBudgetAndMutationPolicy(t *testing.T) {
 	}{
 		{name: "roadmap", path: "ROADMAP.md", want: "protected integrity rule roadmap changed"},
 		{name: "canonical gate", path: "scripts/check.sh", want: "protected integrity rule canonical-quality-gate changed"},
+		{name: "new protected research file", path: "docs/research/new-analysis.md", want: "protected integrity rule research-documents changed"},
 		{name: "out of scope", path: "not-allowed.txt", want: "out-of-scope file changed: not-allowed.txt"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
@@ -204,7 +205,11 @@ func TestSelfHostingValidationRepairBudgetAndMutationPolicy(t *testing.T) {
 			w := selfHostingWorkflow(t, repo)
 			p := &selfHostingFakeProvider{mutation: mutation.path}
 			e := newSelfHostingEngine(t, w, p)
-			err := e.Run(context.Background())
+			start, err := e.Repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = e.Run(context.Background())
 			if err == nil || !strings.Contains(err.Error(), mutation.want) {
 				t.Fatalf("mutation error = %v, want %q", err, mutation.want)
 			}
@@ -213,6 +218,9 @@ func TestSelfHostingValidationRepairBudgetAndMutationPolicy(t *testing.T) {
 			}
 			if _, ok, _ := e.Store.Resolve("complete"); ok {
 				t.Fatal("policy violation reached completion")
+			}
+			if head, err := e.Repo.Head(); err != nil || head != start {
+				t.Fatalf("policy violation was checkpointed: head=%s err=%v want=%s", head, err, start)
 			}
 		})
 	}
