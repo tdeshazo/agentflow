@@ -1,0 +1,973 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: complete-priority-5-combat-workflow
+  description: >-
+    Declarative equivalent of finish-priority-05.sh for completing Priority 5:
+    Complete Combat Workflow with bounded AI phases, deterministic workspace
+    validation, resumable Git state, one-shot repair, manual SSH verification,
+    completion bookkeeping, and a final canonical gate.
+  source:
+    type: shell-orchestrator
+    file: finish-priority-05.sh
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+    require_visual_confirm:
+      type: boolean
+      default: true
+      env: REQUIRE_VISUAL_CONFIRM
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    roadmap: docs/planning/roadmap-04-combat-workflow.md
+    roadmap_index: docs/planning/README.md
+    canonical_gate: scripts/check.sh
+    quality_workflow: .github/workflows/quality.yml
+
+  state:
+    backend: git-dir
+    directory: ".git/codex-priority-5-combat"
+    records:
+      base_commit: base
+      branch: branch
+      active_phase: active-phase
+      completed_phase_pattern: "{{ phase.id }}.done"
+      manual_confirmation: manual-confirmed
+      workflow_complete: complete
+      integrity:
+        agents_hash: agents.hash
+        gate_hash: gate.hash
+        workflow_hash: workflow.hash
+        roadmap_structure_hash: roadmap-structure.hash
+        index_structure_hash: index-structure.hash
+        other_planning_hash: other-planning.hash
+        protected_data_hash: protected-data.hash
+
+    initialize:
+      require_clean_implementation_workspace: true
+      require_named_branch: true
+      capture:
+        base_commit: head_commit
+        branch: current_branch
+        integrity_baseline: true
+
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+    lineage:
+      require_base_commit_exists: true
+      require_base_is_ancestor_of_head: true
+      require_same_named_branch: true
+
+    resume:
+      enabled: true
+      completed_phase_marker:
+        value: head_commit
+        valid_when_marker_commit_exists: true
+        valid_when_marker_is_ancestor_of_head: true
+      active_phase:
+        fields:
+          - phase_id
+          - phase_start_commit
+          - unchecked_count_before
+        require_phase_start_commit_exists: true
+        require_phase_start_is_ancestor_of_head: true
+        preserve_partial_commits: true
+        preserve_partial_worktree_changes: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+
+    localControlFiles:
+      ignoredForDirtyState:
+        - AGENTS.md
+        - "{{ workflow.file | default('') }}"
+      note: >-
+        These files are ignored when determining implementation dirtiness. AGENTS.md
+        is still protected by an exact integrity hash.
+
+    cleanliness:
+      before_first_run: required
+      before_new_phase: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+
+    mutationPolicy:
+      allowed:
+        - internal/game/*
+        - internal/store/*
+        - internal/sshui/*
+        - internal/ruleset/*
+        - data/mothership/v1.2/rules.yaml
+        - data/mothership/v1.2/tables.yaml
+        - cmd/mothership/main_integration_test.go
+        - docs/planning/roadmap-04-combat-workflow.md
+        - docs/planning/README.md
+        - README.md
+        - docs/guides/development.md
+
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+
+      integrity:
+        - id: repository-instructions
+          paths:
+            - AGENTS.md
+          mode: exact-hash
+
+        - id: canonical-quality-gate
+          paths:
+            - scripts/check.sh
+          mode: exact-hash
+
+        - id: quality-workflow
+          paths:
+            - .github/workflows/quality.yml
+          mode: exact-hash
+
+        - id: priority-5-roadmap-structure
+          paths:
+            - docs/planning/roadmap-04-combat-workflow.md
+          mode: normalized-hash
+          allowed_semantic_changes:
+            - Status line
+            - acceptance-criterion checkbox markers
+          normalize:
+            command: >-
+              sed -E
+              -e 's/^Status:.*/Status: __STATUS__/'
+              -e 's/^- \[[ xX]\] /- [*] /'
+
+        - id: roadmap-index-structure
+          paths:
+            - docs/planning/README.md
+          mode: normalized-hash
+          allowed_semantic_changes:
+            - Priority 5 completion checkbox only
+          normalize:
+            command: >-
+              sed -E
+              's/^5\. \[[ xX]\] \[Complete Combat Workflow\]/5. [*] [Complete Combat Workflow]/'
+
+        - id: other-planning-documents
+          paths:
+            - docs/planning/*.md
+          exclude:
+            - docs/planning/roadmap-04-combat-workflow.md
+            - docs/planning/README.md
+          mode: group-exact-hash
+
+        - id: unrelated-rules-data
+          paths:
+            - data/mothership/v1.2/*.yaml
+          exclude:
+            - data/mothership/v1.2/rules.yaml
+            - data/mothership/v1.2/tables.yaml
+          mode: group-exact-hash
+
+    checkpointing:
+      agent_commits_allowed: true
+      checkpoint_uncommitted_success: true
+      stage_only_allowed_dirty_files: true
+      commit_if_dirty: true
+      commit_message: "Complete combat workflow: {{ phase.label }}"
+      require_clean_after: true
+      assert_scope_before_and_after: true
+
+  agents:
+    terra:
+      runner: codex
+      model: "{{ parameters.terra_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+
+    luna:
+      runner: codex
+      model: "{{ parameters.luna_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+
+  tools:
+    assert-change-scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+      mutates_workspace: false
+
+    canonical-gate:
+      type: shell
+      command: "sh {{ spec.paths.canonical_gate }}"
+      mutates_workspace: false
+      capture:
+        stdout: true
+        stderr: true
+        log: "{{ temp.directory }}/gate-{{ invocation.id }}.log"
+
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+    assert-regex:
+      type: file-regex
+      mutates_workspace: false
+
+    assert-progress:
+      type: markdown-checklist-progress
+      mutates_workspace: false
+
+  temp:
+    directory: "{{ mktemp('${TMPDIR:-/tmp}/mothership-p5.XXXXXX') }}"
+    cleanup: on-exit
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+
+    - id: required-commands
+      type: commands-exist
+      commands:
+        - git
+        - codex
+
+    - id: required-files
+      type: files-exist
+      paths:
+        - AGENTS.md
+        - "{{ spec.paths.roadmap }}"
+        - "{{ spec.paths.roadmap_index }}"
+        - "{{ spec.paths.canonical_gate }}"
+        - "{{ spec.paths.quality_workflow }}"
+
+    - id: quality-workflow-delegates-to-canonical-gate
+      type: file-contains
+      path: "{{ spec.paths.quality_workflow }}"
+      text: scripts/check.sh
+
+    - id: saved-base-exists
+      when: "{{ state.initialized }}"
+      type: git-object-exists
+      object: "{{ state.base_commit }}^{commit}"
+
+    - id: saved-base-is-ancestor
+      when: "{{ state.initialized }}"
+      type: git-ancestor
+      ancestor: "{{ state.base_commit }}"
+      descendant: HEAD
+
+    - id: branch-unchanged
+      when: "{{ state.initialized }}"
+      type: git-current-branch-equals
+      expected: "{{ state.branch }}"
+
+    - id: protected-boundaries-unchanged
+      when: "{{ state.initialized }}"
+      type: workspace-integrity
+      policy: spec.workspace.mutationPolicy.integrity
+
+  progress:
+    source:
+      type: markdown-checklist
+      path: "{{ spec.paths.roadmap }}"
+      uncheckedPattern: '^- \[ \] (.+)$'
+      checkedPatterns:
+        - '^- \[x\] (.+)$'
+        - '^- \[X\] (.+)$'
+
+    criteria:
+      - id: attack-path
+        text: "A catalogued equipped weapon can resolve a complete attack."
+      - id: modifiers-and-log
+        text: "Advantage and disadvantage follow engine rules and are logged."
+      - id: combat-consequences
+        text: "Armor, wounds, bleeding, and death outcomes match deterministic tests."
+      - id: atomic-transaction
+        text: "The mutation and activity record commit atomically."
+      - id: authorization
+        text: "Player/Warden modification boundaries remain enforced."
+      - id: warden-direct-damage
+        text: "Direct damage remains available as a Warden adjudication tool."
+
+    criterionPhaseInvariant:
+      targeted_item_must_be_checked: true
+      unchecked_count_delta: -1
+      no_other_criterion_may_close: true
+
+  validation:
+    startingState:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    phaseGate:
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+
+      onFailure:
+        strategy: repair-once
+        maxRepairAttempts: 1
+        repair:
+          actor: terra
+          reasoning: high
+          prompt: |
+            The workflow-owned gate failed during Priority 5.
+
+            Current focus:
+            {{ phase.label }}
+
+            Read the local repository instructions and the current Priority 5 state,
+            diagnose the failure, and repair only what is necessary for this focus.
+
+            Do not weaken the gate, change unrelated roadmap work, or advance another
+            Priority 5 acceptance criterion.
+
+            --- gate output ---
+            {{ tail(validation.failure.log, 260) }}
+        then:
+          - uses: assert-change-scope
+          - uses: canonical-gate
+        exhausted: fail-workflow
+
+    postAuditGate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    finalPriority5Gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+  phaseDefaults:
+    before:
+      - require_clean_implementation_workspace: true
+      - capture_phase_start_commit: true
+      - capture_unchecked_count_before: true
+      - persist_active_phase:
+          fields:
+            - phase_id
+            - phase_start_commit
+            - unchecked_count_before
+    after:
+      - validate: phaseGate
+      - if: "{{ phase.kind == 'criterion' }}"
+        assertProgress:
+          criterion: "{{ phase.criterion }}"
+          uncheckedCountDelta: -1
+      - checkpoint: checkpoint
+      - if: "{{ phase.requiresChange }}"
+        assertNetRepositoryChangeSincePhaseStart: true
+      - markPhaseComplete:
+          value: head_commit
+      - clearActivePhase: true
+    skip:
+      completedMarker: skip
+      criterionAlreadyChecked:
+        action: mark-phase-complete-with-current-head
+        validate_before_marking: false
+
+  phases:
+    - id: "01"
+      kind: criterion
+      label: complete-attack-path
+      actor: terra
+      reasoning: high
+      criterion: "A catalogued equipped weapon can resolve a complete attack."
+      requiresChange: true
+      prompt: |
+        Read AGENTS.md and the current Priority 5 roadmap, then complete only the
+        currently targeted acceptance criterion.
+
+        Establish the complete structured attack path from the existing mechanics UI
+        through the game/store boundary and back into refreshed UI state.
+
+        Build on the current modifier/setup, async-operation, measured-layout, and
+        activity-log patterns rather than introducing parallel infrastructure.
+
+        Important design constraints for this step:
+
+        - Keep Attack distinct from generic direct damage.
+        - Keep the mechanics catalog data-owned. If Attack needs a new mechanic entry or
+          input kind, extend the existing rules-data model minimally instead of
+          hard-coding user-facing mechanic catalogs in sshui.
+        - A player-controlled attack starts from an active character the actor is
+          actually entitled to use. A Warden may choose an active crew attacker.
+        - Targets are the active mission entities currently represented by the domain.
+          Do not pre-implement the later NPC roadmap merely to manufacture combat
+          targets.
+        - Reject self, missing, cross-mission, and retired targets cleanly.
+        - Use the character's actually equipped, catalogued weapon. If the current
+          domain permits only one equipped weapon, show/confirm that weapon instead of
+          inventing a multiple-equipped-weapons model.
+        - Missing, unequipped, or stale weapon IDs must be recoverable errors.
+        - Show canonical weapon range/special information as guidance only. Do not
+          enforce fictional range, create initiative, or turn combat into a tactical
+          shell.
+        - Reuse the existing optional owned-skill + roll-mode setup where it fits; do
+          not create a second modifier representation for attacks.
+        - Inspect the existing meaning of InventoryEntry.Charges before changing
+          ammunition. Consume a represented resource only when the repository's data
+          model clearly supports that interpretation; do not infer ammo rules merely
+          from Weapon.Shots.
+        - Preserve async duplicate/stale/cancellation behavior.
+
+        The first usable attack should leave attacker, target, and action-log state
+        coherent after refresh.
+
+        Add focused deterministic tests for the end-to-end happy path and its immediate
+        missing/invalid setup errors.
+
+        Mark only this acceptance criterion complete after it is verified.
+
+    - id: "02"
+      kind: criterion
+      label: attack-modifiers-and-log
+      actor: luna
+      reasoning: high
+      criterion: "Advantage and disadvantage follow engine rules and are logged."
+      requiresChange: true
+      prompt: |
+        Read the local instructions and Priority 5 state, then complete only the current
+        acceptance criterion.
+
+        Make attack roll modifiers use the same established modifier semantics as the
+        existing check/save setup.
+
+        Do not create combat-specific Advantage/Disadvantage math.
+
+        Confirm that:
+
+        - Normal, Advantage, and Disadvantage map through game.Modifier.
+        - The optional owned-skill selection continues to compose correctly with an
+          attack if the new attack path exposes it.
+        - Advantage keeps the better percentile result and Disadvantage the worse
+          through the engine's existing resolution behavior.
+        - Roll mode does not alter the target number.
+        - A miss has no damage roll.
+        - A hit records the attack roll(s) and canonical damage roll distinctly enough
+          that the activity record is auditable.
+        - Non-Normal mode is explicit in the activity detail.
+        - Skill name/bonus is explicit when a skill contributed to the Combat target.
+        - Repeated submission cannot produce two attacks.
+
+        Use fixed dice for the relevant tests.
+
+        Do not implement a new modifier abstraction and do not advance the later combat
+        criteria.
+
+        Mark only this acceptance criterion complete after verification.
+
+    - id: "03"
+      kind: criterion
+      label: combat-consequences
+      actor: terra
+      reasoning: high
+      criterion: "Armor, wounds, bleeding, and death outcomes match deterministic tests."
+      requiresChange: true
+      prompt: |
+        Read the local instructions and current Priority 5 implementation, then close
+        the deterministic combat-consequence criterion.
+
+        Audit Engine.Attack and ResolveDamage against the loaded combat, armor, wound,
+        and death data rather than assuming the existing implementation is complete.
+
+        Cover at least:
+
+        - miss with no target damage;
+        - armor damage reduction;
+        - AP absorption/destruction threshold;
+        - anti-armor behavior;
+        - health carryover into a Wound;
+        - multiple-Wound progression;
+        - death-table resolution at maximum Wounds;
+        - Bleeding changes produced by wound outcomes where the canonical wound result
+          specifies a mechanical Bleeding increase.
+
+        Do not parse human-readable wound prose at runtime to discover mechanical state.
+
+        If the wound table currently carries a required Bleeding change only as display
+        text, add the smallest structured rules metadata and loader support necessary to
+        represent that specific mechanical consequence. Keep canonical values in
+        versioned rules data.
+
+        Do not attempt to automate every narrative wound effect in the table. This
+        criterion is about the combat state explicitly named by Priority 5.
+
+        Use deterministic dice and table-driven tests. Verify both returned combat
+        results and final character state.
+
+        Do not conflate a death-table result with retirement unless the existing domain
+        explicitly says to do so.
+
+        Mark only this acceptance criterion complete after verification.
+
+    - id: "04"
+      kind: criterion
+      label: atomic-combat-transaction
+      actor: terra
+      reasoning: high
+      criterion: "The mutation and activity record commit atomically."
+      requiresChange: true
+      prompt: |
+        Read the local instructions and Priority 5 state, then make attack persistence
+        transactionally correct.
+
+        The ordinary MutateCharacter path owns one character. A complete attack may
+        change:
+
+        - attacker state from the Combat check, Stress, Panic, or represented weapon
+          resources;
+        - target armor, Health, Wounds, Bleeding, and related state;
+        - one authoritative activity record.
+
+        Treat those as one committed operation.
+
+        The transaction should operate on fresh active records loaded inside the
+        transaction, not persist stale pre-transaction UI copies.
+
+        Required properties:
+
+        - attacker and target validation occurs against the same transactional view;
+        - the engine resolves against transaction-local character values;
+        - attacker and target updates either both commit or neither commits;
+        - the activity entry appears only with the corresponding state mutation;
+        - a miss still commits legitimate attacker-side consequences and the attack
+          record without fabricating target changes;
+        - any error after resolution but before commit rolls all changes back;
+        - no partial action-log event survives rollback.
+
+        Prefer a narrow combat transaction API over weakening the generic
+        MutateCharacter contract.
+
+        Add store tests that deliberately exercise successful commit and rollback
+        boundaries. Include an error path late enough to prove both character writes and
+        activity insertion are atomic.
+
+        Do not advance authorization-policy work beyond what is necessary to make this
+        transaction structurally sound.
+
+        Mark only this acceptance criterion complete after verification.
+
+    - id: "05"
+      kind: criterion
+      label: combat-authorization
+      actor: terra
+      reasoning: high
+      criterion: "Player/Warden modification boundaries remain enforced."
+      requiresChange: true
+      prompt: |
+        Read the local instructions and current Priority 5 code, then close the combat
+        authorization criterion.
+
+        Audit authorization at the persistence boundary, not only in screen
+        visibility.
+
+        The structured attack path should distinguish authorization to control the
+        attacker from the legitimate rules-driven mutation of the target.
+
+        Required behavior:
+
+        - an ordinary player can initiate an attack only with an active character they
+          own;
+        - a Warden can initiate with any appropriate active crew character;
+        - a structured attack may affect another active character in the same mission
+          without granting the player generic mutation rights over that target;
+        - cross-mission targets are rejected;
+        - retired attackers or targets are rejected;
+        - missing membership or stale character state is rejected safely;
+        - the generic character mutation boundary is not relaxed to make combat work;
+        - UI options do not advertise attackers the current actor cannot control.
+
+        Do not implement software-enforced PvP consent. Where crew-vs-crew attacks are
+        possible, retain concise neutral guidance that fictional intent/stakes and
+        consent belong at the table.
+
+        Tests should prove both allowed and denied player/Warden cases at the store
+        boundary and exercise the corresponding UI filtering.
+
+        Do not work ahead into Priority 6's general Warden correction system.
+
+        Mark only this acceptance criterion complete after verification.
+
+    - id: "06"
+      kind: criterion
+      label: warden-direct-damage
+      actor: luna
+      reasoning: medium
+      criterion: "Direct damage remains available as a Warden adjudication tool."
+      requiresChange: true
+      prompt: |
+        Read the local instructions and completed combat path, then close the final
+        Priority 5 acceptance criterion.
+
+        Preserve generic/direct damage as a clearly distinct Warden adjudication tool.
+
+        Do not let the new Attack workflow delete or subsume it.
+
+        At the same time, ensure ordinary players cannot use direct damage as an
+        alternate path around structured combat.
+
+        Verify the boundary in both presentation and persistence:
+
+        - the Warden can still select canonical damage dice or enter a fixed amount;
+        - direct damage continues through the existing canonical harm resolution path
+          where applicable;
+        - its action-log entry is clearly distinguishable from a weapon attack;
+        - ordinary players do not receive the direct-damage mechanic as a usable
+          action;
+        - calling the underlying Warden-only persistence path as a player is rejected,
+          rather than relying solely on a hidden menu option.
+
+        Keep this narrowly scoped. Do not build the broader correction editor planned
+        for Priority 6.
+
+        Add focused Warden/player tests and preserve existing hazard/internal damage
+        callers.
+
+        Mark only this acceptance criterion complete after verification.
+
+    - id: "07"
+      kind: audit
+      label: combat-integration-regressions
+      actor: luna
+      reasoning: high
+      requiresChange: false
+      prompt: |
+        Read AGENTS.md and Priority 5, then perform a focused integration/regression
+        pass over the completed combat implementation.
+
+        Do not add new combat features.
+
+        Exercise the system as a whole across:
+
+        - player-owned attacker;
+        - Warden-controlled attacker;
+        - valid and invalid targets;
+        - equipped and missing/stale weapon;
+        - optional skill modifier;
+        - Normal / Advantage / Disadvantage;
+        - miss;
+        - critical failure and attacker-side consequences;
+        - hit;
+        - armor absorption/destruction;
+        - anti-armor;
+        - Wound;
+        - Bleeding;
+        - death outcome;
+        - transactional rollback;
+        - repeated submission;
+        - cancellation/stale async result;
+        - Warden direct damage;
+        - denied player direct damage.
+
+        Verify the UI remains measured and bounded at representative compact, standard,
+        wide, wide-short, and narrow-tall terminal shapes.
+
+        Attack setup must remain a resolution tool rather than a tactical encounter
+        shell: no initiative tracker, map, or invented range enforcement should have
+        appeared.
+
+        Strengthen semantic tests where useful and repair genuine regressions.
+
+        Leave roadmap completion status/index bookkeeping alone.
+
+    - id: "08"
+      kind: audit
+      label: final-combat-audit
+      actor: terra
+      reasoning: high
+      requiresChange: false
+      prompt: |
+        Audit Priority 5 as one complete subsystem.
+
+        All acceptance-criterion checkboxes should already be checked. Verify they are
+        actually true in implementation and tests.
+
+        Give particular scrutiny to:
+
+        - whether Attack uses current persisted attacker/target state;
+        - whether attacker-side Stress/Panic and target-side harm share one transaction;
+        - whether represented weapon resources are handled consistently rather than
+          inferred;
+        - whether miss versus hit roll records are unambiguous;
+        - whether wound-derived Bleeding is structured rather than parsed from prose;
+        - whether authorization grants structured target effects without granting
+          generic target mutation;
+        - whether retired/cross-game entities can slip through stale UI state;
+        - whether direct damage is genuinely Warden-only at the persistence boundary;
+        - whether async duplicate/stale/cancel behavior survived;
+        - whether the ordinary mechanics UI still exposes checks/saves correctly after
+          Attack was added;
+        - whether combat remains fiction-first and range guidance stays advisory.
+
+        Repair genuine defects. Do not add Priority 6 functionality.
+
+        Do not mark the feature status or roadmap index complete yet; the outer
+        workflow still has an automated gate and terminal confirmation to perform.
+
+    - id: "09"
+      kind: bookkeeping
+      label: combat-completion-bookkeeping
+      actor: luna
+      reasoning: low
+      requiresChange: false
+      prompt: |
+        All Priority 5 acceptance criteria, automated gates, final audit, and requested
+        manual confirmation have completed.
+
+        Inspect only Priority 5 completion bookkeeping.
+
+        If every criterion is checked, mark the Priority 5 feature Status complete and
+        mark Priority 5 complete in the ranked roadmap index.
+
+        Do not alter roadmap wording, priority ordering, another feature, code, tests,
+        or rules data.
+
+  humanGates:
+    - id: priority-5-manual-combat-confirmation
+      idempotent_record: "{{ state.manual_confirmation }}"
+      after:
+        - phase: "08"
+        - validation: post-audit
+      when: "{{ parameters.require_visual_confirm }}"
+      instructions: >-
+        Use the repository's normal isolated local-run procedure and connect over SSH.
+      checklist:
+        - id: player-attack-open
+          text: "Open a player-owned character and enter Mechanics -> Attack."
+
+        - id: player-attack-setup
+          text: >-
+            Confirm the attack workflow identifies an attacker the player is allowed to
+            use; an active target can be selected; the actually equipped catalogued
+            weapon is shown; canonical range/special information is guidance rather
+            than enforced positioning; optional skill/modifier setup is concise;
+            Normal/Advantage/Disadvantage are available; and the final target is visible
+            before submission.
+
+        - id: player-miss
+          text: >-
+            Resolve a miss and confirm no target damage is rolled/applied; legitimate
+            attacker-side Stress/Panic consequences remain possible; and the action log
+            clearly says the attack missed.
+
+        - id: player-hit
+          text: >-
+            Resolve a hit and confirm attack and damage rolls are understandable in the
+            log; armor/Health/Wound effects are reflected after completion; and a
+            relevant skill and non-Normal roll mode are visible in the record when used.
+
+        - id: warden-attacker-target
+          text: >-
+            As Warden, enter the attack workflow and confirm the Warden can choose an
+            appropriate active attacker and target.
+
+        - id: player-cannot-use-other-character
+          text: >-
+            Confirm an ordinary player cannot use another player's character as the
+            attacker.
+
+        - id: warden-direct-damage-present
+          text: >-
+            Confirm Direct Damage still exists for the Warden as a distinct adjudication
+            tool.
+
+        - id: player-direct-damage-denied
+          text: "Confirm Direct Damage is not usable by an ordinary player."
+
+        - id: responsive-layouts
+          text: >-
+            Exercise Attack at compact, standard, and wide terminal sizes and confirm
+            every selection and recovery/back action remains reachable.
+
+        - id: duplicate-submit
+          text: >-
+            Submit once and press Enter repeatedly while the attack is pending; confirm
+            only one attack is committed.
+
+        - id: cancel-no-mutation
+          text: >-
+            Back out of the setup at several points and confirm no mutation occurs.
+
+        - id: action-log-distinction
+          text: >-
+            Review the mission action log after several attacks and confirm weapon
+            attacks and Warden direct damage are distinguishable.
+
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+
+      evidence:
+        record: "{{ state.manual_confirmation }}"
+        value: head_commit
+
+      skip:
+        allowed_when: "{{ not parameters.require_visual_confirm }}"
+        warning: "manual Priority 5 confirmation was skipped"
+        evidence:
+          record: "{{ state.manual_confirmation }}"
+          value: "skipped {{ head_commit }}"
+
+  recovery:
+    activePhase:
+      - readActivePhase:
+          fields:
+            - phase_id
+            - phase_start_commit
+            - unchecked_count_before
+      - restorePhaseDefinition: true
+      - assertPhaseStartCommitExists: true
+      - assertPhaseStartIsAncestorOfHead: true
+
+      - if: "{{ phase.kind == 'criterion' and progress.is_checked(phase.criterion) }}"
+        then:
+          - validate: phaseGate
+          - assertProgress:
+              criterion: "{{ phase.criterion }}"
+              uncheckedCountBefore: "{{ state.active_phase.unchecked_count_before }}"
+              uncheckedCountDelta: -1
+          - checkpoint: checkpoint
+          - markPhaseComplete:
+              value: head_commit
+          - clearActivePhase: true
+          - return: recovered
+
+      - runAgent:
+          phase: "{{ state.active_phase.phase_id }}"
+          promptPrefix: |
+            Resume this phase from the repository state already present.
+
+            The prior run may have made partial commits or left partial working-tree
+            changes. Inspect them first; preserve correct work and finish only this phase's
+            objective.
+
+      - runPhaseAfterSequence: true
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: "Priority 5 workflow already completed at {{ state.workflow_complete.value }}"
+        - stop: success
+
+    - id: recover-interrupted-phase
+      if: "{{ state.active_phase.exists }}"
+      recover: activePhase
+
+    - id: require-clean-after-recovery
+      assert:
+        type: implementation-workspace-clean
+
+    - id: starting-state
+      validate: startingState
+
+    - phase: "01"
+    - phase: "02"
+    - phase: "03"
+    - phase: "04"
+    - phase: "05"
+    - phase: "06"
+
+    - id: all-criteria-closed
+      assert:
+        type: progress-empty
+        progress: spec.progress
+
+    - phase: "07"
+    - phase: "08"
+
+    - id: post-audit
+      validate: postAuditGate
+
+    - id: post-audit-checkpoint
+      checkpoint: checkpoint
+      label: post-audit
+
+    - human: priority-5-manual-combat-confirmation
+
+    - phase: "09"
+
+    - complete: priority-5
+
+  completion:
+    priority-5:
+      assertions:
+        - type: progress-empty
+          progress: spec.progress
+
+        - uses: assert-regex
+          with:
+            path: "{{ spec.paths.roadmap }}"
+            regex: '^Status:[[:space:]]+Complete[[:space:]]*$'
+
+        - uses: assert-regex
+          with:
+            path: "{{ spec.paths.roadmap_index }}"
+            regex: '^5\. \[[xX]\] \[Complete Combat Workflow\]'
+
+        - uses: assert-change-scope
+
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+
+      finalValidation: finalPriority5Gate
+
+      checkpoint:
+        uses: checkpoint
+        label: priority-5-complete
+
+      afterCheckpointAssertions:
+        - uses: assert-change-scope
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+
+      writeMarker:
+        record: "{{ state.workflow_complete }}"
+        value: head_commit
+
+      summary:
+        title: "Priority 5 — Complete Combat Workflow — complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - state_directory
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green

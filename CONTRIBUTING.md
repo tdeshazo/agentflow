@@ -1,0 +1,13 @@
+# Contributing
+
+Contributions should preserve the specification's separation between agent behavior and workflow authority.
+
+When changing the specification:
+
+1. Update `docs/agentflow-v1alpha1.md` when field semantics change.
+2. Keep `spec/agent-workflow-v1alpha1.yaml` consistent with the documented semantics.
+3. Update the describer skill if a new concept changes how workflows should be explained or audited.
+4. Add or update an example when a semantic change is difficult to understand from the reference definition alone.
+5. Keep deterministic advancement, mutation boundaries, recovery behavior, human gates, and completion semantics explicit rather than burying them in agent prompts.
+
+Before submitting changes, verify that all YAML files parse successfully and that relative links in the Markdown files remain valid.

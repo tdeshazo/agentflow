@@ -1,0 +1,415 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: complete-feature
+  description: >-
+    Declarative workflow for bounded AI implementation, deterministic validation,
+    human verification, resumable workspace mutation, recovery, and completion.
+
+spec:
+  # Runtime inputs may be supplied by environment, CLI, or orchestration host.
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    require_human_verification:
+      type: boolean
+      default: true
+    reset_state:
+      type: boolean
+      default: false
+    max_dynamic_steps:
+      type: integer
+      default: 16
+
+  # Persistent workflow identity and resumability.
+  state:
+    backend: git-dir
+    directory: ".git/agent-workflows/{{ metadata.name }}"
+    records:
+      base_commit: base
+      branch: branch
+      active_phase: active-phase.yaml
+      completed_phases: phases/
+      human_verification: human-confirmed
+      workflow_complete: complete
+    initialize:
+      require_clean_workspace: true
+      require_named_branch: true
+      capture:
+        - base_commit
+        - branch
+        - integrity_baseline
+    reset:
+      when: "{{ parameters.reset_state }}"
+      require_clean_workspace: true
+    resume:
+      enabled: true
+      require_base_is_ancestor_of_head: true
+      require_same_branch: true
+      completed_phase_marker:
+        value: head_commit
+        valid_when_marker_is_ancestor_of_head: true
+      active_phase:
+        strategy: validate-before-rerun
+        preserve_existing_changes: true
+        rerun_agent_only_if_needed: true
+
+  # Workspace mutation is an orchestration concern, not an agent preference.
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    cleanliness:
+      before_first_run: required
+      before_each_new_phase: required
+      allow_dirty_only_when_resuming_active_phase: true
+    agent_commits:
+      allowed: true
+      checkpoint_uncommitted_success: true
+      require_clean_after_checkpoint: true
+      commit_message: "Workflow {{ metadata.name }}: {{ phase.label }}"
+
+    mutationPolicy:
+      # Paths that implementation phases may change.
+      allowed:
+        - "internal/**"
+        - "cmd/**/*_test.go"
+        - "README.md"
+        - "docs/guides/**"
+
+      # Local orchestration/control files can be ignored when judging dirty state.
+      ignoredControlFiles:
+        - "AGENTS.md"
+        - "{{ workflow.file | default('') }}"
+
+      # Integrity rules are checked before validation and after mutations.
+      integrity:
+        - id: repository-instructions
+          paths: ["AGENTS.md"]
+          mode: exact-hash
+
+        - id: canonical-quality-gate
+          paths: ["scripts/check.sh", ".github/workflows/quality.yml"]
+          mode: exact-hash
+
+        - id: unrelated-planning
+          paths: ["docs/planning/*.md"]
+          mode: exact-hash
+          exclude:
+            - "docs/planning/roadmap-current.md"
+            - "docs/planning/README.md"
+
+        # Use normalized-hash when selected bookkeeping fields may change while
+        # the surrounding document structure must remain frozen.
+        - id: roadmap-structure
+          paths: ["docs/planning/roadmap-current.md"]
+          mode: normalized-hash
+          normalize:
+            command: >-
+              sed -E
+              -e 's/^Status:.*/Status: __STATUS__/'
+              -e 's/^- \[[ xX]\] /- [*] /'
+
+        - id: roadmap-index-structure
+          paths: ["docs/planning/README.md"]
+          mode: normalized-hash
+          normalize:
+            command: >-
+              sed -E 's/^5\. \[[ xX]\] /5. [*] /'
+
+  # AI actors are named capabilities. Phases choose an actor and reasoning level.
+  agents:
+    terra:
+      runner: codex
+      model: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+
+    luna:
+      runner: codex
+      model: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+
+  # Deterministic tools produce authoritative pass/fail results.
+  tools:
+    quality-gate:
+      type: shell
+      command: "sh scripts/check.sh"
+      capture:
+        stdout: true
+        stderr: true
+        log: "logs/gate-{{ invocation.id }}.log"
+      mutates_workspace: false
+
+    assert-scope:
+      type: workspace-policy
+      policy: "spec.workspace.mutationPolicy"
+      mutates_workspace: false
+
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+    assert-regex:
+      type: file-regex
+      mutates_workspace: false
+
+  # Preconditions are deterministic and run before agents can mutate anything.
+  preconditions:
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex]
+
+    - id: required-files
+      type: files-exist
+      paths:
+        - AGENTS.md
+        - scripts/check.sh
+        - .github/workflows/quality.yml
+
+    - id: quality-workflow-delegates-to-canonical-gate
+      type: file-contains
+      path: .github/workflows/quality.yml
+      text: scripts/check.sh
+
+    - id: state-lineage
+      type: git-lineage
+      base: "{{ state.base_commit }}"
+      require_ancestor_of_head: true
+      require_branch: "{{ state.branch }}"
+
+  # Optional source-of-truth progress model for roadmap/checklist workflows.
+  progress:
+    source:
+      type: markdown-checklist
+      path: docs/planning/roadmap-current.md
+      uncheckedPattern: '^- \[ \] (.+)$'
+      checkedPattern: '^- \[[xX]\] (.+)$'
+    selection:
+      strategy: first-unchecked
+    phaseInvariant:
+      # A criterion phase may close its targeted item, but must not close others.
+      targeted_item_must_be_checked: true
+      unchecked_count_delta: -1
+
+  # Validation owns advancement. Agents never decide that a phase is accepted.
+  validation:
+    baseline:
+      steps:
+        - uses: assert-scope
+        - uses: quality-gate
+
+    phaseGate:
+      steps:
+        - uses: assert-scope
+        - uses: quality-gate
+      onFailure:
+        strategy: repair-once
+        maxRepairAttempts: 1
+        repair:
+          actor: terra
+          reasoning: high
+          prompt: |
+            The workflow-owned validation gate failed during the current phase.
+            Diagnose and repair only the current phase. Preserve protected files,
+            do not weaken validation, and do not advance unrelated work.
+
+            The failing gate output is available as {{ validation.failure.log }}.
+        then:
+          - uses: assert-scope
+          - uses: quality-gate
+        exhausted: fail-workflow
+
+    finalGate:
+      steps:
+        - uses: assert-scope
+        - uses: quality-gate
+
+  # Phase kinds are deliberately distinct: criterion, implementation, audit,
+  # bookkeeping, tool, and human. `requiresChange: false` supports audits.
+  phases:
+    - id: "01"
+      kind: criterion
+      label: implement-first-criterion
+      actor: terra
+      reasoning: high
+      criterion: "First acceptance criterion text"
+      requiresChange: true
+      prompt: |
+        Read repository instructions and complete only this acceptance criterion.
+        Add focused tests. Do not work ahead. Mark only this criterion complete
+        after verification.
+      after:
+        - validate: phaseGate
+        - assertProgress: true
+        - checkpoint: checkpoint
+
+    - id: "02"
+      kind: criterion
+      label: implement-second-criterion
+      actor: luna
+      reasoning: high
+      criterion: "Second acceptance criterion text"
+      requiresChange: true
+      prompt: |
+        Complete only the second bounded criterion. Preserve existing behavior
+        outside its scope and add deterministic regression coverage.
+      after:
+        - validate: phaseGate
+        - assertProgress: true
+        - checkpoint: checkpoint
+
+    - id: "07"
+      kind: audit
+      label: integrated-regression-pass
+      actor: luna
+      reasoning: high
+      requiresChange: false
+      prompt: |
+        Audit the completed implementation as an integrated subsystem. Repair
+        genuine regressions, but do not add new features or alter completion
+        bookkeeping.
+      after:
+        - validate: phaseGate
+        - checkpoint: checkpoint
+
+    - id: "08"
+      kind: audit
+      label: final-implementation-audit
+      actor: terra
+      reasoning: high
+      requiresChange: false
+      prompt: |
+        Perform a final cross-cutting audit. Verify that checked criteria are
+        actually true in implementation and tests. Repair genuine defects only.
+      after:
+        - validate: phaseGate
+        - checkpoint: checkpoint
+
+    - id: "09"
+      kind: bookkeeping
+      label: completion-bookkeeping
+      actor: luna
+      reasoning: low
+      requiresChange: false
+      prompt: |
+        After implementation, validation, audits, and requested human verification
+        have completed, update only the authorized completion bookkeeping fields.
+      after:
+        - validate: phaseGate
+        - checkpoint: checkpoint
+
+  # Human verification is a gate with durable evidence, not part of an AI prompt.
+  humanGates:
+    - id: terminal-confirmation
+      when: "{{ parameters.require_human_verification }}"
+      requires:
+        - final-implementation-audit
+        - final-automated-validation
+      instructions: >-
+        Run the repository's isolated local procedure and verify the behavior in
+        the real target terminal/environment.
+      checklist:
+        - Verify the primary interaction is usable end-to-end.
+        - Verify denied/authorization paths are actually denied.
+        - Verify compact, standard, and wide layouts remain reachable.
+        - Verify repeated submission does not duplicate a pending mutation.
+        - Verify backing out before submission causes no mutation.
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        record: "{{ state.human_verification }}"
+        value: head_commit
+      skip:
+        allowed_when: "{{ not parameters.require_human_verification }}"
+        record: skipped-with-head-commit
+
+  # Recovery behavior for interrupted phases is explicit and idempotent.
+  recovery:
+    activePhase:
+      - assert: saved_phase_start_exists
+      - assert: saved_phase_start_is_ancestor_of_head
+      - restore_phase_definition: true
+      - validate_existing_state_first: true
+      - if_valid:
+          - assert_progress_if_applicable: true
+          - checkpoint: checkpoint
+          - mark_phase_complete: true
+      - if_invalid:
+          - run_repair_policy: phaseGate.onFailure
+          - if_still_incomplete:
+              rerun_same_agent_phase_with_prefix: |
+                Resume this phase from the repository state already present.
+                Inspect partial commits and working-tree changes first; preserve
+                correct work and finish only this phase's objective.
+          - validate: phaseGate
+          - assert_progress_if_applicable: true
+          - checkpoint: checkpoint
+          - mark_phase_complete: true
+
+  # Control flow supports both explicit phase sequences (newer scripts) and
+  # dynamic next-unchecked-criterion loops (older Priority 3/4 scripts).
+  flow:
+    - validate: baseline
+
+    # Explicit phases. Completed markers cause idempotent skipping on resume.
+    - phase: "01"
+    - phase: "02"
+
+    # Optional dynamic form for roadmap-driven workflows:
+    # - loop:
+    #     while: "{{ progress.unchecked_count > 0 }}"
+    #     maxIterations: "{{ parameters.max_dynamic_steps }}"
+    #     select: "{{ progress.next_unchecked }}"
+    #     dispatchByCriterion:
+    #       "First acceptance criterion text": "01"
+    #       "Second acceptance criterion text": "02"
+    #     requireUncheckedCountDelta: -1
+
+    - phase: "07"
+    - phase: "08"
+    - id: final-automated-validation
+      validate: finalGate
+      checkpoint: checkpoint
+    - human: terminal-confirmation
+    - phase: "09"
+    - complete: workflow
+
+  completion:
+    workflow:
+      assertions:
+        - type: progress-empty
+          progress: "spec.progress"
+        - uses: assert-regex
+          with:
+            path: docs/planning/roadmap-current.md
+            regex: '^Status:[[:space:]]+Complete[[:space:]]*$'
+        - uses: assert-regex
+          with:
+            path: docs/planning/README.md
+            regex: '^5\\. \\[[xX]\\] '
+        - uses: assert-scope
+        - type: integrity-baseline-unchanged
+
+      finalValidation: finalGate
+      checkpoint: checkpoint
+      writeMarker:
+        record: "{{ state.workflow_complete }}"
+        value: head_commit
+      summary:
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - final_gate_green
