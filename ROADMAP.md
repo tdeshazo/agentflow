@@ -26,6 +26,28 @@ Three principles guide the roadmap:
 2. **Agents may act; validation authorizes advancement.** Model output is evidence, not workflow authority.
 3. **Definition, execution, and assurance stay separable.** A reusable workflow definition, a concrete execution graph, and the observed execution trace are related but distinct artifacts.
 
+## Minimum viable product: self-hosting
+
+The minimum acceptable AgentFlow product is not merely a parser or an engine that can run a demonstration workflow. **AgentFlow plus its reference execution engine must be sufficient to drive real development of AgentFlow itself.**
+
+Before work beyond the initial runtime foundation is treated as critical-path product development, the repository must contain a self-hosting workflow that can be invoked with the AgentFlow interpreter against this repository and can safely complete a bounded, real change to the specification or interpreter.
+
+At minimum, that self-hosting workflow must exercise:
+
+- one or more AI implementation/audit phases through the provider abstraction;
+- runtime-enforced workspace mutation boundaries and protected files;
+- deterministic repository-owned validation rather than agent self-approval;
+- bounded repair after a failed validation;
+- Git checkpointing and clean-worktree enforcement;
+- interruption and resume without discarding accepted work;
+- durable phase/completion evidence;
+- completion assertions owned by the workflow engine; and
+- a real change to `agentflow-spec`, not a synthetic fixture repository.
+
+A shell command may launch AgentFlow, but a bespoke shell orchestrator must not own the phase sequence, repair loop, progress decisions, checkpoint policy, or completion transition. Those responsibilities must be expressed in the AgentFlow YAML and executed by the Go interpreter.
+
+The self-hosting workflow should remain in the repository as a continuously exercised example and regression target. Once AgentFlow can develop itself, later roadmap work should preferentially use AgentFlow for AgentFlow development so specification/runtime gaps are discovered through dogfooding.
+
 ## Current foundation
 
 The repository already has the core of an executable `v1alpha1` direction:
@@ -43,7 +65,7 @@ The repository already has the core of an executable `v1alpha1` direction:
 - durable human gates; and
 - explicit completion assertions and workflow-complete state.
 
-The current runtime intentionally implements a conservative subset of the broader descriptive specification. The roadmap closes that gap before expanding the language substantially.
+The current runtime intentionally implements a conservative subset of the broader descriptive specification. The roadmap first makes that subset mechanically precise and closes the runtime gap, then proves the system by using AgentFlow to develop AgentFlow itself.
 
 ---
 
@@ -94,7 +116,39 @@ The current runtime intentionally implements a conservative subset of the broade
 
 ---
 
-## Priority 3 — GitHub-Actions-like SDL authoring model
+## Priority 3 — Self-hosting development workflow
+
+**Goal:** Prove the SDL and Go interpreter are useful enough to orchestrate AgentFlow's own development.
+
+This is the MVP gate for the project. Priorities after this point are improvements to a system that has already demonstrated that it can safely develop itself.
+
+### Scope
+
+- Add a repository-owned AgentFlow workflow for development of `agentflow-spec`, for example `examples/develop-agentflow.agent-workflow.yaml`.
+- Use the normal Go interpreter entry point to execute that workflow against the repository itself.
+- Encode repository mutation policy, protected resources, validation, repair budget, checkpointing, recovery, and completion in YAML rather than a coordinating shell script.
+- Use at least one real AI implementation phase and one independent audit/review phase with intentionally chosen model/reasoning assignments.
+- Run deterministic Go/repository checks through AgentFlow-owned validation steps.
+- Preserve cohesive agent-created commits when valid and checkpoint successful dirty work when needed.
+- Prove interruption/restart behavior on a real self-development run.
+- Make self-hosting workflow state namespaced so repeated development workflows cannot collide with ordinary Git refs or other AgentFlow runs.
+- Produce useful `status` output while a self-hosted run is active, failed, recoverable, or complete.
+- Use the self-hosting workflow to complete at least one real subsequent `agentflow-spec` change and retain that run as documented evidence of dogfooding.
+- Add CI coverage that validates the self-hosting workflow definition and tests its deterministic/runtime semantics without requiring live model calls.
+
+### Exit criteria
+
+- From a clean `agentflow-spec` checkout, a developer can launch a self-development run with the AgentFlow CLI and a repository-owned YAML workflow.
+- The Go interpreter, not a bespoke shell wrapper, owns phase advancement, validation/repair, checkpointing, recovery, and completion.
+- A real AgentFlow source/specification change has been implemented and accepted through that workflow.
+- Killing the interpreter after a durable checkpoint and rerunning it resumes from persisted AgentFlow state rather than replaying accepted work.
+- A deliberately failing validation receives only its declared repair budget and cannot advance until deterministic checks pass.
+- Protected files and out-of-scope mutations are rejected even when an agent attempts them.
+- The self-hosting workflow remains a maintained example/conformance fixture for subsequent roadmap work.
+
+---
+
+## Priority 4 — GitHub-Actions-like SDL authoring model
 
 **Goal:** Make non-trivial workflows concise, regular, and learnable without weakening AgentFlow's authority model.
 
@@ -112,10 +166,13 @@ Evaluate and stabilize familiar declarative concepts such as:
 - concise step syntax for deterministic operations;
 - clear separation between AI execution units and deterministic steps.
 
+Use the self-hosting workflow as a primary ergonomics test. Syntax changes should be justified by concrete reductions in repetition or ambiguity observed while developing AgentFlow with AgentFlow.
+
 The language should avoid carrying forward accidental complexity from the original shell workflows. If the improved grammar requires incompatible field changes, introduce a new alpha API version with a documented migration rather than silently changing `v1alpha1` semantics.
 
 ### Exit criteria
 
+- The self-hosting workflow is materially easier to read and maintain under the improved authoring model.
 - A representative workflow can be read top-to-bottom without consulting runtime implementation details.
 - Common orchestration patterns require materially less repeated YAML than the initial reference format.
 - Actor authority, mutation authority, and validation authority remain structurally distinguishable.
@@ -123,7 +180,7 @@ The language should avoid carrying forward accidental complexity from the origin
 
 ---
 
-## Priority 4 — Explicit dependency graph and scheduler
+## Priority 5 — Explicit dependency graph and scheduler
 
 **Goal:** Move beyond a serialized phase list while retaining deterministic advancement and recovery.
 
@@ -144,10 +201,11 @@ The language should avoid carrying forward accidental complexity from the origin
 - Dependencies, not YAML declaration order alone, determine readiness.
 - A restart reconstructs the same executable graph and accepted-node state.
 - Conflicting concurrent mutation is rejected or explicitly serialized.
+- At least one self-hosted AgentFlow development workflow uses dependencies without weakening its mutation/checkpoint guarantees.
 
 ---
 
-## Priority 5 — Typed contracts, artifacts, and evidence
+## Priority 6 — Typed contracts, artifacts, and evidence
 
 **Goal:** Make handoffs between execution units machine-checkable rather than prompt conventions.
 
@@ -166,10 +224,11 @@ The language should avoid carrying forward accidental complexity from the origin
 - A downstream node can depend on a typed output rather than scraping agent prose.
 - Completion can cite structured evidence produced by validation.
 - Missing or incompatible artifacts fail before dependent execution.
+- The self-hosting workflow uses at least one typed contract/evidence path where it removes a prompt-level convention.
 
 ---
 
-## Priority 6 — Executor and tool extensibility
+## Priority 7 — Executor and tool extensibility
 
 **Goal:** Make the language portable across models, deterministic tools, humans, remote agents, and composite workflows.
 
@@ -191,7 +250,7 @@ The language should avoid carrying forward accidental complexity from the origin
 
 ---
 
-## Priority 7 — Capabilities, credentials, approvals, and budgets
+## Priority 8 — Capabilities, credentials, approvals, and budgets
 
 **Goal:** Move security and resource control out of prompt promises and into runtime-enforced policy.
 
@@ -215,7 +274,7 @@ The language should avoid carrying forward accidental complexity from the origin
 
 ---
 
-## Priority 8 — Execution trace, evidence, and observability
+## Priority 9 — Execution trace, evidence, and observability
 
 **Goal:** Make a run explainable independently of the reusable workflow definition.
 
@@ -235,10 +294,11 @@ The language should avoid carrying forward accidental complexity from the origin
 - A completed or failed run can be reconstructed at the orchestration level from its trace and Git evidence.
 - Users can explain why a node did or did not execute without reading interpreter logs.
 - Workflow-definition data is not conflated with run-specific trace data.
+- Self-hosted development runs provide enough trace data to diagnose failed or repaired phases without inspecting ad hoc shell output.
 
 ---
 
-## Priority 9 — Reusable workflows and composition
+## Priority 10 — Reusable workflows and composition
 
 **Goal:** Let teams build libraries of trusted procedures instead of copying prompt-heavy YAML.
 
@@ -258,10 +318,11 @@ The language should avoid carrying forward accidental complexity from the origin
 - Common phase/gate/recovery patterns can be packaged and reused without copy/paste.
 - Remote reusable components can be pinned to immutable identities.
 - The runtime can explain the fully resolved workflow before execution.
+- Repeated self-hosting policy/gate definitions can be factored into reusable components without weakening reviewability.
 
 ---
 
-## Priority 10 — Developer tooling and authoring experience
+## Priority 11 — Developer tooling and authoring experience
 
 **Goal:** Make the SDL pleasant to author and safe to review.
 
@@ -273,7 +334,7 @@ The language should avoid carrying forward accidental complexity from the origin
 - Graph visualization for dependencies and gates.
 - Shell/editor completion for CLI and workflow fields.
 - JSON Schema or equivalent editor integration.
-- High-quality examples covering sequential, conditional, recovery, DAG, human-gated, and reusable workflows.
+- High-quality examples covering sequential, conditional, recovery, DAG, human-gated, self-hosted, and reusable workflows.
 - Semantic workflow comparison that distinguishes behavior changes from prompt-only text changes.
 - Documentation generated from or verified against schema definitions where practical.
 
@@ -285,13 +346,13 @@ The language should avoid carrying forward accidental complexity from the origin
 
 ---
 
-## Priority 11 — `v1beta1` stabilization and conformance
+## Priority 12 — `v1beta1` stabilization and conformance
 
 **Goal:** Establish a version suitable for real external workflows and independent interpreter implementations.
 
 ### Scope
 
-- Resolve accumulated alpha design decisions.
+- Resolve accumulated alpha design decisions informed by self-hosting experience.
 - Publish a precise compatibility and deprecation policy.
 - Freeze core SDL semantics for `v1beta1`.
 - Publish schema artifacts and a normative conformance suite.
@@ -306,6 +367,7 @@ The language should avoid carrying forward accidental complexity from the origin
 - Another implementation can use the specification plus conformance fixtures without reverse-engineering the Go interpreter.
 - Existing supported alpha workflows have a documented migration path.
 - The reference interpreter passes the complete `v1beta1` conformance suite.
+- AgentFlow's own development workflow runs on the stabilized semantics or has a documented migration proving those semantics are practical for a real repository.
 
 ---
 
@@ -329,11 +391,12 @@ The recommended implementation order is:
 
 1. **Schema and diagnostics** — make the language mechanically precise.
 2. **`v1alpha1` runtime parity** — close the documented/runtime gap.
-3. **SDL authoring model** — simplify and stabilize the YAML surface before adding more topology.
-4. **DAG scheduler** — add dependency-driven concurrency on top of stable semantics.
-5. **Typed artifacts/evidence** — strengthen contracts between nodes.
-6. **Extensibility and security** — broaden executors while keeping authority enforceable.
-7. **Trace and composition** — make larger systems explainable and reusable.
-8. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
+3. **Self-hosting MVP** — use AgentFlow plus the Go interpreter to make a real, validated, resumable change to AgentFlow itself.
+4. **SDL authoring model** — use dogfooding experience to simplify and stabilize the YAML surface before adding more topology.
+5. **DAG scheduler** — add dependency-driven concurrency on top of proven sequential semantics.
+6. **Typed artifacts/evidence** — strengthen contracts between nodes.
+7. **Extensibility and security** — broaden executors while keeping authority enforceable.
+8. **Trace and composition** — make larger systems explainable and reusable.
+9. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
 
-The roadmap should be updated when implementation or research materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.
+The roadmap should be updated when implementation, research, or self-hosting experience materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.
