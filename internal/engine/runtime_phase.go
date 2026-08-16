@@ -23,6 +23,14 @@ type phaseValidationFailure struct{ err error }
 func (e *phaseValidationFailure) Error() string { return e.err.Error() }
 func (e *phaseValidationFailure) Unwrap() error { return e.err }
 
+// safetyViolation is a repository-policy failure. Repair actors may fix a bad
+// change, but they must never be asked to explain away a protected or
+// out-of-scope edit.
+type safetyViolation struct{ err error }
+
+func (e *safetyViolation) Error() string { return e.err.Error() }
+func (e *safetyViolation) Unwrap() error { return e.err }
+
 type repairBudgetExhaustedError struct {
 	validation string
 	failure    error
@@ -70,6 +78,10 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 						continue
 					}
 					if err := e.runValidation(ctx, action.Validate, p); err != nil {
+						var safetyErr *safetyViolation
+						if errors.As(err, &safetyErr) {
+							return err
+						}
 						return &phaseValidationFailure{err: err}
 					}
 					break
@@ -232,9 +244,21 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	}
 	err := e.runToolUses(ctx, v.Steps, p)
 	if err == nil {
+		if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
+			return clearErr
+		}
 		return nil
 	}
 	failure := err
+	if p != nil {
+		if persistErr := e.persistValidationFailure(p, name, failure); persistErr != nil {
+			return persistErr
+		}
+	}
+	var safetyErr *safetyViolation
+	if errors.As(failure, &safetyErr) {
+		return failure
+	}
 	if v.OnFailure.Strategy != "repair-once" || v.OnFailure.MaxRepairAttempts < 1 {
 		return fmt.Errorf("validation %s failed: %w", name, failure)
 	}
@@ -254,7 +278,35 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		return fmt.Errorf("validation %s still fails after repair: %w", name, err)
 	}
 	e.lastFailure = ""
+	if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
+		return clearErr
+	}
 	return nil
+}
+
+func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failure error) error {
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil || !ok || active.PhaseID != p.ID {
+		return err
+	}
+	active.Validation = name
+	active.ValidationError = errorOutput(failure)
+	return e.Store.SetJSON(e.activeRecord(), active)
+}
+
+func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
+	if p == nil {
+		return nil
+	}
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil || !ok || active.PhaseID != p.ID || active.Validation != name {
+		return err
+	}
+	active.Validation = ""
+	active.ValidationError = ""
+	return e.Store.SetJSON(e.activeRecord(), active)
 }
 
 // consumeRepairAttempt persists a phase-local budget before invoking a repair

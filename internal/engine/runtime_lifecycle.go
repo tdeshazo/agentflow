@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -62,6 +63,10 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		}
 		if action.Validate != "" {
 			if err := e.runValidation(ctx, action.Validate, phase); err != nil {
+				var safetyErr *safetyViolation
+				if errors.As(err, &safetyErr) {
+					return err
+				}
 				return &phaseValidationFailure{err: err}
 			}
 		}

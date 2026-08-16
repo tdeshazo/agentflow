@@ -66,6 +66,11 @@ This gives the runtime several useful Git properties for free:
 - state storage does not dirty the worktree; and
 - no external database needs to be synchronized with repository lineage.
 
+`status` derives its state from these durable records. It distinguishes an
+uninitialized workflow, an active phase, a recoverable validation failure, a
+pending human gate, and a completed workflow; stale completion markers are not
+reported as completed when their commit is no longer an ancestor of `HEAD`.
+
 ## Provider interface
 
 AI execution is provider-neutral. Providers implement:

@@ -103,13 +103,19 @@ func (e *Engine) assertScope() error {
 	if err != nil {
 		return err
 	}
+	// Check immutable project boundaries first. A protected file is rejected as
+	// a protected-file violation even though it is also outside the ordinary
+	// mutation allowlist; this keeps the policy's reason durable and explicit.
+	if err := e.assertIntegrity(); err != nil {
+		return err
+	}
 	allowed := e.Workflow.Spec.Workspace.MutationPolicy.Allowed
 	for _, f := range files {
 		if !matchesAny(allowed, f) {
-			return fmt.Errorf("out-of-scope file changed: %s", f)
+			return &safetyViolation{err: fmt.Errorf("out-of-scope file changed: %s", f)}
 		}
 	}
-	return e.assertIntegrity()
+	return nil
 }
 
 func (e *Engine) computeIntegrity() (IntegrityBaseline, error) {
@@ -139,7 +145,7 @@ func (e *Engine) assertIntegrity() error {
 	}
 	for id, want := range baseline {
 		if current[id] != want {
-			return fmt.Errorf("protected integrity rule %s changed", id)
+			return &safetyViolation{err: fmt.Errorf("protected integrity rule %s changed", id)}
 		}
 	}
 	return nil

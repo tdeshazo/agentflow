@@ -63,8 +63,9 @@ go run ./cmd/agentflow status \
   -C .
 ```
 
-It reports whether the run is initialized, its saved base and branch, an active
-phase if one was interrupted, and whether completion has been recorded.
+It reports a durable state such as `uninitialized`, `active`,
+`validation-failed/recoverable`, `human-gated`, or `completed`, along with the
+saved base/branch, active phase, failed validation, and human gate when present.
 
 ## Resume
 

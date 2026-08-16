@@ -38,6 +38,12 @@ go vet ./...
 step "Race-enabled Go tests"
 go test -race ./...
 
+step "Deterministic self-hosting runtime"
+go test ./internal/engine -run '^TestSelfHosting' -count=1
+
+step "Self-hosting definition"
+go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml
+
 step "Shipped AgentWorkflow definitions"
 mapfile -t WORKFLOW_FILES < <(rg --files spec examples -g '*.yaml' -g '*.yml' | sort)
 for workflow in "${WORKFLOW_FILES[@]}"; do

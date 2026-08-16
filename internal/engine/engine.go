@@ -41,6 +41,8 @@ type ActivePhase struct {
 	UncheckedBefore   int            `json:"unchecked_count_before"`
 	CheckedBefore     []string       `json:"checked_before"`
 	RepairAttempts    map[string]int `json:"repair_attempts,omitempty"`
+	Validation        string         `json:"validation,omitempty"`
+	ValidationError   string         `json:"validation_error,omitempty"`
 }
 
 type IntegrityBaseline map[string]string
@@ -388,20 +390,54 @@ func (e *Engine) Status() error {
 	if err != nil {
 		return err
 	}
-	complete, cok, err := e.Store.Resolve(e.workflowCompleteMarker())
+	cok, complete, err := e.validCommitMarker(e.workflowCompleteMarker())
 	if err != nil {
 		return err
 	}
 	var branch string
-	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
+	if _, err := e.Store.GetJSON(e.branchRecord(), &branch); err != nil {
+		return err
+	}
 	var active ActivePhase
-	aok, _ := e.Store.GetJSON(e.activeRecord(), &active)
+	aok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil {
+		return err
+	}
+	state := "uninitialized"
+	if bok {
+		state = "ready"
+	}
+	if cok {
+		state = "completed"
+	}
+	if bok && !cok && aok {
+		state = "active"
+		if active.Validation != "" {
+			state = "validation-failed/recoverable"
+		}
+	}
+	pendingGate := ""
+	if bok && !cok && !aok {
+		if gate, err := e.pendingHumanGate(); err != nil {
+			return err
+		} else if gate != "" {
+			state = "human-gated"
+			pendingGate = gate
+		}
+	}
 	fmt.Fprintf(e.Out, "workflow: %s\nrepo: %s\ninitialized: %v\n", e.Workflow.Metadata.Name, e.Repo.Root, bok)
+	fmt.Fprintf(e.Out, "state: %s\n", state)
+	if pendingGate != "" {
+		fmt.Fprintf(e.Out, "human_gate: %s\n", pendingGate)
+	}
 	if bok {
 		fmt.Fprintf(e.Out, "base: %s\nbranch: %s\n", base, branch)
 	}
 	if aok {
 		fmt.Fprintf(e.Out, "active_phase: %s @ %s\n", active.PhaseID, active.StartCommit)
+		if active.Validation != "" {
+			fmt.Fprintf(e.Out, "validation_failed: %s\nvalidation_error: %s\n", active.Validation, active.ValidationError)
+		}
 	}
 	fmt.Fprintf(e.Out, "complete: %v", cok)
 	if cok {
@@ -409,6 +445,54 @@ func (e *Engine) Status() error {
 	}
 	fmt.Fprintln(e.Out)
 	return nil
+}
+
+func (e *Engine) pendingHumanGate() (string, error) {
+	for _, gate := range e.Workflow.Spec.HumanGates {
+		condition := gate.When
+		if gate.If != "" {
+			condition = gate.If
+		}
+		required, err := e.bool(nil, condition)
+		if err != nil {
+			return "", err
+		}
+		if !required {
+			continue
+		}
+		record := "human/" + gate.ID
+		if gate.IdempotentRecord != "" {
+			resolved, err := e.recordName(gate.IdempotentRecord, nil)
+			if err != nil {
+				return "", err
+			}
+			record = resolved
+		}
+		if ok, _, err := e.validCommitMarker(record); err != nil {
+			return "", err
+		} else if ok {
+			continue
+		}
+		ready := true
+		for _, prerequisite := range gate.Requires {
+			phase, err := e.phaseByID(prerequisite)
+			if err != nil {
+				return "", err
+			}
+			ok, _, err := e.validCommitMarker(e.phaseMarkerName(phase))
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				ready = false
+				break
+			}
+		}
+		if ready {
+			return gate.ID, nil
+		}
+	}
+	return "", nil
 }
 
 func (e *Engine) runBasicPreconditions() error {
