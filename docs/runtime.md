@@ -37,6 +37,7 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/base
 refs/agentflow/workflow-<hex-encoded-workflow-name>/branch
 refs/agentflow/workflow-<hex-encoded-workflow-name>/active
 refs/agentflow/workflow-<hex-encoded-workflow-name>/integrity
+refs/agentflow/workflow-<hex-encoded-workflow-name>/run-identity
 refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/complete
@@ -49,6 +50,20 @@ names; the interpreter uses those names within the same workflow namespace.
 Commit-valued records point directly at repository commits. Structured records
 such as the active phase, branch name, and integrity baseline are JSON blobs
 written with `git hash-object -w` and referenced through the same namespace.
+`run-identity` is a fixed runtime record, separate from the configurable
+branch/base/integrity records. At initialization it records SHA-256 digests of
+the executable workflow definition, all resolved run parameters, and other
+execution inputs such as the selected workspace and directly referenced
+environment values. The canonical input bytes and parameter values are never
+persisted. On `run`, an existing identity must match before the runtime reuses
+active phases,
+checkpoints, repair budgets, human evidence, or completion markers. A changed
+task, model parameter, environment-backed value, or executable workflow
+definition is rejected with a non-secret diagnostic; use `reset` (or a
+workflow-controlled reset) to intentionally abandon that history. An exact
+restart continues normally. `status` and explicit `reset` only inspect or
+discard state, so they do not require repeating the original task or secret
+parameters.
 An active-phase record also carries `actor_completed`: it becomes true only
 after the primary phase provider returns successfully. A green deterministic
 gate is not a substitute for that evidence, so recovery reruns an actor whose

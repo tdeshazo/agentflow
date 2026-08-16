@@ -80,7 +80,8 @@ func run() error {
 	}
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
-	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: map[string]string(overrides)})
+	stateOnly := cmd == "status" || cmd == "reset"
+	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: map[string]string(overrides), StateOnly: stateOnly})
 	if err != nil {
 		return err
 	}

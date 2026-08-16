@@ -27,10 +27,11 @@ type Engine struct {
 	In         io.Reader
 	Out        io.Writer
 
-	lastFailure   string
-	phase         *workflow.Phase
-	invocationID  string
-	tempDirectory string
+	lastFailure        string
+	phase              *workflow.Phase
+	invocationID       string
+	tempDirectory      string
+	parametersResolved bool
 }
 
 type ActivePhase struct {
@@ -68,12 +69,36 @@ var invocationSequence uint64
 type Options struct {
 	RepoRoot  string
 	Overrides map[string]string
+	// StateOnly constructs an engine for status or explicit reset. When the
+	// repository root is supplied, it deliberately avoids resolving run
+	// parameters so operators need not re-enter a task or secret just to inspect
+	// or discard durable state.
+	StateOnly bool
 }
 
 func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Options) (*Engine, error) {
-	params, err := resolveParameters(w, opts.Overrides)
-	if err != nil {
-		return nil, err
+	params := map[string]any{}
+	parametersResolved := false
+	var err error
+	if !opts.StateOnly {
+		params, err = resolveParameters(w, opts.Overrides)
+		if err != nil {
+			return nil, err
+		}
+		parametersResolved = true
+	} else if opts.RepoRoot == "" {
+		rootTemplate := w.Spec.Workspace.Root
+		if rootTemplate == "" {
+			rootTemplate = "{{ parameters.repo_root }}"
+		}
+		rootParameters, err := workflow.ParameterReferences(rootTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("workspace root: %w", err)
+		}
+		params, err = resolveParameterNames(w, opts.Overrides, rootParameters)
+		if err != nil {
+			return nil, err
+		}
 	}
 	ctx := workflow.Context{Metadata: w.Metadata, Parameters: params, Paths: w.Spec.Paths, WorkflowFile: w.File}
 	root := w.Spec.Workspace.Root
@@ -92,8 +117,8 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	e := &Engine{Workflow: w, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1))}
-	if w.Spec.Temp.Directory != "" {
+	e := &Engine{Workflow: w, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved}
+	if !opts.StateOnly && w.Spec.Temp.Directory != "" {
 		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
 		if err != nil {
 			return nil, err
@@ -114,6 +139,13 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 }
 
 func resolveParameters(w *workflow.Workflow, overrides map[string]string) (map[string]any, error) {
+	return resolveParameterNames(w, overrides, nil)
+}
+
+// resolveParameterNames resolves only the parameters needed by a state-only
+// operation to locate its repository. A nil name list resolves the complete
+// run parameter set.
+func resolveParameterNames(w *workflow.Workflow, overrides map[string]string, names []string) (map[string]any, error) {
 	for name := range overrides {
 		if _, ok := w.Spec.Parameters[name]; !ok {
 			return nil, fmt.Errorf("unknown parameter override %q", name)
@@ -174,7 +206,13 @@ func resolveParameters(w *workflow.Workflow, overrides map[string]string) (map[s
 		out[name] = parsed
 		return parsed, nil
 	}
-	for name := range w.Spec.Parameters {
+	if names == nil {
+		names = make([]string, 0, len(w.Spec.Parameters))
+		for name := range w.Spec.Parameters {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
 		if _, err := resolve(name); err != nil {
 			return nil, err
 		}
@@ -233,6 +271,14 @@ func (e *Engine) Run(ctx context.Context) error {
 	reset, err := e.resetRequested()
 	if err != nil {
 		return fmt.Errorf("reset condition: %w", err)
+	}
+	// A reset is the intentional escape hatch from a prior run identity. For
+	// every other run, reject incompatible inputs before even basic checks can
+	// consult or advance durable acceptance evidence.
+	if !reset {
+		if _, err := e.verifyStoredRunIdentity(); err != nil {
+			return err
+		}
 	}
 	if reset {
 		if err := e.Reset(); err != nil {
@@ -304,7 +350,8 @@ func (e *Engine) branchRecord() string {
 func (e *Engine) activeRecord() string {
 	return configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active")
 }
-func (e *Engine) integrityRecord() string { return "integrity" }
+func (e *Engine) integrityRecord() string   { return "integrity" }
+func (e *Engine) runIdentityRecord() string { return "run-identity" }
 
 func (e *Engine) resumeEnabled() bool {
 	if e.Workflow.Spec.State.Resume.Enabled == nil {
@@ -442,7 +489,7 @@ func (e *Engine) Status() error {
 		}
 	}
 	pendingGate := ""
-	if bok && !cok && !aok {
+	if bok && !cok && !aok && e.parametersResolved {
 		if gate, err := e.pendingHumanGate(); err != nil {
 			return err
 		} else if gate != "" {
@@ -664,11 +711,27 @@ func (e *Engine) runCheck(c workflow.Check) error {
 }
 
 func (e *Engine) initializeOrResumeState() error {
+	identityOK, err := e.verifyStoredRunIdentity()
+	if err != nil {
+		return err
+	}
 	base, ok, err := e.Store.Resolve(e.baseRecord())
 	if err != nil {
 		return err
 	}
 	if !ok {
+		if identityOK {
+			return fmt.Errorf("workflow state is corrupt: run identity exists without initialized base state")
+		}
+		names, err := e.Store.Names()
+		if err != nil {
+			return err
+		}
+		if len(names) != 0 {
+			if err := e.resetInterruptedInitialization(); err != nil {
+				return err
+			}
+		}
 		return e.initializeState()
 	}
 	requireBaseAncestor := e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead ||
@@ -690,7 +753,7 @@ func (e *Engine) initializeOrResumeState() error {
 	if err != nil {
 		return err
 	}
-	if !branchOK || !integrityOK {
+	if !branchOK || !integrityOK || !identityOK {
 		if err := e.resetInterruptedInitialization(); err != nil {
 			return err
 		}
@@ -746,6 +809,15 @@ func (e *Engine) initializeState() error {
 			}
 		}
 	}
+	identity, err := e.expectedRunIdentity()
+	if err != nil {
+		return err
+	}
+	// Write this last. Until then a restart treats the records as an
+	// interrupted initialization rather than trusting a partially captured run.
+	if err := e.Store.SetJSON(e.runIdentityRecord(), identity); err != nil {
+		return fmt.Errorf("persist run identity: %w", err)
+	}
 	return nil
 }
 
@@ -754,7 +826,7 @@ func (e *Engine) resetInterruptedInitialization() error {
 	if err != nil {
 		return err
 	}
-	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true}
+	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true, e.runIdentityRecord(): true}
 	for _, record := range e.Workflow.Spec.State.Records.Integrity {
 		allowed[record] = true
 	}

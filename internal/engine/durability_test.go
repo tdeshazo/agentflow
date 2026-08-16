@@ -65,6 +65,10 @@ func TestInitializeRequiresCleanWorkspaceAndCapturesState(t *testing.T) {
 	if ok, err := e.Store.GetJSON("integrity", &integrity); err != nil || !ok {
 		t.Fatalf("integrity baseline: ok=%v err=%v", ok, err)
 	}
+	var identity RunIdentity
+	if ok, err := e.Store.GetJSON(e.runIdentityRecord(), &identity); err != nil || !ok || identity.Algorithm != "sha256" || identity.WorkflowDigest == "" || identity.ParametersDigest == "" || identity.ExecutionDigest == "" {
+		t.Fatalf("run identity: %#v ok=%v err=%v", identity, ok, err)
+	}
 
 	t.Run("interrupted initialization is retried only before execution evidence exists", func(t *testing.T) {
 		repo := newDurableRepo(t)
@@ -89,6 +93,231 @@ func TestInitializeRequiresCleanWorkspaceAndCapturesState(t *testing.T) {
 			t.Fatalf("recovered initialization rewrote history: head=%s err=%v want=%s", got, err, head)
 		}
 	})
+}
+
+func TestRunIdentityBindsRestartInputs(t *testing.T) {
+	newWorkflow := func(repo, name string) *workflow.Workflow {
+		w := durableWorkflow(repo, name)
+		w.Spec.Flow = nil
+		w.Spec.Parameters["task"] = workflow.Parameter{Type: "string", Default: ""}
+		w.Spec.Parameters["model"] = workflow.Parameter{Type: "string", Default: "model-a"}
+		agent := w.Spec.Agents["worker"]
+		agent.Model = "{{ parameters.model }}"
+		w.Spec.Agents["worker"] = agent
+		return w
+	}
+	newEngine := func(t *testing.T, w *workflow.Workflow, p provider.Provider, overrides map[string]string) *Engine {
+		t.Helper()
+		e, err := New(w, map[string]provider.Provider{"test": p}, Options{Overrides: overrides})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.In = strings.NewReader("")
+		e.Out = io.Discard
+		return e
+	}
+
+	t.Run("same task continues", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-same")
+		secretTask := "replace the credential rotation path"
+		e := newEngine(t, w, &durableProvider{}, map[string]string{"task": secretTask, "model": "model-a"})
+		if err := e.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": secretTask, "model": "model-a"}).Run(context.Background()); err != nil {
+			t.Fatalf("exact restart: %v", err)
+		}
+		sha, ok, err := e.Store.Resolve(e.runIdentityRecord())
+		if err != nil || !ok {
+			t.Fatalf("run identity ref: %q ok=%v err=%v", sha, ok, err)
+		}
+		blob, err := exec.Command("git", "-C", repo, "cat-file", "blob", sha).CombinedOutput()
+		if err != nil {
+			t.Fatalf("read run identity blob: %v: %s", err, blob)
+		}
+		if strings.Contains(string(blob), secretTask) || strings.Contains(string(blob), "model-a") {
+			t.Fatalf("run identity persisted a plaintext input: %s", blob)
+		}
+	})
+
+	t.Run("changed task is rejected without echoing it", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-task")
+		oldTask, newTask := "secret task one", "secret task two"
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": oldTask}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		err := newEngine(t, w, &durableProvider{}, map[string]string{"task": newTask}).Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "resolved run inputs changed") {
+			t.Fatalf("changed task error = %v", err)
+		}
+		if strings.Contains(err.Error(), oldTask) || strings.Contains(err.Error(), newTask) {
+			t.Fatalf("changed task diagnostic exposed a plaintext input: %v", err)
+		}
+	})
+
+	t.Run("changed model input is rejected", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-model")
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same", "model": "model-a"}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same", "model": "model-b"}).Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "resolved run inputs changed") {
+			t.Fatalf("changed model error = %v", err)
+		}
+	})
+
+	t.Run("overridden environment-backed parameter does not create a second binding", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-overridden-environment")
+		w.Spec.Parameters["model"] = workflow.Parameter{Type: "string", Default: "{{ env.AGENTFLOW_IDENTITY_FALLBACK_MODEL }}"}
+		t.Setenv("AGENTFLOW_IDENTITY_FALLBACK_MODEL", "fallback-a")
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same", "model": "chosen"}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTFLOW_IDENTITY_FALLBACK_MODEL", "fallback-b")
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same", "model": "chosen"}).Run(context.Background()); err != nil {
+			t.Fatalf("restart with unchanged resolved model: %v", err)
+		}
+	})
+
+	t.Run("changed executable workflow definition is rejected", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-definition")
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same"}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		agent := w.Spec.Agents["worker"]
+		agent.Sandbox = "workspace-write"
+		w.Spec.Agents["worker"] = agent
+		err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same"}).Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "executable workflow definition changed") {
+			t.Fatalf("changed definition error = %v", err)
+		}
+	})
+
+	t.Run("changed directly referenced environment is rejected", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-environment")
+		w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "{{ env.AGENTFLOW_IDENTITY_MODEL }}", MayCommit: true}
+		t.Setenv("AGENTFLOW_IDENTITY_MODEL", "model-a")
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same"}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AGENTFLOW_IDENTITY_MODEL", "model-b")
+		err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "same"}).Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "resolved execution environment changed") {
+			t.Fatalf("changed direct environment error = %v", err)
+		}
+	})
+
+	t.Run("status does not need the original task", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := newWorkflow(repo, "identity-status")
+		w.Spec.Parameters["secret"] = workflow.Parameter{Type: "string", Env: "AGENTFLOW_IDENTITY_STATUS_SECRET"}
+		if err := newEngine(t, w, &durableProvider{}, map[string]string{"task": "do not persist this task", "secret": "not persisted"}).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		e, err := New(w, map[string]provider.Provider{"test": &durableProvider{}}, Options{StateOnly: true})
+		if err != nil {
+			t.Fatalf("construct status without task or secret: %v", err)
+		}
+		var out bytes.Buffer
+		e.Out = &out
+		if err := e.Status(); err != nil {
+			t.Fatalf("status without task: %v", err)
+		}
+		if !strings.Contains(out.String(), "state: ready") {
+			t.Fatalf("status = %s", out.String())
+		}
+	})
+}
+
+func TestRunIdentityAllowsIntentionalReset(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "identity-reset")
+	w.Spec.Flow = nil
+	w.Spec.Parameters["task"] = workflow.Parameter{Type: "string", Default: ""}
+	w.Spec.Parameters["reset_run"] = workflow.Parameter{Type: "boolean", Default: false}
+	w.Spec.State.Reset.When = "{{ parameters.reset_run }}"
+	newEngine := func(t *testing.T, overrides map[string]string) *Engine {
+		t.Helper()
+		e, err := New(w, map[string]provider.Provider{"test": &durableProvider{}}, Options{Overrides: overrides})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.In = strings.NewReader("")
+		e.Out = io.Discard
+		return e
+	}
+
+	if err := newEngine(t, map[string]string{"task": "old task"}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	direct, err := New(w, map[string]provider.Provider{"test": &durableProvider{}}, Options{StateOnly: true})
+	if err != nil {
+		t.Fatalf("construct explicit reset without run inputs: %v", err)
+	}
+	direct.In = strings.NewReader("")
+	direct.Out = io.Discard
+	if err := direct.Reset(); err != nil {
+		t.Fatalf("explicit reset: %v", err)
+	}
+	if _, ok, err := direct.Store.Resolve(direct.runIdentityRecord()); err != nil || ok {
+		t.Fatalf("explicit reset left run identity: ok=%v err=%v", ok, err)
+	}
+	if err := newEngine(t, map[string]string{"task": "old task"}).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	controlled := newEngine(t, map[string]string{"task": "new task", "reset_run": "true"})
+	if err := controlled.Run(context.Background()); err != nil {
+		t.Fatalf("workflow-controlled reset: %v", err)
+	}
+	if ok, err := controlled.verifyStoredRunIdentity(); err != nil || !ok {
+		t.Fatalf("new identity after workflow-controlled reset: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRunIdentityStateNamespacesRemainIsolated(t *testing.T) {
+	repo := newDurableRepo(t)
+	newWorkflow := func(name string) *workflow.Workflow {
+		w := durableWorkflow(repo, name)
+		w.Spec.Flow = nil
+		w.Spec.Parameters["task"] = workflow.Parameter{Type: "string", Default: ""}
+		return w
+	}
+	newEngine := func(t *testing.T, w *workflow.Workflow, task string) *Engine {
+		t.Helper()
+		e, err := New(w, map[string]provider.Provider{"test": &durableProvider{}}, Options{Overrides: map[string]string{"task": task}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.In = strings.NewReader("")
+		e.Out = io.Discard
+		return e
+	}
+	first := newEngine(t, newWorkflow("identity namespace one"), "first")
+	second := newEngine(t, newWorkflow("identity-namespace-one"), "second")
+	if first.Store.Namespace == second.Store.Namespace {
+		t.Fatalf("workflow namespaces collide: %q", first.Store.Namespace)
+	}
+	if err := first.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := first.Store.Resolve(first.runIdentityRecord()); err != nil || ok {
+		t.Fatalf("first identity survived reset: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := second.Store.Resolve(second.runIdentityRecord()); err != nil || !ok {
+		t.Fatalf("second identity was affected by first reset: ok=%v err=%v", ok, err)
+	}
 }
 
 func TestResumeInterruptedBeforeCheckpointPreservesDirtyPartialWork(t *testing.T) {
@@ -656,7 +885,7 @@ func TestInvalidatedMarkerAndLineageChangesDoNotAdvanceWork(t *testing.T) {
 	}
 }
 
-func TestHumanGateAndCompletionAreRestartIdempotent(t *testing.T) {
+func TestHumanGateEvidenceIsRestartIdempotent(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "human-and-complete")
 	w.Spec.Phases = nil
@@ -676,7 +905,6 @@ func TestHumanGateAndCompletionAreRestartIdempotent(t *testing.T) {
 		t.Fatalf("human evidence: ok=%v err=%v", ok, err)
 	}
 
-	w.Spec.Flow = []workflow.FlowStep{{Human: "review"}, {Complete: "done"}}
 	var out bytes.Buffer
 	e2 := newDurableEngine(t, w, p)
 	e2.In = strings.NewReader("")
@@ -687,14 +915,8 @@ func TestHumanGateAndCompletionAreRestartIdempotent(t *testing.T) {
 	if !strings.Contains(out.String(), "already recorded") {
 		t.Fatalf("restart did not use durable human evidence: %s", out.String())
 	}
-	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	if p.calls != 0 {
 		t.Fatalf("completed workflow invoked a provider: %d calls", p.calls)
-	}
-	if _, ok, err := e.Store.Resolve("complete"); err != nil || !ok {
-		t.Fatalf("complete evidence: ok=%v err=%v", ok, err)
 	}
 }
 

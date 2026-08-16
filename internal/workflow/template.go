@@ -863,14 +863,50 @@ func ParameterReferences(value string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return referencesWithPrefix(expressions, "parameters."), nil
+}
+
+// EnvironmentReferences returns parsed environment references from ordinary
+// template interpolation. It intentionally ignores text outside {{ ... }} so
+// a prompt that merely mentions "env.NAME" is not treated as an input.
+func EnvironmentReferences(value string) ([]string, error) {
+	expressions, err := parseTemplateExpressions(value)
+	if err != nil {
+		return nil, err
+	}
+	return referencesWithPrefix(expressions, "env."), nil
+}
+
+// ExpressionEnvironmentReferences returns parsed environment references from a
+// typed expression such as a condition or loop bound. These fields may omit
+// {{ ... }}, unlike ordinary string interpolation.
+func ExpressionEnvironmentReferences(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(value, "{{") {
+		if !strings.HasSuffix(value, "}}") || strings.Count(value, "{{") != 1 || strings.Count(value, "}}") != 1 {
+			return nil, fmt.Errorf("typed expression must contain exactly one complete template")
+		}
+		value = strings.TrimSpace(value[2 : len(value)-2])
+	}
+	x, err := parseExpression(value)
+	if err != nil {
+		return nil, err
+	}
+	return referencesWithPrefix([]expression{x}, "env."), nil
+}
+
+func referencesWithPrefix(expressions []expression, prefix string) []string {
 	seen := map[string]bool{}
 	var out []string
 	var visit func(expression)
 	visit = func(x expression) {
 		switch value := x.(type) {
 		case referenceExpression:
-			if strings.HasPrefix(value.name, "parameters.") {
-				name := strings.TrimPrefix(value.name, "parameters.")
+			if strings.HasPrefix(value.name, prefix) {
+				name := strings.TrimPrefix(value.name, prefix)
 				if !seen[name] {
 					seen[name] = true
 					out = append(out, name)
@@ -893,7 +929,7 @@ func ParameterReferences(value string) ([]string, error) {
 	for _, x := range expressions {
 		visit(x)
 	}
-	return out, nil
+	return out
 }
 func tailLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
