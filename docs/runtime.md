@@ -95,28 +95,34 @@ bootstrap interpreter intentionally does not execute. `run`, `status`, and
 Diagnostics include YAML paths and source positions for semantic errors where
 the YAML parser exposes them.
 
-The initial runtime supports the constructs needed by the concrete Priority 5
-workflow:
+The current runtime supports the following executable core:
 
-- typed parameters and environment/default expansion;
+- typed parameters with deterministic defaults, environment values, and CLI
+  overrides;
+- a bounded, parsed expression language with typed boolean conditions;
 - Git repository, command, file, containment, lineage, branch, and integrity
   preconditions;
 - allowed-path mutation policy;
 - exact/group/normalized integrity hashing;
 - Markdown checklist progress and one-criterion progress invariants;
+- first-unchecked progress selection and bounded next-unchecked loops;
 - named AI phases with provider-neutral actors;
 - shell and workspace-policy validation tools;
 - one bounded repair attempt;
 - automatic Git checkpoints of allowed dirty files;
 - resumable active phases and commit-aware phase markers;
 - interactive human gates with durable commit evidence;
+- conditional flow steps, validation steps, phase lifecycle actions, phases,
+  and human gates;
 - flow assertions for clean workspace and empty progress; and
 - completion assertions, final validation, checkpoint, and complete marker.
 
-The template evaluator is deliberately small. It recognizes the expressions used
-by the current reference/example workflows (`parameters.*`, `spec.paths.*`,
-selected `state.*`/`phase.*` fields, environment defaults, and validation-log
-tails). It is not a general-purpose template language.
+The expression evaluator is deliberately small and parsed before execution. It
+supports typed literals, a finite list of workflow/state/progress references,
+`not`/`and`/`or`, equality and integer comparisons, `default(...)`,
+`progress.is_checked(...)`, and bounded validation-log `tail(...)`. It is not a
+general-purpose template language: unknown functions, type mismatches, and
+unavailable values fail closed.
 
 ## Codex adapter
 
@@ -129,7 +135,7 @@ color, and ephemeral execution settings and captures the final message using
 ## Current limits
 
 This is an interpreter MVP, not yet a complete implementation of every field in
-the descriptive specification. In particular, dynamic loops, arbitrary boolean
-expressions, parallel DAG scheduling, provider APIs other than Codex, and custom
-tool plugins are future work. Unsupported executable constructs should produce an
-error rather than be ignored.
+the descriptive specification. In particular, parallel DAG scheduling, arbitrary
+programming-language expressions, provider APIs other than Codex, and custom tool
+plugins are future work. Unsupported executable constructs produce an error
+rather than being ignored.

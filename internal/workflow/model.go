@@ -268,6 +268,7 @@ type Repair struct {
 }
 type ToolUse struct {
 	Uses string        `yaml:"uses"`
+	If   string        `yaml:"if"`
 	With ToolArguments `yaml:"with"`
 }
 
@@ -299,10 +300,10 @@ type PhaseAction struct {
 	PersistActivePhase                       PersistActivePhase `yaml:"persist_active_phase"`
 	Validate                                 string             `yaml:"validate"`
 	If                                       string             `yaml:"if"`
-	AssertProgress                           any                `yaml:"assertProgress"`
+	AssertProgress                           *ProgressAssertion `yaml:"assertProgress"`
 	Checkpoint                               string             `yaml:"checkpoint"`
 	AssertNetRepositoryChangeSincePhaseStart bool               `yaml:"assertNetRepositoryChangeSincePhaseStart"`
-	MarkPhaseComplete                        any                `yaml:"markPhaseComplete"`
+	MarkPhaseComplete                        *Marker            `yaml:"markPhaseComplete"`
 	ClearActivePhase                         bool               `yaml:"clearActivePhase"`
 	Return                                   string             `yaml:"return"`
 	AssertProgressIfApplicable               bool               `yaml:"assert_progress_if_applicable"`
@@ -310,6 +311,38 @@ type PhaseAction struct {
 	RunRepairPolicy                          string             `yaml:"run_repair_policy"`
 	IfStillIncomplete                        IncompleteAction   `yaml:"if_still_incomplete"`
 }
+
+// ProgressAssertion is deliberately tied to the workflow progress source. It
+// does not accept arbitrary expressions or mutation hooks: it can only assert
+// the selected criterion and the documented progress delta.
+type ProgressAssertion struct {
+	Enabled              bool   `yaml:"-"`
+	Criterion            string `yaml:"criterion"`
+	UncheckedCountBefore string `yaml:"uncheckedCountBefore"`
+	UncheckedCountDelta  int    `yaml:"uncheckedCountDelta"`
+}
+
+// UnmarshalYAML accepts the historical `assertProgress: true` spelling while
+// normalizing it to the explicit assertion object used by the runtime.
+func (p *ProgressAssertion) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		var enabled bool
+		if err := value.Decode(&enabled); err != nil {
+			return err
+		}
+		p.Enabled = enabled
+		return nil
+	}
+	type raw ProgressAssertion
+	var decoded raw
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	*p = ProgressAssertion(decoded)
+	p.Enabled = true
+	return nil
+}
+
 type PersistActivePhase struct {
 	Fields []string `yaml:"fields"`
 }
@@ -328,6 +361,7 @@ type Phase struct {
 	Reasoning      string        `yaml:"reasoning"`
 	Criterion      string        `yaml:"criterion"`
 	RequiresChange bool          `yaml:"requiresChange"`
+	If             string        `yaml:"if"`
 	Prompt         string        `yaml:"prompt"`
 	After          []PhaseAction `yaml:"after"`
 }
@@ -338,6 +372,7 @@ type HumanGate struct {
 	After            []HumanAfter    `yaml:"after"`
 	Requires         []string        `yaml:"requires"`
 	When             string          `yaml:"when"`
+	If               string          `yaml:"if"`
 	Instructions     string          `yaml:"instructions"`
 	Checklist        []ChecklistItem `yaml:"checklist"`
 	Acknowledgement  Acknowledgement `yaml:"acknowledgement"`
@@ -397,7 +432,19 @@ type FlowStep struct {
 	Complete   string       `yaml:"complete"`
 	Recover    string       `yaml:"recover"`
 	Assert     *Assertion   `yaml:"assert"`
+	Loop       *Loop        `yaml:"loop"`
 	Then       []FlowAction `yaml:"then"`
+}
+
+// Loop is the only dynamic iteration construct in v1alpha1. It repeatedly
+// selects the next unchecked progress item and dispatches a declared phase.
+// There is intentionally no arbitrary collection iteration or evaluation.
+type Loop struct {
+	While                      string            `yaml:"while"`
+	MaxIterations              string            `yaml:"maxIterations"`
+	Select                     string            `yaml:"select"`
+	DispatchByCriterion        map[string]string `yaml:"dispatchByCriterion"`
+	RequireUncheckedCountDelta int               `yaml:"requireUncheckedCountDelta"`
 }
 type FlowAction struct {
 	Report string `yaml:"report"`

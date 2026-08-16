@@ -13,6 +13,44 @@ This reference describes the semantics used by the workflow definitions in this 
 
 Runtime inputs and environment-backed overrides. Parameters may alter models, repository root, human verification, reset behavior, or iteration bounds.
 
+Parameters are typed as `string`, `path`, `boolean`, or `integer`. Resolution is
+deterministic: a `--set name=value` override wins over a declared `env` value,
+which wins over `default`. Every resulting value must coerce to its declared
+type; unknown overrides, malformed values, and cyclic parameter defaults fail
+before the engine opens a repository. A default may reference another declared
+parameter, including one declared later in YAML.
+
+`-C` is a workspace-root override, not an implicit parameter override. This
+keeps the command-line repository target independent from a workflow's own
+parameter names.
+
+## Expressions and conditions
+
+`{{ ... }}` uses a small expression language, not a general-purpose template
+or programming language. Supported values are booleans, integers, quoted
+strings, and these references:
+
+- `parameters.<name>`, `spec.paths.<name>`, `metadata.name`, and `workflow.file`;
+- `env.<NAME>` (normally with `| default('value')`);
+- documented `state.*` and active-phase fields;
+- `phase.id`, `phase.label`, `phase.kind`, `phase.criterion`, and
+  `phase.requiresChange`;
+- `progress.unchecked_count`, `progress.next_unchecked`, and
+  `progress.is_checked(<criterion>)`; and
+- `head_commit` and `validation.failure.log`, with
+  `tail(validation.failure.log, <positive integer>)` for bounded log context.
+
+Expressions may use `not`, `and`, `or`, `==`, `!=`, integer comparisons, and
+parentheses. Conditions must evaluate to a boolean; strings such as `"true"`
+are not silently coerced. Template interpolation turns values into text only
+for an ordinary string field. Typed fields (conditions, loop bounds, and typed
+parameter defaults) preserve and check their values.
+
+Unknown references, unsupported functions, malformed syntax, incompatible
+comparisons, and unavailable runtime values fail closed. They are never treated
+as an empty string or a false condition. A new expression form is therefore an
+explicit specification/runtime change rather than a string-substitution case.
+
 ## `spec.paths`
 
 Named repository paths used elsewhere by templates. This is convenience/indirection, not authority by itself.
@@ -121,6 +159,12 @@ Important concepts:
 
 `unchecked_count_delta: -1` means a criterion phase must reduce the unchecked count by exactly one. Combined with `targeted_item_must_be_checked`, it prevents an agent from closing unrelated criteria to manufacture progress.
 
+With `selection.strategy: first-unchecked`, the runtime reads the declared
+checklist source in document order. `progress.next_unchecked` is that one item,
+not an arbitrary query over repository files. If `no_other_criterion_may_close`
+is set, the accepted phase must not newly check any other item as it closes its
+target.
+
 ## `spec.validation`
 
 Named deterministic acceptance gates.
@@ -178,6 +222,8 @@ Key fields:
 - `reasoning`: requested effort tier.
 - `criterion`: targeted progress item.
 - `requiresChange`: whether a net repository diff since phase start is mandatory.
+- `if`: optional boolean condition. A false condition skips the phase without
+  invoking its actor or creating a completion marker.
 - `prompt`: bounded work instructions.
 
 ## `spec.humanGates`
@@ -193,6 +239,10 @@ Important fields:
 - `acknowledgement`: exact confirmation protocol;
 - `evidence`: persistent record, commonly current `HEAD`;
 - `skip`: explicit permitted bypass and evidence when verification is disabled.
+
+`when` (or the equivalent `if` spelling where supported) is a boolean
+condition. A false gate does not prompt; it records the declared durable gate
+evidence at the current commit.
 
 ## `spec.recovery`
 
@@ -227,7 +277,25 @@ Typical flow:
 10. run completion bookkeeping;
 11. execute completion contract.
 
-`flow` can also express dynamic loops for “next unchecked criterion” workflows.
+`flow` can also express dynamic loops for “next unchecked criterion” workflows:
+
+```yaml
+- loop:
+    while: "{{ progress.unchecked_count > 0 }}"
+    maxIterations: "{{ parameters.max_dynamic_steps }}"
+    select: "{{ progress.next_unchecked }}"
+    dispatchByCriterion:
+      "First acceptance criterion": "01"
+      "Second acceptance criterion": "02"
+    requireUncheckedCountDelta: -1
+```
+
+This is the sole dynamic loop form in `v1alpha1`. `maxIterations` must be a
+positive integer and the required delta must be negative. Each selected text
+must map to a declared criterion phase targeting that same text. The engine
+checks the progress delta after every iteration and fails at the bound rather
+than continuing indefinitely. Flow steps, validation tool uses, phase
+lifecycle actions, phases, and gates can all carry a boolean condition.
 
 ## `spec.completion`
 

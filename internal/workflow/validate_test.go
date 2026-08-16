@@ -86,11 +86,41 @@ func TestValidateRejectsWrongStructuralType(t *testing.T) {
 	}
 }
 
-func TestValidateDistinguishesUnsupportedRuntimeSurface(t *testing.T) {
+func TestValidateAcceptsImplementedRuntimeSurface(t *testing.T) {
 	body := strings.Replace(executableFixture, "type: workspace-policy", "type: file-regex", 1)
 	r := ValidateFile(writeWorkflow(t, body))
-	if r.Status != Unsupported {
+	if r.Status != Executable {
 		t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+	}
+}
+
+func TestValidateRejectsInvalidControlFlowExpressions(t *testing.T) {
+	cases := []struct {
+		name    string
+		replace string
+		want    string
+	}{
+		{name: "unknown condition reference", replace: "if: \"{{ parameters.missing }}\"\n    - phase: build", want: "unknown parameter reference"},
+		{name: "unsupported function", replace: "if: \"{{ evaluate('anything') }}\"\n    - phase: build", want: "unsupported expression function"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(executableFixture, "  flow:\n    - phase: build", "  flow:\n    - "+tc.replace, 1)
+			r := ValidateFile(writeWorkflow(t, body))
+			if r.Status != Invalid {
+				t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+			}
+			found := false
+			for _, diagnostic := range r.Diagnostics {
+				if strings.Contains(diagnostic.Message, tc.want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("diagnostics = %#v, want %q", r.Diagnostics, tc.want)
+			}
+		})
 	}
 }
 

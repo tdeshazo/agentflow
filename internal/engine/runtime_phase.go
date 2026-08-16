@@ -18,6 +18,16 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	}
 	e.phase = p
 	defer func() { e.phase = nil }()
+	if p.If != "" {
+		ok, err := e.bool(p, p.If)
+		if err != nil {
+			return fmt.Errorf("phase %s condition: %w", id, err)
+		}
+		if !ok {
+			fmt.Fprintf(e.Out, "==> Skipping phase %s: condition is false\n", id)
+			return nil
+		}
+	}
 
 	if ok, sha, err := e.validCommitMarker("phases/" + id); err != nil {
 		return err
@@ -46,15 +56,17 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	if len(dirty) > 0 {
 		return fmt.Errorf("phase %s cannot start with unexplained dirty files: %s", id, strings.Join(dirty, ", "))
 	}
-	start, err := e.Repo.Head()
+	active, err := e.newActivePhase(id)
 	if err != nil {
 		return err
 	}
-	before, err := e.uncheckedCount()
-	if err != nil {
-		return err
+	if len(e.Workflow.Spec.PhaseDefaults.Before) > 0 {
+		if err := e.runPhaseActions(ctx, p, &active, e.Workflow.Spec.PhaseDefaults.Before); err != nil {
+			return err
+		}
 	}
-	active := ActivePhase{PhaseID: id, StartCommit: start, UncheckedBefore: before}
+	// A durable active record is a runtime safety invariant even for compact
+	// workflows that omit the verbose lifecycle declarations.
 	if err := e.Store.SetJSON("active", active); err != nil {
 		return err
 	}
@@ -66,14 +78,28 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	return e.finishPhase(ctx, p, active)
 }
 func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active ActivePhase) error {
+	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
+	actions = append(actions, p.After...)
+	if len(actions) == 0 {
+		return e.finishPhaseLegacy(ctx, p, active)
+	}
+	if err := e.runPhaseActions(ctx, p, &active, actions); err != nil {
+		return err
+	}
+	return e.requirePhaseCompletion(p)
+}
+
+func (e *Engine) finishPhaseLegacy(ctx context.Context, p *workflow.Phase, active ActivePhase) error {
 	if err := e.assertScope(); err != nil {
 		return err
 	}
-	if err := e.runValidation(ctx, "phaseGate", p); err != nil {
-		return err
+	if _, ok := e.Workflow.Spec.Validation["phaseGate"]; ok {
+		if err := e.runValidation(ctx, "phaseGate", p); err != nil {
+			return err
+		}
 	}
 	if p.Kind == "criterion" {
-		if err := e.assertProgress(p, active.UncheckedBefore); err != nil {
+		if err := e.assertProgress(p, active); err != nil {
 			return err
 		}
 	}
@@ -81,26 +107,17 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 		return err
 	}
 	if p.RequiresChange {
-		changed, err := e.Repo.HasNetChange(active.StartCommit)
-		if err != nil {
+		if err := e.assertNetChange(p, active); err != nil {
 			return err
 		}
-		if !changed {
-			return fmt.Errorf("phase %s (%s) produced no net repository change", p.ID, p.Label)
-		}
 	}
-	head, err := e.Repo.Head()
-	if err != nil {
-		return err
-	}
-	if err := e.Store.SetCommit("phases/"+p.ID, head); err != nil {
+	if err := e.markPhaseComplete(p); err != nil {
 		return err
 	}
 	if err := e.Store.Delete("active"); err != nil {
 		return err
 	}
-	fmt.Fprintf(e.Out, "==> Phase %s complete at %s\n", p.ID, shortSHA(head))
-	return nil
+	return e.requirePhaseCompletion(p)
 }
 func (e *Engine) recoverActive(ctx context.Context) error {
 	var a ActivePhase
@@ -125,20 +142,7 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 			return err
 		}
 		if checked {
-			if err := e.runValidation(ctx, "phaseGate", p); err != nil {
-				return err
-			}
-			if err := e.assertProgress(p, a.UncheckedBefore); err != nil {
-				return err
-			}
-			if err := e.checkpoint(p.Label, p); err != nil {
-				return err
-			}
-			head, _ := e.Repo.Head()
-			if err := e.Store.SetCommit("phases/"+p.ID, head); err != nil {
-				return err
-			}
-			return e.Store.Delete("active")
+			return e.finishPhase(ctx, p, a)
 		}
 	}
 	prompt := "Resume this phase from the repository state already present.\nInspect partial commits and working-tree changes first; preserve correct work and finish only this phase's objective.\n\n" + p.Prompt
@@ -196,13 +200,26 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 }
 func (e *Engine) runToolUses(steps []workflow.ToolUse, p *workflow.Phase) error {
 	for _, use := range steps {
-		if err := e.runTool(use.Uses, p); err != nil {
+		if use.If != "" {
+			ok, err := e.bool(p, use.If)
+			if err != nil {
+				return fmt.Errorf("tool %s condition: %w", use.Uses, err)
+			}
+			if !ok {
+				continue
+			}
+		}
+		if err := e.runToolUse(use, p); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 func (e *Engine) runTool(name string, p *workflow.Phase) error {
+	return e.runToolUse(workflow.ToolUse{Uses: name}, p)
+}
+func (e *Engine) runToolUse(use workflow.ToolUse, p *workflow.Phase) error {
+	name := use.Uses
 	t, ok := e.Workflow.Spec.Tools[name]
 	if !ok {
 		return fmt.Errorf("unknown tool %q", name)
@@ -229,6 +246,16 @@ func (e *Engine) runTool(name string, p *workflow.Phase) error {
 		return nil
 	case "git-checkpoint":
 		return e.checkpoint(name, p)
+	case "file-regex":
+		path, err := e.context(p).Expand(use.With.Path)
+		if err != nil {
+			return err
+		}
+		regex, err := e.context(p).Expand(use.With.Regex)
+		if err != nil {
+			return err
+		}
+		return e.assertFileRegex(path, regex)
 	default:
 		return fmt.Errorf("unsupported tool type %q for %s", t.Type, name)
 	}

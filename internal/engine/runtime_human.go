@@ -54,9 +54,16 @@ func (e *Engine) runHuman(id string) error {
 		fmt.Fprintf(e.Out, "==> Human gate %s already recorded\n", id)
 		return nil
 	}
-	required, err := e.context(nil).Bool(gate.When)
+	condition := gate.When
+	if gate.If != "" {
+		if condition != "" {
+			return fmt.Errorf("human gate %s declares both when and if", id)
+		}
+		condition = gate.If
+	}
+	required, err := e.bool(nil, condition)
 	if err != nil {
-		return err
+		return fmt.Errorf("human gate %s condition: %w", id, err)
 	}
 	head, err := e.Repo.Head()
 	if err != nil {
@@ -146,18 +153,7 @@ func (e *Engine) runAssertion(a workflow.Assertion) error {
 			if err != nil {
 				return err
 			}
-			b, err := os.ReadFile(filepath.Join(e.Repo.Root, p))
-			if err != nil {
-				return err
-			}
-			re, err := regexp.Compile(r)
-			if err != nil {
-				return err
-			}
-			if !re.Match(b) {
-				return fmt.Errorf("%s does not match %s", p, r)
-			}
-			return nil
+			return e.assertFileRegex(p, r)
 		default:
 			return fmt.Errorf("unsupported assertion tool %q", a.Uses)
 		}
@@ -186,4 +182,19 @@ func (e *Engine) runAssertion(a workflow.Assertion) error {
 	default:
 		return fmt.Errorf("unsupported assertion type %q", a.Type)
 	}
+}
+
+func (e *Engine) assertFileRegex(path, pattern string) error {
+	b, err := os.ReadFile(filepath.Join(e.Repo.Root, path))
+	if err != nil {
+		return err
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+	if !re.Match(b) {
+		return fmt.Errorf("%s does not match %s", path, pattern)
+	}
+	return nil
 }

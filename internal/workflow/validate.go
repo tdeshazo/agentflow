@@ -3,7 +3,6 @@ package workflow
 import (
 	"fmt"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -87,12 +86,18 @@ func (v validator) roots() {
 			v.add(Invalid, "spec.parameters."+n+".type", "unknown parameter type %q", p.Type)
 		}
 		v.parameterDefault(n, p)
+		if p.Env != "" && !validEnvironmentName(p.Env) {
+			v.add(Invalid, "spec.parameters."+n+".env", "invalid environment variable name %q", p.Env)
+		}
 	}
 	v.uniqueChecks()
 	v.uniquePhases()
 	v.uniqueCriteria()
 	v.uniqueGates()
 	v.uniqueIntegrity()
+	if strategy := v.w.Spec.Progress.Selection.Strategy; strategy != "" && strategy != "first-unchecked" {
+		v.add(Invalid, "spec.progress.selection.strategy", "unsupported progress selection strategy %q", strategy)
+	}
 }
 func (v validator) parameterDefault(name string, p Parameter) {
 	if p.Default == nil {
@@ -100,6 +105,9 @@ func (v validator) parameterDefault(name string, p Parameter) {
 	}
 	k := reflect.TypeOf(p.Default).Kind()
 	path := "spec.parameters." + name + ".default"
+	if value, ok := p.Default.(string); ok && strings.Contains(value, "{{") {
+		return // The expression is validated separately and its evaluated type is checked at runtime.
+	}
 	switch p.Type {
 	case "boolean":
 		if k != reflect.Bool {
@@ -188,6 +196,9 @@ func (v validator) references() {
 			v.agent("spec.validation."+name+".onFailure.repair.actor", a)
 		}
 	}
+	for i, check := range v.w.Spec.Preconditions {
+		v.condition(fmt.Sprintf("spec.preconditions[%d].when", i), check.When)
+	}
 	for i, p := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d]", i)
 		if p.Actor == "" {
@@ -203,10 +214,16 @@ func (v validator) references() {
 			}
 		}
 		v.actions(path+".after", p.After)
+		v.condition(path+".if", p.If)
 	}
 	v.actions("spec.phaseDefaults.before", v.w.Spec.PhaseDefaults.Before)
 	v.actions("spec.phaseDefaults.after", v.w.Spec.PhaseDefaults.After)
 	for i, g := range v.w.Spec.HumanGates {
+		v.condition(fmt.Sprintf("spec.humanGates[%d].when", i), g.When)
+		v.condition(fmt.Sprintf("spec.humanGates[%d].if", i), g.If)
+		if g.When != "" && g.If != "" {
+			v.add(Invalid, fmt.Sprintf("spec.humanGates[%d]", i), "must not declare both when and if")
+		}
 		for j, a := range g.After {
 			p := fmt.Sprintf("spec.humanGates[%d].after[%d]", i, j)
 			if a.Phase != "" {
@@ -246,7 +263,12 @@ func (v validator) references() {
 		if s.Assert != nil {
 			n++
 		}
-		if s.If == "" && n == 0 {
+		if s.Loop != nil {
+			n++
+			v.loop(p+".loop", *s.Loop)
+		}
+		v.condition(p+".if", s.If)
+		if n == 0 && len(s.Then) == 0 {
 			v.add(Invalid, p, "must contain an executable action")
 		}
 	}
@@ -270,6 +292,7 @@ func (v validator) toolUses(path string, uses []ToolUse) {
 		} else {
 			v.tool(fmt.Sprintf("%s[%d].uses", path, i), u.Uses)
 		}
+		v.condition(fmt.Sprintf("%s[%d].if", path, i), u.If)
 	}
 }
 func (v validator) actions(path string, actions []PhaseAction) {
@@ -281,6 +304,49 @@ func (v validator) actions(path string, actions []PhaseAction) {
 		if a.Checkpoint != "" {
 			v.tool(p+".checkpoint", a.Checkpoint)
 		}
+		v.condition(p+".if", a.If)
+		if a.AssertProgress != nil && a.AssertProgress.Criterion != "" && !strings.Contains(a.AssertProgress.Criterion, "{{") && !v.criterion(a.AssertProgress.Criterion) {
+			v.add(Invalid, p+".assertProgress.criterion", "unknown criterion %q", a.AssertProgress.Criterion)
+		}
+	}
+}
+func (v validator) condition(path, value string) {
+	if value == "" {
+		return
+	}
+	if err := validateTypedExpression(value, StaticContext{Parameters: v.w.Spec.Parameters, Paths: v.w.Spec.Paths}); err != nil {
+		v.add(Invalid, path, "invalid expression: %s", err)
+	}
+}
+func (v validator) loop(path string, loop Loop) {
+	if v.w.Spec.Progress.Selection.Strategy != "first-unchecked" {
+		v.add(Invalid, "spec.progress.selection.strategy", "must be first-unchecked when a loop selects progress.next_unchecked")
+	}
+	if loop.While == "" {
+		v.add(Invalid, path+".while", "is required")
+	} else {
+		v.condition(path+".while", loop.While)
+	}
+	if loop.MaxIterations == "" {
+		v.add(Invalid, path+".maxIterations", "is required")
+	} else {
+		v.condition(path+".maxIterations", loop.MaxIterations)
+	}
+	if loop.Select != "{{ progress.next_unchecked }}" {
+		v.add(Invalid, path+".select", "must be {{ progress.next_unchecked }}")
+	}
+	if len(loop.DispatchByCriterion) == 0 {
+		v.add(Invalid, path+".dispatchByCriterion", "must dispatch at least one criterion")
+	}
+	for _, criterion := range sortedKeys(loop.DispatchByCriterion) {
+		phase := loop.DispatchByCriterion[criterion]
+		if !v.criterion(criterion) {
+			v.add(Invalid, path+".dispatchByCriterion."+criterion, "unknown criterion %q", criterion)
+		}
+		v.phase(path+".dispatchByCriterion."+criterion, phase)
+	}
+	if loop.RequireUncheckedCountDelta >= 0 {
+		v.add(Invalid, path+".requireUncheckedCountDelta", "must be negative")
 	}
 }
 func (v validator) assertions(path string, as []Assertion) {
@@ -346,18 +412,17 @@ func (v validator) criterion(id string) bool {
 	return false
 }
 
-// expressions checks the small amount of expression structure that can be
-// validated without repository or runtime state. It deliberately does not
-// evaluate conditionals or add runtime expression features; it only catches
-// malformed delimiters and references to statically-known names.
+// expressions parses every expression before a repository is opened. Runtime
+// values (state, progress, and environment) remain unresolved, but unknown
+// roots, malformed operators, and unsupported calls fail closed here.
 func (v validator) expressions() {
 	visitStrings(reflect.ValueOf(v.w), "", func(path, value string) {
 		if !strings.Contains(value, "{{") && !strings.Contains(value, "}}") {
 			return
 		}
-		validateTemplateString(path, value, v.w.Spec.Parameters, v.w.Spec.Paths, func(message string) {
-			v.add(Invalid, path, "invalid expression: %s", message)
-		})
+		if err := validateTemplate(value, StaticContext{Parameters: v.w.Spec.Parameters, Paths: v.w.Spec.Paths}); err != nil {
+			v.add(Invalid, path, "invalid expression: %s", err)
+		}
 	})
 }
 
@@ -411,110 +476,6 @@ func visitStrings(value reflect.Value, path string, visit func(string, string)) 
 	}
 }
 
-var expressionReferenceRE = regexp.MustCompile(`\b(parameters|spec\.paths|metadata|phase)\.([A-Za-z_][A-Za-z0-9_-]*)`)
-var expressionTokenRE = regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*\b`)
-var expressionLiteralRE = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`)
-var malformedExpressionReferenceRE = regexp.MustCompile(`\b(parameters|metadata|phase|spec(?:\.paths)?)\s*\.\s*(?:$|[^A-Za-z0-9_-])`)
-
-func validateTemplateString(path, value string, parameters map[string]Parameter, paths map[string]string, invalid func(string)) {
-	for offset := 0; offset < len(value); {
-		open := strings.Index(value[offset:], "{{")
-		close := strings.Index(value[offset:], "}}")
-		if close >= 0 && (open < 0 || close < open) {
-			invalid("unmatched closing delimiter")
-			return
-		}
-		if open < 0 {
-			return
-		}
-		open += offset
-		end := strings.Index(value[open+2:], "}}")
-		if end < 0 {
-			invalid("missing closing delimiter")
-			return
-		}
-		end += open + 2
-		expr := strings.TrimSpace(value[open+2 : end])
-		if message := validateExpressionReference(expr, parameters, paths); message != "" {
-			invalid(message)
-		}
-		offset = end + 2
-	}
-}
-
-func validateExpressionReference(expr string, parameters map[string]Parameter, paths map[string]string) string {
-	if expr == "" {
-		return "expression must not be empty"
-	}
-	parts := strings.Split(expr, "|")
-	if len(parts) > 2 {
-		return "expression has too many filters"
-	}
-	base := strings.TrimSpace(parts[0])
-	if base == "" {
-		return "expression base must not be empty"
-	}
-	if len(parts) == 2 {
-		filter := strings.TrimSpace(parts[1])
-		if !strings.HasPrefix(filter, "default(") || !strings.HasSuffix(filter, ")") {
-			return "only the default filter is supported"
-		}
-		argument := strings.TrimSpace(filter[len("default(") : len(filter)-1])
-		if len(argument) < 2 || argument[0] != argument[len(argument)-1] || (argument[0] != '\'' && argument[0] != '"') {
-			return "default filter requires a quoted argument"
-		}
-	}
-
-	// String literals are not references. This also permits shell-like text in
-	// mktemp arguments while still checking the expression around it.
-	withoutLiterals := expressionLiteralRE.ReplaceAllString(base, " ")
-	allowedRoots := map[string]bool{
-		"env": true, "head_commit": true, "invocation": true, "metadata": true,
-		"mktemp": true, "parameters": true, "phase": true, "progress": true,
-		"spec": true, "state": true, "tail": true, "temp": true,
-		"validation": true, "workflow": true, "true": true, "false": true,
-	}
-	for _, token := range expressionTokenRE.FindAllString(withoutLiterals, -1) {
-		root := strings.Split(token, ".")[0]
-		if root == "not" || root == "and" || root == "or" {
-			continue
-		}
-		if !allowedRoots[root] {
-			return fmt.Sprintf("unknown expression reference %q", root)
-		}
-		if token == "parameters" || token == "metadata" || token == "phase" || token == "spec" || token == "spec.paths" {
-			return fmt.Sprintf("incomplete expression reference %q", token)
-		}
-	}
-	if malformedExpressionReferenceRE.MatchString(withoutLiterals) {
-		return "incomplete expression reference"
-	}
-
-	for _, match := range expressionReferenceRE.FindAllStringSubmatch(base, -1) {
-		switch match[1] {
-		case "parameters":
-			if _, ok := parameters[match[2]]; !ok {
-				return fmt.Sprintf("unknown parameter reference %q", match[2])
-			}
-		case "spec.paths":
-			if _, ok := paths[match[2]]; !ok {
-				return fmt.Sprintf("unknown spec path reference %q", match[2])
-			}
-		case "metadata":
-			if match[2] != "name" {
-				return fmt.Sprintf("unknown metadata reference %q", match[2])
-			}
-		case "phase":
-			switch match[2] {
-			case "id", "label", "kind", "criterion", "requiresChange":
-			default:
-				return fmt.Sprintf("unknown phase reference %q", match[2])
-			}
-		}
-	}
-	return ""
-}
-
 func (v validator) runtimeSurface() {
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
 		a := v.w.Spec.Agents[name]
@@ -528,7 +489,7 @@ func (v validator) runtimeSurface() {
 	for _, name := range sortedKeys(v.w.Spec.Tools) {
 		t := v.w.Spec.Tools[name]
 		switch t.Type {
-		case "shell", "workspace-policy", "git-checkpoint":
+		case "shell", "workspace-policy", "git-checkpoint", "file-regex":
 		default:
 			v.add(Unsupported, "spec.tools."+name+".type", "tool type %q is not implemented by this runtime", t.Type)
 		}
@@ -536,31 +497,12 @@ func (v validator) runtimeSurface() {
 			v.add(Unsupported, "spec.tools."+name+".capture", "tool output capture is not implemented by this runtime")
 		}
 	}
-	if !reflect.DeepEqual(v.w.Spec.PhaseDefaults, PhaseDefaults{}) {
-		v.add(Unsupported, "spec.phaseDefaults", "phase lifecycle declarations are not implemented by this runtime")
-	}
 	if !reflect.DeepEqual(v.w.Spec.Recovery, Recovery{}) {
 		v.add(Unsupported, "spec.recovery", "declarative recovery is not implemented by this runtime")
-	}
-	for i, p := range v.w.Spec.Phases {
-		if len(p.After) > 0 {
-			v.add(Unsupported, fmt.Sprintf("spec.phases[%d].after", i), "per-phase lifecycle declarations are not implemented by this runtime")
-		}
 	}
 	for i, g := range v.w.Spec.HumanGates {
 		if len(g.After) > 0 || g.Evidence.Record != "" || g.IdempotentRecord != "" {
 			v.add(Unsupported, fmt.Sprintf("spec.humanGates[%d]", i), "human-gate placement/evidence declarations are not implemented by this runtime")
-		}
-	}
-	for i, s := range v.w.Spec.Flow {
-		n := 0
-		for _, set := range []bool{s.Phase != "", s.Human != "", s.Validate != "", s.Checkpoint != "", s.Complete != "", s.Recover != "", s.Assert != nil} {
-			if set {
-				n++
-			}
-		}
-		if n > 1 {
-			v.add(Unsupported, fmt.Sprintf("spec.flow[%d]", i), "multi-action flow steps are not implemented by this runtime")
 		}
 	}
 	for _, name := range sortedKeys(v.w.Spec.Completion) {

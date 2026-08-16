@@ -31,12 +31,15 @@ type Engine struct {
 }
 
 type ActivePhase struct {
-	PhaseID         string `json:"phase_id"`
-	StartCommit     string `json:"phase_start_commit"`
-	UncheckedBefore int    `json:"unchecked_count_before"`
+	PhaseID         string   `json:"phase_id"`
+	StartCommit     string   `json:"phase_start_commit"`
+	UncheckedBefore int      `json:"unchecked_count_before"`
+	CheckedBefore   []string `json:"checked_before"`
 }
 
 type IntegrityBaseline map[string]string
+
+var errFlowStoppedSuccessfully = errors.New("workflow stopped successfully")
 
 type Options struct {
 	RepoRoot  string
@@ -48,11 +51,11 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 	if err != nil {
 		return nil, err
 	}
-	if opts.RepoRoot != "" {
-		params["repo_root"] = opts.RepoRoot
-	}
 	ctx := workflow.Context{Metadata: w.Metadata, Parameters: params, Paths: w.Spec.Paths, WorkflowFile: w.File}
 	root := w.Spec.Workspace.Root
+	if opts.RepoRoot != "" {
+		root = opts.RepoRoot
+	}
 	if root == "" {
 		root = "{{ parameters.repo_root }}"
 	}
@@ -69,48 +72,107 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 }
 
 func resolveParameters(w *workflow.Workflow, overrides map[string]string) (map[string]any, error) {
+	for name := range overrides {
+		if _, ok := w.Spec.Parameters[name]; !ok {
+			return nil, fmt.Errorf("unknown parameter override %q", name)
+		}
+	}
 	out := map[string]any{}
-	for name, p := range w.Spec.Parameters {
-		var v any = p.Default
+	resolving := map[string]bool{}
+	var resolve func(string) (any, error)
+	resolve = func(name string) (any, error) {
+		if value, ok := out[name]; ok {
+			return value, nil
+		}
+		if resolving[name] {
+			return nil, fmt.Errorf("parameter %s: cyclic default reference", name)
+		}
+		p, ok := w.Spec.Parameters[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown parameter %q", name)
+		}
+		resolving[name] = true
+		defer delete(resolving, name)
+		var value any = p.Default
 		if p.Env != "" {
-			if s, ok := os.LookupEnv(p.Env); ok {
-				v = s
+			if env, ok := os.LookupEnv(p.Env); ok {
+				value = env
 			}
 		}
-		if s, ok := overrides[name]; ok {
-			v = s
+		if override, ok := overrides[name]; ok {
+			value = override
 		}
-		if str, ok := v.(string); ok && strings.Contains(str, "{{") {
-			expanded, err := (workflow.Context{Metadata: w.Metadata, Parameters: out, Paths: w.Spec.Paths, WorkflowFile: w.File}).Expand(str)
+		if text, ok := value.(string); ok && strings.Contains(text, "{{") {
+			dependencies, err := workflow.ParameterReferences(text)
 			if err != nil {
 				return nil, fmt.Errorf("parameter %s: %w", name, err)
 			}
-			v = expanded
+			for _, dependency := range dependencies {
+				if dependency == name {
+					return nil, fmt.Errorf("parameter %s: cyclic default reference", name)
+				}
+				if _, err := resolve(dependency); err != nil {
+					return nil, err
+				}
+			}
+			context := workflow.Context{Metadata: w.Metadata, Parameters: out, Paths: w.Spec.Paths, WorkflowFile: w.File}
+			if strings.TrimSpace(text) == text && strings.HasPrefix(text, "{{") && strings.HasSuffix(text, "}}") {
+				value, err = context.EvalTemplate(text)
+			} else {
+				value, err = context.Expand(text)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("parameter %s: %w", name, err)
+			}
 		}
-		parsed, err := coerce(p.Type, v)
+		parsed, err := coerce(p.Type, value)
 		if err != nil {
 			return nil, fmt.Errorf("parameter %s: %w", name, err)
 		}
 		out[name] = parsed
+		return parsed, nil
 	}
-	for k, v := range overrides {
-		if _, ok := w.Spec.Parameters[k]; !ok {
-			return nil, fmt.Errorf("unknown parameter override %q", k)
+	for name := range w.Spec.Parameters {
+		if _, err := resolve(name); err != nil {
+			return nil, err
 		}
-		_ = v
 	}
 	return out, nil
 }
 
 func coerce(kind string, v any) (any, error) {
-	s := fmt.Sprint(v)
 	switch kind {
 	case "", "string", "path":
-		return s, nil
+		if s, ok := v.(string); ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("must be a string, got %T", v)
 	case "boolean":
-		return strconv.ParseBool(s)
+		switch value := v.(type) {
+		case bool:
+			return value, nil
+		case string:
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return nil, fmt.Errorf("must be boolean (true or false): %w", err)
+			}
+			return parsed, nil
+		default:
+			return nil, fmt.Errorf("must be boolean, got %T", v)
+		}
 	case "integer":
-		return strconv.Atoi(s)
+		switch value := v.(type) {
+		case int:
+			return value, nil
+		case string:
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return nil, fmt.Errorf("must be integer: %w", err)
+			}
+			return parsed, nil
+		default:
+			return nil, fmt.Errorf("must be integer, got %T", v)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported parameter type %q", kind)
 	}
@@ -123,7 +185,11 @@ func (e *Engine) Run(ctx context.Context) error {
 	if err := e.runBasicPreconditions(); err != nil {
 		return err
 	}
-	if e.resetRequested() {
+	reset, err := e.resetRequested()
+	if err != nil {
+		return fmt.Errorf("reset condition: %w", err)
+	}
+	if reset {
 		if err := e.Reset(); err != nil {
 			return err
 		}
@@ -143,61 +209,83 @@ func (e *Engine) Run(ctx context.Context) error {
 		fmt.Fprintf(e.Out, "Workflow %s already complete at %s\n", e.Workflow.Metadata.Name, completeSHA)
 		return nil
 	}
-	if err := e.recoverActive(ctx); err != nil {
-		return err
-	}
-
 	for _, step := range e.Workflow.Spec.Flow {
-		if step.If != "" {
-			ok, err := e.context(nil).Bool(step.If)
-			if err != nil {
-				return fmt.Errorf("flow %s condition: %w", step.ID, err)
+		if err := e.runFlowStep(ctx, step); err != nil {
+			if errors.Is(err, errFlowStoppedSuccessfully) {
+				return nil
 			}
-			if !ok {
-				continue
-			}
-			for _, a := range step.Then {
-				if a.Report != "" {
-					msg, _ := e.context(nil).Expand(a.Report)
-					fmt.Fprintln(e.Out, msg)
-				}
-				if a.Stop != "" {
-					if a.Stop == "success" {
-						return nil
-					}
-					return fmt.Errorf("workflow stopped: %s", a.Stop)
-				}
-			}
+			return err
 		}
-		switch {
-		case step.Recover != "":
-			if err := e.recoverActive(ctx); err != nil {
+	}
+	return nil
+}
+
+func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error {
+	if step.If != "" {
+		ok, err := e.bool(nil, step.If)
+		if err != nil {
+			return fmt.Errorf("flow %s condition: %w", step.ID, err)
+		}
+		if !ok {
+			return nil
+		}
+	}
+	// The action order is fixed rather than inherited from YAML map order. It
+	// permits a small compound step (for example validate then checkpoint)
+	// without turning flow steps into an imperative scripting language.
+	if step.Recover != "" {
+		if err := e.recoverActive(ctx); err != nil {
+			return err
+		}
+	}
+	if step.Phase != "" {
+		if err := e.runPhase(ctx, step.Phase); err != nil {
+			return err
+		}
+	}
+	if step.Loop != nil {
+		if err := e.runLoop(ctx, *step.Loop); err != nil {
+			return err
+		}
+	}
+	if step.Validate != "" {
+		if err := e.runValidation(ctx, step.Validate, nil); err != nil {
+			return err
+		}
+	}
+	if step.Assert != nil {
+		if err := e.runFlowAssertion(*step.Assert); err != nil {
+			return err
+		}
+	}
+	if step.Checkpoint != "" {
+		if err := e.checkpoint(step.Label, nil); err != nil {
+			return err
+		}
+	}
+	if step.Human != "" {
+		if err := e.runHuman(step.Human); err != nil {
+			return err
+		}
+	}
+	if step.Complete != "" {
+		if err := e.runCompletion(ctx, step.Complete); err != nil {
+			return err
+		}
+	}
+	for _, action := range step.Then {
+		if action.Report != "" {
+			message, err := e.context(nil).Expand(action.Report)
+			if err != nil {
 				return err
 			}
-		case step.Phase != "":
-			if err := e.runPhase(ctx, step.Phase); err != nil {
-				return err
+			fmt.Fprintln(e.Out, message)
+		}
+		if action.Stop != "" {
+			if action.Stop == "success" {
+				return errFlowStoppedSuccessfully
 			}
-		case step.Validate != "":
-			if err := e.runValidation(ctx, step.Validate, nil); err != nil {
-				return err
-			}
-		case step.Checkpoint != "":
-			if err := e.checkpoint(step.Label, nil); err != nil {
-				return err
-			}
-		case step.Human != "":
-			if err := e.runHuman(step.Human); err != nil {
-				return err
-			}
-		case step.Complete != "":
-			if err := e.runCompletion(ctx, step.Complete); err != nil {
-				return err
-			}
-		case step.Assert != nil:
-			if err := e.runFlowAssertion(*step.Assert); err != nil {
-				return err
-			}
+			return fmt.Errorf("workflow stopped: %s", action.Stop)
 		}
 	}
 	return nil
@@ -247,7 +335,7 @@ func (e *Engine) Status() error {
 
 func (e *Engine) runBasicPreconditions() error {
 	for _, c := range e.Workflow.Spec.Preconditions {
-		if c.When != "" && strings.Contains(c.When, "state.") {
+		if c.When != "" {
 			continue
 		}
 		if err := e.runCheck(c); err != nil {
@@ -259,10 +347,10 @@ func (e *Engine) runBasicPreconditions() error {
 
 func (e *Engine) runStatePreconditions() error {
 	for _, c := range e.Workflow.Spec.Preconditions {
-		if c.When == "" || !strings.Contains(c.When, "state.") {
+		if c.When == "" {
 			continue
 		}
-		ok, err := e.context(nil).Bool(c.When)
+		ok, err := e.bool(nil, c.When)
 		if err != nil {
 			return fmt.Errorf("precondition %s condition: %w", c.ID, err)
 		}
@@ -308,8 +396,12 @@ func (e *Engine) runCheck(c workflow.Check) error {
 		if err != nil {
 			return err
 		}
-		if !bytes.Contains(b, []byte(c.Text)) {
-			return fmt.Errorf("%s does not contain %q", p, c.Text)
+		text, err := x.Expand(c.Text)
+		if err != nil {
+			return err
+		}
+		if !bytes.Contains(b, []byte(text)) {
+			return fmt.Errorf("%s does not contain %q", p, text)
 		}
 	case "git-object-exists":
 		obj, err := x.Expand(c.Object)
@@ -438,6 +530,33 @@ func (e *Engine) initializeOrResumeState() error {
 }
 
 func (e *Engine) context(p *workflow.Phase) workflow.Context {
+	x := e.contextWithoutProgress(p)
+	progress, _ := e.progressContext()
+	x.Progress = progress
+	return x
+}
+
+func (e *Engine) bool(p *workflow.Phase, expression string) (bool, error) {
+	x := e.contextWithoutProgress(p)
+	progress, err := e.progressContext()
+	if err != nil {
+		return false, err
+	}
+	x.Progress = progress
+	return x.Bool(expression)
+}
+
+func (e *Engine) integer(p *workflow.Phase, expression string) (int, error) {
+	x := e.contextWithoutProgress(p)
+	progress, err := e.progressContext()
+	if err != nil {
+		return 0, err
+	}
+	x.Progress = progress
+	return x.Int(expression)
+}
+
+func (e *Engine) contextWithoutProgress(p *workflow.Phase) workflow.Context {
 	base, baseOK, _ := e.Store.Resolve("base")
 	var branch string
 	_, _ = e.Store.GetJSON("branch", &branch)
@@ -450,16 +569,21 @@ func (e *Engine) context(p *workflow.Phase) workflow.Context {
 		"base_commit":       base,
 		"branch":            branch,
 		"workflow_complete": map[string]any{"exists": completeOK, "value": complete},
-		"active_phase":      map[string]any{"exists": activeOK, "value": active.PhaseID},
+		"active_phase": map[string]any{
+			"exists":                 activeOK,
+			"value":                  active.PhaseID,
+			"phase_id":               active.PhaseID,
+			"phase_start_commit":     active.StartCommit,
+			"unchecked_count_before": active.UncheckedBefore,
+		},
 	}
 	return workflow.Context{Metadata: e.Workflow.Metadata, Parameters: e.Parameters, Paths: e.Workflow.Spec.Paths, State: state, Phase: p, WorkflowFile: e.Workflow.File, FailureLog: e.lastFailure, HeadCommit: head}
 }
 
-func (e *Engine) resetRequested() bool {
-	for _, key := range []string{"reset_workflow_state", "reset_state"} {
-		if v, ok := e.Parameters[key].(bool); ok && v {
-			return true
-		}
+func (e *Engine) resetRequested() (bool, error) {
+	when := e.Workflow.Spec.State.Reset.When
+	if when == "" {
+		return false, nil
 	}
-	return false
+	return e.bool(nil, when)
 }

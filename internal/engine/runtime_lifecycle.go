@@ -1,0 +1,138 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+)
+
+func (e *Engine) newActivePhase(id string) (ActivePhase, error) {
+	start, err := e.Repo.Head()
+	if err != nil {
+		return ActivePhase{}, err
+	}
+	progress, err := e.progressSnapshot()
+	if err != nil {
+		return ActivePhase{}, err
+	}
+	return ActivePhase{PhaseID: id, StartCommit: start, UncheckedBefore: progress.UncheckedCount, CheckedBefore: progress.CheckedTexts()}, nil
+}
+
+func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, active *ActivePhase, actions []workflow.PhaseAction) error {
+	for _, action := range actions {
+		if action.If != "" {
+			ok, err := e.bool(phase, action.If)
+			if err != nil {
+				return fmt.Errorf("phase action condition: %w", err)
+			}
+			if !ok {
+				continue
+			}
+		}
+		if action.RequireCleanImplementationWorkspace {
+			dirty, err := e.implementationDirtyFiles()
+			if err != nil {
+				return err
+			}
+			if len(dirty) != 0 {
+				return fmt.Errorf("implementation workspace is dirty: %v", dirty)
+			}
+		}
+		if action.CapturePhaseStartCommit {
+			start, err := e.Repo.Head()
+			if err != nil {
+				return err
+			}
+			active.StartCommit = start
+		}
+		if action.CaptureUncheckedCountBefore {
+			progress, err := e.progressSnapshot()
+			if err != nil {
+				return err
+			}
+			active.UncheckedBefore = progress.UncheckedCount
+			active.CheckedBefore = progress.CheckedTexts()
+		}
+		if len(action.PersistActivePhase.Fields) > 0 {
+			if err := e.Store.SetJSON("active", *active); err != nil {
+				return err
+			}
+		}
+		if action.Validate != "" {
+			if err := e.runValidation(ctx, action.Validate, phase); err != nil {
+				return err
+			}
+		}
+		if action.AssertProgress != nil && action.AssertProgress.Enabled {
+			if err := e.assertProgressAction(phase, *active, *action.AssertProgress); err != nil {
+				return err
+			}
+		}
+		if action.AssertProgressIfApplicable && phase.Kind == "criterion" {
+			if err := e.assertProgress(phase, *active); err != nil {
+				return err
+			}
+		}
+		if action.Checkpoint != "" {
+			if err := e.runTool(action.Checkpoint, phase); err != nil {
+				return err
+			}
+		}
+		if action.AssertNetRepositoryChangeSincePhaseStart {
+			if err := e.assertNetChange(phase, *active); err != nil {
+				return err
+			}
+		}
+		if action.MarkPhaseComplete != nil || action.MarkPhaseCompleteLegacy {
+			if err := e.markPhaseComplete(phase); err != nil {
+				return err
+			}
+		}
+		if action.ClearActivePhase {
+			if err := e.Store.Delete("active"); err != nil {
+				return err
+			}
+		}
+		if action.Return != "" {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (e *Engine) assertNetChange(phase *workflow.Phase, active ActivePhase) error {
+	changed, err := e.Repo.HasNetChange(active.StartCommit)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return fmt.Errorf("phase %s (%s) produced no net repository change", phase.ID, phase.Label)
+	}
+	return nil
+}
+
+func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
+	head, err := e.Repo.Head()
+	if err != nil {
+		return err
+	}
+	return e.Store.SetCommit("phases/"+phase.ID, head)
+}
+
+func (e *Engine) requirePhaseCompletion(phase *workflow.Phase) error {
+	ok, head, err := e.validCommitMarker("phases/" + phase.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("phase %s finished without markPhaseComplete", phase.ID)
+	}
+	if _, active, err := e.Store.Resolve("active"); err != nil {
+		return err
+	} else if active {
+		return fmt.Errorf("phase %s finished without clearActivePhase", phase.ID)
+	}
+	fmt.Fprintf(e.Out, "==> Phase %s complete at %s\n", phase.ID, shortSHA(head))
+	return nil
+}

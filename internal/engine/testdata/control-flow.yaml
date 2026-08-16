@@ -1,0 +1,126 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: control-flow-fixture
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    max_steps:
+      type: integer
+      default: 3
+    run_optional:
+      type: boolean
+      default: false
+    run_failing_gate:
+      type: boolean
+      default: false
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    mutationPolicy:
+      allowed: [progress.md]
+    checkpointing:
+      commit_message: "test: {{ phase.label }}"
+
+  agents:
+    worker:
+      runner: codex
+
+  tools:
+    scope:
+      type: workspace-policy
+    checkpoint:
+      type: git-checkpoint
+    must-not-run:
+      type: shell
+      command: "false"
+
+  progress:
+    source:
+      type: markdown-checklist
+      path: progress.md
+      uncheckedPattern: '^- \[ \] (.+)$'
+      checkedPattern: '^- \[[xX]\] (.+)$'
+    selection:
+      strategy: first-unchecked
+    criteria:
+      - id: one
+        text: first
+      - id: two
+        text: second
+    criterionPhaseInvariant:
+      targeted_item_must_be_checked: true
+      unchecked_count_delta: -1
+      no_other_criterion_may_close: true
+
+  validation:
+    phaseGate:
+      steps:
+        - uses: scope
+        - uses: must-not-run
+          if: "{{ parameters.run_failing_gate }}"
+
+  phaseDefaults:
+    before:
+      - capture_phase_start_commit: true
+        capture_unchecked_count_before: true
+        persist_active_phase:
+          fields: [phase_id]
+    after:
+      - validate: phaseGate
+      - assertProgress: {}
+      - checkpoint: checkpoint
+      - markPhaseComplete:
+          value: head_commit
+      - clearActivePhase: true
+
+  phases:
+    - id: one
+      kind: criterion
+      label: first
+      actor: worker
+      criterion: one
+      requiresChange: true
+      prompt: "close {{ phase.criterion }}"
+    - id: two
+      kind: criterion
+      label: second
+      actor: worker
+      criterion: two
+      requiresChange: true
+      prompt: "close {{ phase.criterion }}"
+    - id: optional
+      kind: implementation
+      label: optional
+      actor: worker
+      if: "{{ parameters.run_optional }}"
+      prompt: must not run
+
+  humanGates:
+    - id: not-required
+      when: "{{ parameters.run_optional }}"
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+
+  flow:
+    - phase: optional
+    - if: "{{ parameters.run_optional }}"
+      validate: phaseGate
+    - loop:
+        while: "{{ progress.unchecked_count > 0 }}"
+        maxIterations: "{{ parameters.max_steps }}"
+        select: "{{ progress.next_unchecked }}"
+        dispatchByCriterion:
+          first: one
+          second: two
+        requireUncheckedCountDelta: -1
+    - human: not-required
+    - complete: done
+
+  completion:
+    done:
+      assertions:
+        - type: progress-empty
