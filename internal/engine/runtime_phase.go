@@ -41,6 +41,14 @@ func (e *repairBudgetExhaustedError) Error() string {
 }
 func (e *repairBudgetExhaustedError) Unwrap() error { return e.failure }
 
+// standaloneRepairState keeps the budget for validations that run outside a
+// recoverable phase (for example flow and completion validations). Without a
+// durable record, restarting the interpreter could turn repair-once into an
+// unbounded repair loop.
+type standaloneRepairState struct {
+	Attempts int `json:"attempts"`
+}
+
 func (e *Engine) runPhase(ctx context.Context, id string) error {
 	p, err := e.phaseByID(id)
 	if err != nil {
@@ -72,20 +80,37 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 		}
 		if checked {
 			skip := e.Workflow.Spec.PhaseDefaults.Skip.CriterionAlreadyChecked
-			if skip.ValidateBeforeMarking {
-				for _, action := range e.Workflow.Spec.PhaseDefaults.After {
-					if action.Validate == "" {
+			if !skip.ValidateBeforeMarking {
+				return fmt.Errorf("criterion phase %s is already checked but validation before marking is disabled", id)
+			}
+			validated := false
+			actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
+			actions = append(actions, p.After...)
+			for _, action := range actions {
+				if action.Validate == "" {
+					continue
+				}
+				if action.If != "" {
+					run, err := e.bool(p, action.If)
+					if err != nil {
+						return fmt.Errorf("phase action condition: %w", err)
+					}
+					if !run {
 						continue
 					}
-					if err := e.runValidation(ctx, action.Validate, p); err != nil {
-						var safetyErr *safetyViolation
-						if errors.As(err, &safetyErr) {
-							return err
-						}
-						return &phaseValidationFailure{err: err}
-					}
-					break
 				}
+				if err := e.runValidation(ctx, action.Validate, p); err != nil {
+					var safetyErr *safetyViolation
+					if errors.As(err, &safetyErr) {
+						return err
+					}
+					return &phaseValidationFailure{err: err}
+				}
+				validated = true
+				break
+			}
+			if !validated {
+				return fmt.Errorf("criterion phase %s is already checked but has no runnable deterministic validation", id)
 			}
 			head, _ := e.Repo.Head()
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
@@ -135,10 +160,29 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 			{ClearActivePhase: true},
 		}
 	}
+	if !phaseHasValidation(actions) {
+		return fmt.Errorf("phase %s has no deterministic validation before acceptance", p.ID)
+	}
+	// Require this acceptance attempt to run its own successful gate. Recovery
+	// deliberately repeats the lifecycle rather than relying on a validation
+	// result that may predate an interruption or external workspace change.
+	active.ValidationPassed = false
 	if err := e.runPhaseActions(ctx, p, &active, actions); err != nil {
 		return err
 	}
+	if !active.ValidationPassed {
+		return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
+	}
 	return e.requirePhaseCompletion(p)
+}
+
+func phaseHasValidation(actions []workflow.PhaseAction) bool {
+	for _, action := range actions {
+		if action.Validate != "" {
+			return true
+		}
+	}
+	return false
 }
 func (e *Engine) recoverActive(ctx context.Context) error {
 	var a ActivePhase
@@ -274,7 +318,14 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if err := e.runAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, p); err != nil {
 		return err
 	}
-	if err := e.runToolUses(ctx, v.OnFailure.Then, p); err != nil {
+	steps := v.OnFailure.Then
+	if len(steps) == 0 {
+		// A repair policy always re-runs deterministic validation. The explicit
+		// `then` list can narrow or extend that rerun, but omitting it must not
+		// make a failed validation succeed merely because no tools were invoked.
+		steps = v.Steps
+	}
+	if err := e.runToolUses(ctx, steps, p); err != nil {
 		return fmt.Errorf("validation %s still fails after repair: %w", name, err)
 	}
 	e.lastFailure = ""
@@ -296,45 +347,79 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 }
 
 func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
-	if p == nil {
-		return nil
+	if p != nil {
+		var active ActivePhase
+		ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+		if err != nil {
+			return err
+		}
+		if ok && active.PhaseID == p.ID {
+			if active.Validation != name {
+				return nil
+			}
+			active.Validation = ""
+			active.ValidationError = ""
+			return e.Store.SetJSON(e.activeRecord(), active)
+		}
 	}
-	var active ActivePhase
-	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
-	if err != nil || !ok || active.PhaseID != p.ID || active.Validation != name {
-		return err
-	}
-	active.Validation = ""
-	active.ValidationError = ""
-	return e.Store.SetJSON(e.activeRecord(), active)
+	return e.clearStandaloneRepairState(name)
 }
 
-// consumeRepairAttempt persists a phase-local budget before invoking a repair
-// actor. A crash during repair therefore cannot reset the budget and turn a
-// one-shot repair policy into an unbounded restart loop.
+// consumeRepairAttempt persists the applicable repair budget before invoking a
+// repair actor. A crash during repair therefore cannot reset the budget and
+// turn a one-shot repair policy into an unbounded restart loop.
 func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max int) (bool, error) {
-	if p == nil {
-		return true, nil
+	if p != nil {
+		var active ActivePhase
+		ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+		if err != nil {
+			return false, err
+		}
+		if ok && active.PhaseID == p.ID {
+			if active.RepairAttempts[validation] >= max {
+				return false, nil
+			}
+			if active.RepairAttempts == nil {
+				active.RepairAttempts = map[string]int{}
+			}
+			active.RepairAttempts[validation]++
+			if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 	}
-	var active ActivePhase
-	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	return e.consumeStandaloneRepairAttempt(validation, max)
+}
+
+func (e *Engine) standaloneRepairRecord(validation string) string {
+	return fmt.Sprintf("validation-repairs/%x", validation)
+}
+
+func (e *Engine) consumeStandaloneRepairAttempt(validation string, max int) (bool, error) {
+	record := e.standaloneRepairRecord(validation)
+	var state standaloneRepairState
+	ok, err := e.Store.GetJSON(record, &state)
 	if err != nil {
 		return false, err
 	}
-	if !ok || active.PhaseID != p.ID {
-		return true, nil
-	}
-	if active.RepairAttempts[validation] >= max {
+	if ok && state.Attempts >= max {
 		return false, nil
 	}
-	if active.RepairAttempts == nil {
-		active.RepairAttempts = map[string]int{}
-	}
-	active.RepairAttempts[validation]++
-	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+	state.Attempts++
+	if err := e.Store.SetJSON(record, state); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func (e *Engine) clearStandaloneRepairState(validation string) error {
+	record := e.standaloneRepairRecord(validation)
+	_, ok, err := e.Store.Resolve(record)
+	if err != nil || !ok {
+		return err
+	}
+	return e.Store.Delete(record)
 }
 func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *workflow.Phase) error {
 	for _, use := range steps {

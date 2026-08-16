@@ -147,6 +147,14 @@ func (v validator) uniquePhases() {
 		seen[p.ID] = true
 		if p.Kind == "" {
 			v.add(Invalid, fmt.Sprintf("spec.phases[%d].kind", i), "is required")
+		} else {
+			switch p.Kind {
+			case "criterion", "implementation", "audit", "bookkeeping":
+			case "tool", "human":
+				v.add(Unsupported, fmt.Sprintf("spec.phases[%d].kind", i), "phase kind %q is documented but not executable in this runtime", p.Kind)
+			default:
+				v.add(Invalid, fmt.Sprintf("spec.phases[%d].kind", i), "unsupported executable phase kind %q", p.Kind)
+			}
 		}
 	}
 }
@@ -184,19 +192,37 @@ func (v validator) uniqueIntegrity() {
 			v.add(Invalid, p, "duplicate integrity rule id %q", r.ID)
 		}
 		seen[r.ID] = true
+		if len(r.Paths) == 0 {
+			v.add(Invalid, strings.TrimSuffix(p, ".id")+".paths", "must protect at least one path")
+		}
+		switch r.Mode {
+		case "exact-hash", "group-exact-hash":
+			if r.Normalize.Command != "" {
+				v.add(Invalid, strings.TrimSuffix(p, ".id")+".normalize.command", "is only valid with normalized-hash integrity")
+			}
+		case "normalized-hash":
+			if r.Normalize.Command == "" {
+				v.add(Invalid, strings.TrimSuffix(p, ".id")+".normalize.command", "is required for normalized-hash integrity")
+			}
+		default:
+			v.add(Invalid, strings.TrimSuffix(p, ".id")+".mode", "unknown integrity mode %q", r.Mode)
+		}
 	}
 }
 
 func (v validator) references() {
 	for _, name := range sortedKeys(v.w.Spec.Validation) {
 		validation := v.w.Spec.Validation[name]
-		v.toolUses("spec.validation."+name+".steps", validation.Steps)
-		v.toolUses("spec.validation."+name+".onFailure.then", validation.OnFailure.Then)
-		if a := validation.OnFailure.Repair.Actor; a != "" {
-			v.agent("spec.validation."+name+".onFailure.repair.actor", a)
+		path := "spec.validation." + name
+		if len(validation.Steps) == 0 {
+			v.add(Invalid, path+".steps", "must contain at least one deterministic validation step")
 		}
+		v.toolUses(path+".steps", validation.Steps)
+		v.toolUses(path+".onFailure.then", validation.OnFailure.Then)
+		v.validationFailurePolicy(path, validation)
 	}
 	for i, check := range v.w.Spec.Preconditions {
+		v.check(fmt.Sprintf("spec.preconditions[%d]", i), check)
 		v.condition(fmt.Sprintf("spec.preconditions[%d].when", i), check.When)
 	}
 	for i, p := range v.w.Spec.Phases {
@@ -259,9 +285,13 @@ func (v validator) references() {
 		}
 		if s.Recover != "" {
 			n++
+			if s.Recover != "activePhase" {
+				v.add(Invalid, p+".recover", "unsupported recovery target %q", s.Recover)
+			}
 		}
 		if s.Assert != nil {
 			n++
+			v.assertion(p+".assert", *s.Assert)
 		}
 		if s.Loop != nil {
 			n++
@@ -283,6 +313,36 @@ func (v validator) references() {
 		}
 		v.assertions(p+".assertions", c.Assertions)
 		v.assertions(p+".afterCheckpointAssertions", c.AfterCheckpointAssertions)
+	}
+}
+
+func (v validator) validationFailurePolicy(path string, validation Validation) {
+	if validation.Repair != "" && validation.Repair != "none" {
+		v.add(Invalid, path+".repair", "unsupported validation repair policy %q", validation.Repair)
+	}
+	if validation.Failure != "" && validation.Failure != "fail-workflow" {
+		v.add(Invalid, path+".failure", "unsupported validation failure policy %q", validation.Failure)
+	}
+	policy := validation.OnFailure
+	if policy.Exhausted != "" && policy.Exhausted != "fail-workflow" {
+		v.add(Invalid, path+".onFailure.exhausted", "unsupported exhausted policy %q", policy.Exhausted)
+	}
+	switch policy.Strategy {
+	case "":
+		if policy.MaxRepairAttempts != 0 || policy.Repair.Actor != "" || policy.Repair.Reasoning != "" || policy.Repair.Prompt != "" || len(policy.Then) != 0 || policy.Exhausted != "" {
+			v.add(Invalid, path+".onFailure", "requires strategy: repair-once when repair settings are declared")
+		}
+	case "repair-once":
+		if policy.MaxRepairAttempts != 1 {
+			v.add(Invalid, path+".onFailure.maxRepairAttempts", "repair-once requires exactly one repair attempt")
+		}
+		if policy.Repair.Actor == "" {
+			v.add(Invalid, path+".onFailure.repair.actor", "is required for repair-once")
+		} else {
+			v.agent(path+".onFailure.repair.actor", policy.Repair.Actor)
+		}
+	default:
+		v.add(Invalid, path+".onFailure.strategy", "unsupported validation failure strategy %q", policy.Strategy)
 	}
 }
 func (v validator) toolUses(path string, uses []ToolUse) {
@@ -314,7 +374,7 @@ func (v validator) condition(path, value string) {
 	if value == "" {
 		return
 	}
-	if err := validateTypedExpression(value, StaticContext{Parameters: v.w.Spec.Parameters, Paths: v.w.Spec.Paths}); err != nil {
+	if err := validateTypedExpression(value, v.staticContext()); err != nil {
 		v.add(Invalid, path, "invalid expression: %s", err)
 	}
 }
@@ -351,9 +411,59 @@ func (v validator) loop(path string, loop Loop) {
 }
 func (v validator) assertions(path string, as []Assertion) {
 	for i, a := range as {
-		if a.Uses != "" {
-			v.tool(fmt.Sprintf("%s[%d].uses", path, i), a.Uses)
+		v.assertion(fmt.Sprintf("%s[%d]", path, i), a)
+	}
+}
+
+func (v validator) assertion(path string, a Assertion) {
+	if a.Uses != "" {
+		v.tool(path+".uses", a.Uses)
+		return
+	}
+	switch a.Type {
+	case "progress-empty", "workspace-integrity", "integrity-baseline-unchanged", "implementation-workspace-clean":
+	default:
+		v.add(Invalid, path+".type", "unsupported assertion type %q", a.Type)
+	}
+}
+
+func (v validator) check(path string, c Check) {
+	switch c.Type {
+	case "git-repository":
+	case "commands-exist":
+		if len(c.Commands) == 0 {
+			v.add(Invalid, path+".commands", "is required for commands-exist")
 		}
+	case "files-exist":
+		if len(c.Paths) == 0 {
+			v.add(Invalid, path+".paths", "is required for files-exist")
+		}
+	case "file-contains":
+		if c.Path == "" {
+			v.add(Invalid, path+".path", "is required for file-contains")
+		}
+	case "git-object-exists":
+		if c.Object == "" {
+			v.add(Invalid, path+".object", "is required for git-object-exists")
+		}
+	case "git-ancestor":
+		if c.Ancestor == "" {
+			v.add(Invalid, path+".ancestor", "is required for git-ancestor")
+		}
+		if c.Descendant == "" {
+			v.add(Invalid, path+".descendant", "is required for git-ancestor")
+		}
+	case "git-lineage":
+	case "git-current-branch-equals":
+		if c.Expected == "" {
+			v.add(Invalid, path+".expected", "is required for git-current-branch-equals")
+		}
+	case "workspace-integrity":
+		if c.Policy != "" && c.Policy != "spec.workspace.mutationPolicy.integrity" {
+			v.add(Invalid, path+".policy", "unsupported workspace integrity policy %q", c.Policy)
+		}
+	default:
+		v.add(Invalid, path+".type", "unsupported precondition type %q", c.Type)
 	}
 }
 func (v validator) agent(path, id string) {
@@ -420,10 +530,14 @@ func (v validator) expressions() {
 		if !strings.Contains(value, "{{") && !strings.Contains(value, "}}") {
 			return
 		}
-		if err := validateTemplate(value, StaticContext{Parameters: v.w.Spec.Parameters, Paths: v.w.Spec.Paths}); err != nil {
+		if err := validateTemplate(value, v.staticContext()); err != nil {
 			v.add(Invalid, path, "invalid expression: %s", err)
 		}
 	})
+}
+
+func (v validator) staticContext() StaticContext {
+	return StaticContext{Parameters: v.w.Spec.Parameters, Paths: v.w.Spec.Paths}
 }
 
 func visitStrings(value reflect.Value, path string, visit func(string, string)) {

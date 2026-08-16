@@ -350,6 +350,13 @@ spec:
       then:
         - report: "Self-hosting workflow already completed at {{ state.workflow_complete.value }}"
         - stop: success
+    # A self-development run must be bounded before it is allowed to call an
+    # implementation provider. This is workflow authority, not a prompt-only
+    # instruction to the actor.
+    - id: require-bounded-task
+      if: "{{ parameters.task == '' }}"
+      then:
+        - stop: "task parameter is required; pass --set task='<bounded AgentFlow change>'"
     - id: recover-interrupted-phase
       if: "{{ state.active_phase.exists }}"
       recover: activePhase

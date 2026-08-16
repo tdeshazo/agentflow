@@ -175,6 +175,8 @@ Common policies:
 
 - `repair: none`: hard failure; stop without agent repair.
 - `repair-once`: invoke one repair actor, then rerun deterministic checks once.
+  If `onFailure.then` is omitted, the original ordered validation steps are
+  rerun; an omitted list never turns a failed gate into success.
 - exhausted repair budget: fail workflow.
 
 Do not assume every named gate shares the same repair policy.
@@ -199,7 +201,10 @@ Typical `after` operations:
 5. write completed-phase marker at current `HEAD`;
 6. clear active-phase state.
 
-Skip behavior may use completed markers or already-checked criteria. Review skip semantics carefully because they can bypass validation if configured loosely.
+Skip behavior may use completed markers or already-checked criteria. The
+reference runtime does not permit an acceptance bypass: an accepted phase marker
+requires a successful validation in the current lifecycle attempt, and an
+already-checked criterion must validate before it receives a marker.
 
 ## `spec.phases`
 

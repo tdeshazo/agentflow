@@ -102,6 +102,15 @@ func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
 	if task, ok := w.Spec.Parameters["task"]; !ok || task.Type != "string" {
 		t.Fatalf("task parameter = %#v, want string parameter", task)
 	}
+	boundedTaskCheck := false
+	for _, step := range w.Spec.Flow {
+		if step.ID == "require-bounded-task" && step.If == "{{ parameters.task == '' }}" && len(step.Then) == 1 && step.Then[0].Stop != "" {
+			boundedTaskCheck = true
+		}
+	}
+	if !boundedTaskCheck {
+		t.Fatal("self-hosting workflow must block empty tasks before provider execution")
+	}
 	byID := map[string]Phase{}
 	for _, phase := range w.Spec.Phases {
 		byID[phase.ID] = phase

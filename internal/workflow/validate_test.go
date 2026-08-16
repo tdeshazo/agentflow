@@ -94,6 +94,28 @@ func TestValidateAcceptsImplementedRuntimeSurface(t *testing.T) {
 	}
 }
 
+func TestValidateMarksDocumentedButUnimplementedPhaseKindsUnsupported(t *testing.T) {
+	body := strings.Replace(executableFixture, "kind: implementation", "kind: human", 1)
+	r := ValidateFile(writeWorkflow(t, body))
+	if r.Status != Unsupported {
+		t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+	}
+}
+
+func TestValidateRejectsUnknownPreconditionsBeforeRuntime(t *testing.T) {
+	body := strings.Replace(executableFixture, "  agents:", `  preconditions:
+    - id: unknown-check
+      type: mutable-magic
+  agents:`, 1)
+	r := ValidateFile(writeWorkflow(t, body))
+	if r.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+	}
+	if len(r.Diagnostics) == 0 || r.Diagnostics[0].Path != "spec.preconditions[0].type" {
+		t.Fatalf("diagnostics = %#v", r.Diagnostics)
+	}
+}
+
 func TestValidateRejectsInvalidControlFlowExpressions(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -121,6 +143,40 @@ func TestValidateRejectsInvalidControlFlowExpressions(t *testing.T) {
 				t.Fatalf("diagnostics = %#v, want %q", r.Diagnostics, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateRejectsUnknownStateReferenceBeforeExecution(t *testing.T) {
+	body := strings.Replace(executableFixture, "prompt: make the bounded change", "prompt: \"{{ state.not_a_runtime_value }}\"", 1)
+	r := ValidateFile(writeWorkflow(t, body))
+	if r.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+	}
+	if len(r.Diagnostics) == 0 || !strings.Contains(r.Diagnostics[0].Message, "unknown state reference") {
+		t.Fatalf("diagnostics = %#v", r.Diagnostics)
+	}
+}
+
+func TestValidateRejectsUnknownIntegrityMode(t *testing.T) {
+	body := strings.Replace(executableFixture, "  agents:", `  workspace:
+    mutationPolicy:
+      integrity:
+        - id: protected
+          paths: [README.md]
+          mode: content-maybe
+  agents:`, 1)
+	r := ValidateFile(writeWorkflow(t, body))
+	if r.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", r.Status, r.Diagnostics)
+	}
+	found := false
+	for _, diagnostic := range r.Diagnostics {
+		if diagnostic.Path == "spec.workspace.mutationPolicy.integrity[0].mode" && strings.Contains(diagnostic.Message, "unknown integrity mode") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %#v", r.Diagnostics)
 	}
 }
 

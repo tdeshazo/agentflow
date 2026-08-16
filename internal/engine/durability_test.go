@@ -292,6 +292,107 @@ func TestCheckpointDoesNotAcceptUnrelatedPreStagedControlFiles(t *testing.T) {
 	}
 }
 
+func TestValidationDoesNotAcceptAnEmptyPostRepairSequence(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "repair-must-rerun-gate")
+	v := repairValidation()
+	v.OnFailure.Then = nil // Omission means re-run the original deterministic steps.
+	w.Spec.Validation["phaseGate"] = v
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test"}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("partial\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "still fails after repair") {
+		t.Fatalf("validation error = %v, want failed post-repair gate", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want implementation plus one repair", p.calls)
+	}
+	if _, ok, _ := e.Store.Resolve("phases/change"); ok {
+		t.Fatal("empty post-repair sequence accepted a failed phase")
+	}
+}
+
+func TestStandaloneValidationRepairBudgetSurvivesRestart(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "standalone-repair-budget")
+	w.Spec.Flow = []workflow.FlowStep{{Validate: "phaseGate"}}
+	w.Spec.Validation["phaseGate"] = repairValidation()
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test"}
+	p := &durableProvider{}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "still fails after repair") {
+		t.Fatalf("first validation error = %v, want failed repair", err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("first run provider calls = %d, want one repair", p.calls)
+	}
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
+		t.Fatalf("restart error = %v, want durable repair exhaustion", err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("restart invoked another repair actor: calls = %d", p.calls)
+	}
+}
+
+func TestPhaseCannotBeAcceptedWithoutValidation(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "validation-required-for-acceptance")
+	w.Spec.PhaseDefaults.After = []workflow.PhaseAction{
+		{Checkpoint: "checkpoint"},
+		{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+		{ClearActivePhase: true},
+	}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "no deterministic validation before acceptance") {
+		t.Fatalf("phase without validation error = %v", err)
+	}
+	if _, ok, _ := e.Store.Resolve("phases/change"); ok {
+		t.Fatal("phase without validation received an acceptance marker")
+	}
+}
+
+func TestPhaseCannotSkipItsOnlyValidationBeforeAcceptance(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "validation-must-actually-run")
+	w.Spec.PhaseDefaults.After = []workflow.PhaseAction{
+		{Validate: "phaseGate", If: "{{ false }}"},
+		{Checkpoint: "checkpoint"},
+		{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+		{ClearActivePhase: true},
+	}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "did not run a successful deterministic validation") {
+		t.Fatalf("conditionally skipped validation error = %v", err)
+	}
+	if _, ok, _ := e.Store.Resolve("phases/change"); ok {
+		t.Fatal("phase with skipped validation received an acceptance marker")
+	}
+}
+
+func TestMutationPolicyLineageIsEnforcedOnResume(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "mutation-policy-lineage")
+	w.Spec.State.Lineage = workflow.StateLineage{}
+	w.Spec.State.Resume = workflow.StateResume{Enabled: boolPtr(true)}
+	w.Spec.Workspace.MutationPolicy.Lineage.RequireSameBranchAsState = true
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "checkout", "-qb", "other")
+	if err := newDurableEngine(t, w, &durableProvider{}).initializeOrResumeState(); err == nil || !strings.Contains(err.Error(), "differs from workflow branch") {
+		t.Fatalf("mutation-policy lineage error = %v", err)
+	}
+}
+
 func TestInvalidatedMarkerAndLineageChangesDoNotAdvanceWork(t *testing.T) {
 	t.Run("invalidated phase marker is rerun", func(t *testing.T) {
 		repo := newDurableRepo(t)

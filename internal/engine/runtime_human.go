@@ -292,7 +292,7 @@ func (e *Engine) runAssertion(a workflow.Assertion) error {
 			return fmt.Errorf("progress contains %d unchecked items", n)
 		}
 		return nil
-	case "workspace-integrity":
+	case "workspace-integrity", "integrity-baseline-unchanged":
 		return e.assertIntegrity()
 	case "implementation-workspace-clean":
 		d, err := e.implementationDirtyFiles()

@@ -69,6 +69,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				}
 				return &phaseValidationFailure{err: err}
 			}
+			active.ValidationPassed = true
 		}
 		if action.AssertProgress != nil && action.AssertProgress.Enabled {
 			if err := e.assertProgressAction(phase, *active, *action.AssertProgress); err != nil {
@@ -107,6 +108,9 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 		}
 		if action.MarkPhaseComplete != nil || action.MarkPhaseCompleteFlag {
+			if !active.ValidationPassed {
+				return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", phase.ID)
+			}
 			if active.CheckpointCommit == "" {
 				// A marker is acceptance evidence, not a progress hint. Compact
 				// lifecycle declarations may omit an explicit checkpoint, but they

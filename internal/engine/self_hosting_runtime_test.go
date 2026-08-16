@@ -113,6 +113,24 @@ func TestSelfHostingWorkflowRunsWithDeterministicProviders(t *testing.T) {
 	}
 }
 
+func TestSelfHostingWorkflowRequiresABoundedTaskBeforeProviderExecution(t *testing.T) {
+	repo := newSelfHostingRepo(t)
+	w := selfHostingWorkflow(t, repo)
+	p := &selfHostingFakeProvider{}
+	e, err := New(w, map[string]provider.Provider{"fake": p}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.In = strings.NewReader("")
+	e.Out = io.Discard
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "task parameter is required") {
+		t.Fatalf("empty task run error = %v", err)
+	}
+	if len(p.calls) != 0 {
+		t.Fatalf("empty task invoked providers: %v", p.calls)
+	}
+}
+
 func TestSelfHostingResumeAfterCheckpointDoesNotReplayPhase(t *testing.T) {
 	repo := newSelfHostingRepo(t)
 	w := selfHostingWorkflow(t, repo)

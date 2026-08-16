@@ -778,13 +778,7 @@ func (s StaticContext) validateReference(name string) error {
 	}
 	if strings.HasPrefix(name, "state.") {
 		switch strings.TrimPrefix(name, "state.") {
-		case "initialized", "base_commit", "branch", "workflow_complete.exists", "workflow_complete.value", "active_phase.exists", "active_phase.value", "active_phase.phase_id", "active_phase.phase_start_commit", "active_phase.unchecked_count_before":
-			return nil
-		}
-		// State record aliases are declared in spec.state.records. They are
-		// syntactically valid here but fail at evaluation unless this runtime
-		// exposes them as a state value.
-		if len(strings.Split(strings.TrimPrefix(name, "state."), ".")) == 1 {
+		case "initialized", "base_commit", "branch", "workflow_complete", "workflow_complete.exists", "workflow_complete.value", "active_phase", "active_phase.exists", "active_phase.value", "active_phase.phase_id", "active_phase.phase_start_commit", "active_phase.unchecked_count_before", "completed_phase_pattern", "completed_phases", "manual_confirmation", "human_verification":
 			return nil
 		}
 		return fmt.Errorf("unknown state reference %q", name)

@@ -43,6 +43,7 @@ type ActivePhase struct {
 	RepairAttempts    map[string]int `json:"repair_attempts,omitempty"`
 	Validation        string         `json:"validation,omitempty"`
 	ValidationError   string         `json:"validation_error,omitempty"`
+	ValidationPassed  bool           `json:"validation_passed,omitempty"`
 }
 
 type IntegrityBaseline map[string]string
@@ -642,10 +643,13 @@ func (e *Engine) initializeOrResumeState() error {
 	if !ok {
 		return e.initializeState()
 	}
-	if (e.Workflow.Spec.State.Lineage.RequireBaseCommitExists || e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead || e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead) && !e.Repo.ObjectExists(base+"^{commit}") {
+	requireBaseAncestor := e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireBaseIsAncestorOfHead
+	if (e.Workflow.Spec.State.Lineage.RequireBaseCommitExists || requireBaseAncestor) && !e.Repo.ObjectExists(base+"^{commit}") {
 		return fmt.Errorf("saved base no longer exists: %s", base)
 	}
-	if (e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead || e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead) && !e.Repo.IsAncestor(base, "HEAD") {
+	if requireBaseAncestor && !e.Repo.IsAncestor(base, "HEAD") {
 		return fmt.Errorf("HEAD no longer descends from workflow base %s", base)
 	}
 	var branch string
@@ -664,7 +668,7 @@ func (e *Engine) initializeOrResumeState() error {
 		}
 		return e.initializeState()
 	}
-	if e.Workflow.Spec.State.Lineage.RequireSameNamedBranch || e.Workflow.Spec.State.Resume.RequireSameBranch {
+	if e.Workflow.Spec.State.Lineage.RequireSameNamedBranch || e.Workflow.Spec.State.Resume.RequireSameBranch || e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireSameBranchAsState {
 		current, err := e.Repo.Branch()
 		if err != nil {
 			return fmt.Errorf("workflow requires its initialized named branch; detached HEAD is not supported")
@@ -687,7 +691,7 @@ func (e *Engine) initializeState() error {
 		}
 	}
 	branch, err := e.Repo.Branch()
-	if (e.Workflow.Spec.State.Initialize.RequireNamedBranch || e.Workflow.Spec.State.Lineage.RequireSameNamedBranch) && (err != nil || branch == "") {
+	if (e.Workflow.Spec.State.Initialize.RequireNamedBranch || e.Workflow.Spec.State.Lineage.RequireSameNamedBranch || e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireSameBranchAsState) && (err != nil || branch == "") {
 		return fmt.Errorf("workflow requires a named branch")
 	}
 	head, err := e.Repo.Head()

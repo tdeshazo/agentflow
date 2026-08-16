@@ -156,7 +156,8 @@ the descriptive specification. The following are explicitly non-executable in
 this runtime and are rejected by validation: provider runners other than
 `codex`, approval policies other than `never`, state backends other than
 `git-dir`, non-Git workspaces, non-Markdown progress sources, non-`on-exit` temp
-cleanup, and tool types outside the list above. Parallel DAG scheduling,
+cleanup, `tool` and `human` phase kinds, and tool types outside the list above.
+Parallel DAG scheduling,
 arbitrary programming-language expressions, and custom tool plugins remain
 future work. Unsupported executable constructs produce an error rather than
 being ignored.
