@@ -1,0 +1,22 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-unknown-references
+spec:
+  agents:
+    worker:
+      runner: codex
+  tools:
+    gate:
+      type: shell
+  validation:
+    phase-gate:
+      steps:
+        - uses: missing-tool
+  phases:
+    - id: build
+      kind: implementation
+      actor: missing-agent
+  flow:
+    - phase: missing-phase
+      validate: missing-validation

@@ -1,0 +1,8 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-malformed-expression
+spec:
+  state:
+    reset:
+      when: "{{ parameters.reset_state"

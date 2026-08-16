@@ -1,0 +1,11 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-invalid-expression
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+  workspace:
+    root: "{{ parameters.missing_root }}"

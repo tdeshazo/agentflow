@@ -29,6 +29,8 @@ This repository contains:
 │   ├── engine/
 │   ├── gitstate/
 │   └── workflow/
+├── scripts/
+│   └── check.sh
 ├── spec/
 │   └── agent-workflow-v1alpha1.yaml
 ├── docs/
@@ -124,6 +126,11 @@ workflow is invalid, executable, or spec-valid but unsupported by this runtime.
 It does not create workspace or Git state. The Go interpreter fails closed on
 unsupported executable constructs; the field guide remains broader than the
 current runtime.
+
+Run `scripts/check.sh` for the repository-owned deterministic development gate.
+It checks formatting and diff hygiene, runs tests, vet, race-enabled tests, and
+validates every shipped definition under `spec/` and `examples/`. It does not
+make live model calls.
 
 ## Publishing
 

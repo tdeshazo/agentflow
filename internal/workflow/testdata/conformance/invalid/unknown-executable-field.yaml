@@ -1,0 +1,9 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-unknown-field
+spec:
+  agents:
+    worker:
+      runner: codex
+      unknowable: true

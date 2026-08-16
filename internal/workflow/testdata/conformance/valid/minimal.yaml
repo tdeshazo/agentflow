@@ -1,0 +1,31 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-minimal
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+  paths:
+    gate: scripts/check.sh
+  workspace:
+    root: "{{ parameters.repo_root }}"
+  agents:
+    worker:
+      runner: codex
+  tools:
+    gate:
+      type: shell
+      command: "true"
+  validation:
+    gate:
+      steps:
+        - uses: gate
+  phases:
+    - id: build
+      kind: implementation
+      actor: worker
+      prompt: build the bounded change
+  flow:
+    - phase: build

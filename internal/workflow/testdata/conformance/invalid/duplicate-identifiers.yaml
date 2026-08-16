@@ -1,0 +1,18 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-duplicate-identifiers
+spec:
+  agents:
+    worker:
+      runner: codex
+  preconditions:
+    - id: same-check
+    - id: same-check
+  phases:
+    - id: same-phase
+      kind: implementation
+      actor: worker
+    - id: same-phase
+      kind: implementation
+      actor: worker

@@ -1,0 +1,17 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-unsupported-runtime
+spec:
+  agents:
+    worker:
+      runner: remote-agent
+  tools:
+    gate:
+      type: file-regex
+  phases:
+    - id: build
+      kind: implementation
+      actor: worker
+  flow:
+    - phase: build

@@ -3,6 +3,8 @@ package workflow
 import (
 	"fmt"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -16,6 +18,7 @@ func Validate(d *Document) Result {
 	v := validator{result: &r, locations: d.Locations, w: d.Workflow}
 	v.roots()
 	v.references()
+	v.expressions()
 	v.runtimeSurface()
 	for _, x := range r.Diagnostics {
 		if x.Status == Invalid {
@@ -36,6 +39,15 @@ type validator struct {
 	result    *Result
 	locations Locations
 	w         *Workflow
+}
+
+func sortedKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (v validator) add(status Status, path, format string, args ...any) {
@@ -64,7 +76,8 @@ func (v validator) roots() {
 	if v.w.Metadata.Name == "" {
 		v.add(Invalid, "metadata.name", "is required")
 	}
-	for n, p := range v.w.Spec.Parameters {
+	for _, n := range sortedKeys(v.w.Spec.Parameters) {
+		p := v.w.Spec.Parameters[n]
 		if n == "" {
 			v.add(Invalid, "spec.parameters", "parameter name must not be empty")
 		}
@@ -167,7 +180,8 @@ func (v validator) uniqueIntegrity() {
 }
 
 func (v validator) references() {
-	for name, validation := range v.w.Spec.Validation {
+	for _, name := range sortedKeys(v.w.Spec.Validation) {
+		validation := v.w.Spec.Validation[name]
 		v.toolUses("spec.validation."+name+".steps", validation.Steps)
 		v.toolUses("spec.validation."+name+".onFailure.then", validation.OnFailure.Then)
 		if a := validation.OnFailure.Repair.Actor; a != "" {
@@ -236,7 +250,8 @@ func (v validator) references() {
 			v.add(Invalid, p, "must contain an executable action")
 		}
 	}
-	for name, c := range v.w.Spec.Completion {
+	for _, name := range sortedKeys(v.w.Spec.Completion) {
+		c := v.w.Spec.Completion[name]
 		p := "spec.completion." + name
 		if c.FinalValidation != "" {
 			v.validation(p+".finalValidation", c.FinalValidation)
@@ -331,8 +346,178 @@ func (v validator) criterion(id string) bool {
 	return false
 }
 
+// expressions checks the small amount of expression structure that can be
+// validated without repository or runtime state. It deliberately does not
+// evaluate conditionals or add runtime expression features; it only catches
+// malformed delimiters and references to statically-known names.
+func (v validator) expressions() {
+	visitStrings(reflect.ValueOf(v.w), "", func(path, value string) {
+		if !strings.Contains(value, "{{") && !strings.Contains(value, "}}") {
+			return
+		}
+		validateTemplateString(path, value, v.w.Spec.Parameters, v.w.Spec.Paths, func(message string) {
+			v.add(Invalid, path, "invalid expression: %s", message)
+		})
+	})
+}
+
+func visitStrings(value reflect.Value, path string, visit func(string, string)) {
+	if !value.IsValid() {
+		return
+	}
+	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return
+		}
+		visitStrings(value.Elem(), path, visit)
+		return
+	}
+	switch value.Kind() {
+	case reflect.String:
+		visit(path, value.String())
+	case reflect.Struct:
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Type().Field(i)
+			tag := strings.Split(field.Tag.Get("yaml"), ",")[0]
+			if tag == "" || tag == "-" || !field.IsExported() {
+				continue
+			}
+			child := tag
+			if path != "" {
+				child = path + "." + tag
+			}
+			visitStrings(value.Field(i), child, visit)
+		}
+	case reflect.Map:
+		if value.Type().Key().Kind() != reflect.String {
+			return
+		}
+		keys := make([]string, 0, value.Len())
+		for _, key := range value.MapKeys() {
+			keys = append(keys, key.String())
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			child := key
+			if path != "" {
+				child = path + "." + key
+			}
+			visitStrings(value.MapIndex(reflect.ValueOf(key)), child, visit)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < value.Len(); i++ {
+			visitStrings(value.Index(i), fmt.Sprintf("%s[%d]", path, i), visit)
+		}
+	}
+}
+
+var expressionReferenceRE = regexp.MustCompile(`\b(parameters|spec\.paths|metadata|phase)\.([A-Za-z_][A-Za-z0-9_-]*)`)
+var expressionTokenRE = regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*\b`)
+var expressionLiteralRE = regexp.MustCompile(`'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`)
+var malformedExpressionReferenceRE = regexp.MustCompile(`\b(parameters|metadata|phase|spec(?:\.paths)?)\s*\.\s*(?:$|[^A-Za-z0-9_-])`)
+
+func validateTemplateString(path, value string, parameters map[string]Parameter, paths map[string]string, invalid func(string)) {
+	for offset := 0; offset < len(value); {
+		open := strings.Index(value[offset:], "{{")
+		close := strings.Index(value[offset:], "}}")
+		if close >= 0 && (open < 0 || close < open) {
+			invalid("unmatched closing delimiter")
+			return
+		}
+		if open < 0 {
+			return
+		}
+		open += offset
+		end := strings.Index(value[open+2:], "}}")
+		if end < 0 {
+			invalid("missing closing delimiter")
+			return
+		}
+		end += open + 2
+		expr := strings.TrimSpace(value[open+2 : end])
+		if message := validateExpressionReference(expr, parameters, paths); message != "" {
+			invalid(message)
+		}
+		offset = end + 2
+	}
+}
+
+func validateExpressionReference(expr string, parameters map[string]Parameter, paths map[string]string) string {
+	if expr == "" {
+		return "expression must not be empty"
+	}
+	parts := strings.Split(expr, "|")
+	if len(parts) > 2 {
+		return "expression has too many filters"
+	}
+	base := strings.TrimSpace(parts[0])
+	if base == "" {
+		return "expression base must not be empty"
+	}
+	if len(parts) == 2 {
+		filter := strings.TrimSpace(parts[1])
+		if !strings.HasPrefix(filter, "default(") || !strings.HasSuffix(filter, ")") {
+			return "only the default filter is supported"
+		}
+		argument := strings.TrimSpace(filter[len("default(") : len(filter)-1])
+		if len(argument) < 2 || argument[0] != argument[len(argument)-1] || (argument[0] != '\'' && argument[0] != '"') {
+			return "default filter requires a quoted argument"
+		}
+	}
+
+	// String literals are not references. This also permits shell-like text in
+	// mktemp arguments while still checking the expression around it.
+	withoutLiterals := expressionLiteralRE.ReplaceAllString(base, " ")
+	allowedRoots := map[string]bool{
+		"env": true, "head_commit": true, "invocation": true, "metadata": true,
+		"mktemp": true, "parameters": true, "phase": true, "progress": true,
+		"spec": true, "state": true, "tail": true, "temp": true,
+		"validation": true, "workflow": true, "true": true, "false": true,
+	}
+	for _, token := range expressionTokenRE.FindAllString(withoutLiterals, -1) {
+		root := strings.Split(token, ".")[0]
+		if root == "not" || root == "and" || root == "or" {
+			continue
+		}
+		if !allowedRoots[root] {
+			return fmt.Sprintf("unknown expression reference %q", root)
+		}
+		if token == "parameters" || token == "metadata" || token == "phase" || token == "spec" || token == "spec.paths" {
+			return fmt.Sprintf("incomplete expression reference %q", token)
+		}
+	}
+	if malformedExpressionReferenceRE.MatchString(withoutLiterals) {
+		return "incomplete expression reference"
+	}
+
+	for _, match := range expressionReferenceRE.FindAllStringSubmatch(base, -1) {
+		switch match[1] {
+		case "parameters":
+			if _, ok := parameters[match[2]]; !ok {
+				return fmt.Sprintf("unknown parameter reference %q", match[2])
+			}
+		case "spec.paths":
+			if _, ok := paths[match[2]]; !ok {
+				return fmt.Sprintf("unknown spec path reference %q", match[2])
+			}
+		case "metadata":
+			if match[2] != "name" {
+				return fmt.Sprintf("unknown metadata reference %q", match[2])
+			}
+		case "phase":
+			switch match[2] {
+			case "id", "label", "kind", "criterion", "requiresChange":
+			default:
+				return fmt.Sprintf("unknown phase reference %q", match[2])
+			}
+		}
+	}
+	return ""
+}
+
 func (v validator) runtimeSurface() {
-	for name, a := range v.w.Spec.Agents {
+	for _, name := range sortedKeys(v.w.Spec.Agents) {
+		a := v.w.Spec.Agents[name]
 		if a.Runner != "codex" {
 			v.add(Unsupported, "spec.agents."+name+".runner", "runner %q is not implemented by this runtime", a.Runner)
 		}
@@ -340,7 +525,8 @@ func (v validator) runtimeSurface() {
 			v.add(Unsupported, "spec.agents."+name+".approval", "approval policy %q is not implemented", a.Approval)
 		}
 	}
-	for name, t := range v.w.Spec.Tools {
+	for _, name := range sortedKeys(v.w.Spec.Tools) {
+		t := v.w.Spec.Tools[name]
 		switch t.Type {
 		case "shell", "workspace-policy", "git-checkpoint":
 		default:
@@ -377,7 +563,8 @@ func (v validator) runtimeSurface() {
 			v.add(Unsupported, fmt.Sprintf("spec.flow[%d]", i), "multi-action flow steps are not implemented by this runtime")
 		}
 	}
-	for name, c := range v.w.Spec.Completion {
+	for _, name := range sortedKeys(v.w.Spec.Completion) {
+		c := v.w.Spec.Completion[name]
 		if c.WriteMarker.Record != "" || !reflect.DeepEqual(c.Summary, Summary{}) {
 			v.add(Unsupported, "spec.completion."+name, "custom completion marker/summary declarations are not implemented by this runtime")
 		}

@@ -11,3 +11,6 @@ When changing the specification:
 5. Keep deterministic advancement, mutation boundaries, recovery behavior, human gates, and completion semantics explicit rather than burying them in agent prompts.
 
 Before submitting changes, verify that all YAML files parse successfully and that relative links in the Markdown files remain valid.
+
+Run `scripts/check.sh` before submitting. It is the canonical repository gate
+for formatting, Go tests, vet, race coverage, and shipped workflow validation.

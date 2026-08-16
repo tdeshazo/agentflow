@@ -1,0 +1,7 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-malformed-type
+spec:
+  agents:
+    worker: []
