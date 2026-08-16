@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strings"
 )
-
-var unsafeRef = regexp.MustCompile(`[^A-Za-z0-9._/-]+`)
 
 type Store struct {
 	Repo      Repo
@@ -17,8 +14,15 @@ type Store struct {
 }
 
 func NewStore(repo Repo, workflowName string) Store {
-	name := unsafeRef.ReplaceAllString(workflowName, "-")
-	name = strings.Trim(name, "/.-")
+	// A workflow name is user supplied, while a Git ref name has a more
+	// restrictive grammar. Replacing unsafe characters is not sufficient: for
+	// example, "release candidate" and "release-candidate" would otherwise
+	// share one state namespace. Encode every byte instead, so the mapping is
+	// deterministic and injective without relying on an external state index.
+	name := "workflow-"
+	for _, b := range []byte(workflowName) {
+		name += fmt.Sprintf("%02x", b)
+	}
 	return Store{Repo: repo, Namespace: "refs/agentflow/" + name}
 }
 
@@ -78,6 +82,25 @@ func (s Store) GetJSON(name string, dst any) (bool, error) {
 func (s Store) Delete(name string) error {
 	_, err := s.Repo.run(nil, "update-ref", "-d", s.ref(name))
 	return err
+}
+
+// Names returns the state record names currently present in this workflow
+// namespace. It deliberately exposes names rather than objects so callers can
+// distinguish an interrupted initialization from a populated workflow.
+func (s Store) Names() ([]string, error) {
+	b, err := s.Repo.run(nil, "for-each-ref", "--format=%(refname)", s.Namespace+"/")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, ref := range strings.Split(string(b), "\n") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		names = append(names, strings.TrimPrefix(ref, s.Namespace+"/"))
+	}
+	return names, nil
 }
 
 func (s Store) Reset() error {

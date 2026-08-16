@@ -61,7 +61,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		}
 		if action.Validate != "" {
 			if err := e.runValidation(ctx, action.Validate, phase); err != nil {
-				return err
+				return &phaseValidationFailure{err: err}
 			}
 		}
 		if action.AssertProgress != nil && action.AssertProgress.Enabled {
@@ -75,7 +75,23 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 		}
 		if action.Checkpoint != "" {
-			if err := e.runTool(action.Checkpoint, phase); err != nil {
+			if err := e.assertAgentCommitPolicy(phase, *active); err != nil {
+				return err
+			}
+			active.CheckpointPending = true
+			if err := e.Store.SetJSON("active", *active); err != nil {
+				return err
+			}
+			if err := e.runTool(ctx, action.Checkpoint, phase); err != nil {
+				return err
+			}
+			head, err := e.Repo.Head()
+			if err != nil {
+				return err
+			}
+			active.CheckpointCommit = head
+			active.CheckpointPending = false
+			if err := e.Store.SetJSON("active", *active); err != nil {
 				return err
 			}
 		}
@@ -85,6 +101,31 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 		}
 		if action.MarkPhaseComplete != nil || action.MarkPhaseCompleteLegacy {
+			if active.CheckpointCommit == "" {
+				// A marker is acceptance evidence, not a progress hint. Compact
+				// lifecycle declarations may omit an explicit checkpoint, but they
+				// still receive the same durable checkpoint barrier before a phase
+				// can become complete.
+				if err := e.assertAgentCommitPolicy(phase, *active); err != nil {
+					return err
+				}
+				active.CheckpointPending = true
+				if err := e.Store.SetJSON("active", *active); err != nil {
+					return err
+				}
+				if err := e.checkpoint(phase.Label, phase); err != nil {
+					return err
+				}
+				head, err := e.Repo.Head()
+				if err != nil {
+					return err
+				}
+				active.CheckpointCommit = head
+				active.CheckpointPending = false
+				if err := e.Store.SetJSON("active", *active); err != nil {
+					return err
+				}
+			}
 			if err := e.markPhaseComplete(phase); err != nil {
 				return err
 			}
@@ -108,6 +149,36 @@ func (e *Engine) assertNetChange(phase *workflow.Phase, active ActivePhase) erro
 	}
 	if !changed {
 		return fmt.Errorf("phase %s (%s) produced no net repository change", phase.ID, phase.Label)
+	}
+	return nil
+}
+
+func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePhase) error {
+	agent, ok := e.Workflow.Spec.Agents[phase.Actor]
+	if !ok {
+		return fmt.Errorf("unknown actor %q", phase.Actor)
+	}
+	allowed := agent.MayCommit || e.Workflow.Spec.Workspace.AgentCommits.Allowed || e.Workflow.Spec.Workspace.Checkpointing.AgentCommitsAllowed
+	if allowed {
+		return nil
+	}
+	head, err := e.Repo.Head()
+	if err != nil {
+		return err
+	}
+	if active.CheckpointPending {
+		return nil
+	}
+	if active.CheckpointCommit != "" {
+		if !e.Repo.ObjectExists(active.CheckpointCommit+"^{commit}") || !e.Repo.IsAncestor(active.CheckpointCommit, "HEAD") {
+			return fmt.Errorf("phase %s checkpoint no longer descends from its recorded checkpoint %s", phase.ID, active.CheckpointCommit)
+		}
+		if head == active.CheckpointCommit {
+			return nil
+		}
+	}
+	if head != active.StartCommit {
+		return fmt.Errorf("phase %s created commits but actor %q is not allowed to commit", phase.ID, phase.Actor)
 	}
 	return nil
 }

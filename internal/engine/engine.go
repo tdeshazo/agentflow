@@ -31,10 +31,13 @@ type Engine struct {
 }
 
 type ActivePhase struct {
-	PhaseID         string   `json:"phase_id"`
-	StartCommit     string   `json:"phase_start_commit"`
-	UncheckedBefore int      `json:"unchecked_count_before"`
-	CheckedBefore   []string `json:"checked_before"`
+	PhaseID           string         `json:"phase_id"`
+	StartCommit       string         `json:"phase_start_commit"`
+	CheckpointCommit  string         `json:"checkpoint_commit,omitempty"`
+	CheckpointPending bool           `json:"checkpoint_pending,omitempty"`
+	UncheckedBefore   int            `json:"unchecked_count_before"`
+	CheckedBefore     []string       `json:"checked_before"`
+	RepairAttempts    map[string]int `json:"repair_attempts,omitempty"`
 }
 
 type IntegrityBaseline map[string]string
@@ -209,6 +212,22 @@ func (e *Engine) Run(ctx context.Context) error {
 		fmt.Fprintf(e.Out, "Workflow %s already complete at %s\n", e.Workflow.Metadata.Name, completeSHA)
 		return nil
 	}
+	var active ActivePhase
+	activeExists, err := e.Store.GetJSON("active", &active)
+	if err != nil {
+		return err
+	}
+	if activeExists {
+		if !e.resumeEnabled() {
+			return fmt.Errorf("workflow has an interrupted active phase but resume is disabled")
+		}
+		// Resume is a runtime safety invariant. A flow-level recover action is
+		// still accepted for clarity, but an active record must never be bypassed
+		// merely because a workflow places that action after a phase step.
+		if err := e.recoverActive(ctx); err != nil {
+			return err
+		}
+	}
 	for _, step := range e.Workflow.Spec.Flow {
 		if err := e.runFlowStep(ctx, step); err != nil {
 			if errors.Is(err, errFlowStoppedSuccessfully) {
@@ -218,6 +237,13 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (e *Engine) resumeEnabled() bool {
+	if e.Workflow.Spec.State.Resume.Enabled == nil {
+		return true
+	}
+	return *e.Workflow.Spec.State.Resume.Enabled
 }
 
 func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error {
@@ -478,35 +504,7 @@ func (e *Engine) initializeOrResumeState() error {
 		return err
 	}
 	if !ok {
-		dirty, err := e.implementationDirtyFiles()
-		if err != nil {
-			return err
-		}
-		if len(dirty) > 0 {
-			return fmt.Errorf("first run requires clean implementation workspace: %s", strings.Join(dirty, ", "))
-		}
-		branch, err := e.Repo.Branch()
-		if err != nil || branch == "" {
-			return fmt.Errorf("workflow requires a named branch")
-		}
-		head, err := e.Repo.Head()
-		if err != nil {
-			return err
-		}
-		if err := e.Store.SetCommit("base", head); err != nil {
-			return err
-		}
-		if err := e.Store.SetJSON("branch", branch); err != nil {
-			return err
-		}
-		baseline, err := e.computeIntegrity()
-		if err != nil {
-			return err
-		}
-		if err := e.Store.SetJSON("integrity", baseline); err != nil {
-			return err
-		}
-		return nil
+		return e.initializeState()
 	}
 	if !e.Repo.ObjectExists(base + "^{commit}") {
 		return fmt.Errorf("saved base no longer exists: %s", base)
@@ -515,18 +513,78 @@ func (e *Engine) initializeOrResumeState() error {
 		return fmt.Errorf("HEAD no longer descends from workflow base %s", base)
 	}
 	var branch string
-	ok, err = e.Store.GetJSON("branch", &branch)
-	if err != nil || !ok {
-		return fmt.Errorf("saved branch missing")
+	branchOK, err := e.Store.GetJSON("branch", &branch)
+	if err != nil {
+		return err
+	}
+	var integrity IntegrityBaseline
+	integrityOK, err := e.Store.GetJSON("integrity", &integrity)
+	if err != nil {
+		return err
+	}
+	if !branchOK || !integrityOK {
+		if err := e.resetInterruptedInitialization(); err != nil {
+			return err
+		}
+		return e.initializeState()
 	}
 	current, err := e.Repo.Branch()
 	if err != nil {
-		return err
+		return fmt.Errorf("workflow requires its initialized named branch; detached HEAD is not supported")
 	}
 	if current != branch {
 		return fmt.Errorf("current branch %q differs from workflow branch %q", current, branch)
 	}
 	return e.assertIntegrity()
+}
+
+func (e *Engine) initializeState() error {
+	dirty, err := e.implementationDirtyFiles()
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("first run requires clean implementation workspace: %s", strings.Join(dirty, ", "))
+	}
+	branch, err := e.Repo.Branch()
+	if err != nil || branch == "" {
+		return fmt.Errorf("workflow requires a named branch")
+	}
+	head, err := e.Repo.Head()
+	if err != nil {
+		return err
+	}
+	if err := e.Store.SetCommit("base", head); err != nil {
+		return err
+	}
+	if err := e.Store.SetJSON("branch", branch); err != nil {
+		return err
+	}
+	baseline, err := e.computeIntegrity()
+	if err != nil {
+		return err
+	}
+	return e.Store.SetJSON("integrity", baseline)
+}
+
+func (e *Engine) resetInterruptedInitialization() error {
+	names, err := e.Store.Names()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if name != "base" && name != "branch" && name != "integrity" {
+			return fmt.Errorf("workflow state is incomplete and contains execution evidence %q", name)
+		}
+	}
+	dirty, err := e.implementationDirtyFiles()
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("workflow initialization is incomplete and implementation workspace is dirty: %s", strings.Join(dirty, ", "))
+	}
+	return e.Store.Reset()
 }
 
 func (e *Engine) context(p *workflow.Phase) workflow.Context {

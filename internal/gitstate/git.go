@@ -119,6 +119,19 @@ func (r Repo) Commit(message string) error {
 	return err
 }
 
+// CommitPaths commits only the supplied paths. Checkpoints use this instead of
+// committing the whole index so an unrelated pre-staged local-control change
+// cannot accidentally become accepted workflow work.
+func (r Repo) CommitPaths(message string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := []string{"commit", "--only", "-m", message, "--"}
+	args = append(args, paths...)
+	_, err := r.run(nil, args...)
+	return err
+}
+
 func (r Repo) HasStagedChanges() (bool, error) {
 	cmd := exec.Command("git", "-C", r.Root, "diff", "--cached", "--quiet")
 	err := cmd.Run()

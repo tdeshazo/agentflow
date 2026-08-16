@@ -31,18 +31,20 @@ The interpreter does not maintain a separate state database. It stores durable
 workflow evidence in Git's own object database and namespaced refs:
 
 ```text
-refs/agentflow/<workflow-name>/base
-refs/agentflow/<workflow-name>/branch
-refs/agentflow/<workflow-name>/active
-refs/agentflow/<workflow-name>/integrity
-refs/agentflow/<workflow-name>/phases/<phase-id>
-refs/agentflow/<workflow-name>/human/<gate-id>
-refs/agentflow/<workflow-name>/complete
+refs/agentflow/workflow-<hex-encoded-workflow-name>/base
+refs/agentflow/workflow-<hex-encoded-workflow-name>/branch
+refs/agentflow/workflow-<hex-encoded-workflow-name>/active
+refs/agentflow/workflow-<hex-encoded-workflow-name>/integrity
+refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
+refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
+refs/agentflow/workflow-<hex-encoded-workflow-name>/complete
 ```
 
 Commit-valued records point directly at repository commits. Structured records
 such as the active phase, branch name, and integrity baseline are JSON blobs
 written with `git hash-object -w` and referenced through the same namespace.
+The workflow-name component is a byte-for-byte hex encoding, so two names that
+would sanitize to the same Git-ref spelling still retain isolated state.
 Deleting/resetting workflow state deletes only these refs; normal repository
 history is not rewritten.
 

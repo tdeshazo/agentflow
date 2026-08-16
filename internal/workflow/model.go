@@ -94,7 +94,7 @@ type StateLineage struct {
 	RequireSameNamedBranch      bool `yaml:"require_same_named_branch"`
 }
 type StateResume struct {
-	Enabled                     bool              `yaml:"enabled"`
+	Enabled                     *bool             `yaml:"enabled"`
 	RequireBaseIsAncestorOfHead bool              `yaml:"require_base_is_ancestor_of_head"`
 	RequireSameBranch           bool              `yaml:"require_same_branch"`
 	CompletedPhaseMarker        MarkerPolicy      `yaml:"completed_phase_marker"`

@@ -36,7 +36,7 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) error {
 					msg = expanded
 				}
 			}
-			if err := e.Repo.Commit(msg); err != nil {
+			if err := e.Repo.CommitPaths(msg, dirty); err != nil {
 				return err
 			}
 		}
