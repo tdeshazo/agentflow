@@ -21,11 +21,15 @@ go run ./cmd/agentflow validate \
   -f examples/develop-agentflow.agent-workflow.yaml
 ```
 
-The canonical deterministic gate also validates every shipped workflow:
+The canonical deterministic Bash gate also validates every shipped workflow:
 
 ```sh
 ./scripts/check.sh
 ```
+
+The gate is the repository-owned quality authority and never makes a live model
+call. CI invokes this executable directly, and the self-hosting workflow uses
+the same command.
 
 ## Run
 
@@ -63,13 +67,16 @@ go run ./cmd/agentflow status \
   -C .
 ```
 
-It reports a durable state such as `uninitialized`, `active`,
-`validation-failed/recoverable`, `human-gated`, or `completed`, along with the
-saved base/branch, active phase, failed validation, and human gate when present.
+It reports a durable state such as `uninitialized`, `ready`, `active`,
+`validation-failed/recoverable`, `safety-failed/terminal`, `human-gated`, or
+`completed`, along with the saved base/branch, active phase, failed validation,
+and human gate when present. Status does not require the original task or model
+parameters.
 
 ## Resume
 
-If the interpreter is interrupted, rerun the same command with the same task:
+If the interpreter is interrupted, rerun the same command with the exact same
+task, model/runtime inputs, and executable workflow definition:
 
 ```sh
 go run ./cmd/agentflow run \
@@ -80,14 +87,18 @@ go run ./cmd/agentflow run \
 
 The workflow checks the saved base/branch lineage, preserves partial commits or
 worktree changes for the active phase, validates existing work first, and only
-reruns that same phase when necessary. Completed phase markers remain valid
-only while their commits are ancestors of `HEAD`.
+reruns that same phase when necessary. If an implementation or audit actor was
+interrupted before returning, its phase cannot be accepted from a passing gate;
+the actor is resumed. If the actor already returned successfully but acceptance
+was interrupted, deterministic acceptance resumes without replaying it.
+Completed phase markers remain valid only while their commits are ancestors of
+`HEAD`.
 
 ## Reset
 
 Reset discards only this workflow's orchestration refs; it never rewrites normal
 Git history or cleans up source changes. It requires a clean implementation
-workspace:
+workspace, so partial work must be handled or committed before resetting:
 
 ```sh
 go run ./cmd/agentflow reset \

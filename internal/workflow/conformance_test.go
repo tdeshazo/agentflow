@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -170,15 +171,21 @@ func TestSelfHostingCutoverContract(t *testing.T) {
 			t.Fatalf("bootstrap contains private or obsolete cutover contract %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(bootstrap), "./scripts/check.sh") {
-		t.Fatal("bootstrap does not invoke the canonical Bash gate directly")
-	}
 
 	document, err := Decode(filepath.Join(root, "examples", "develop-agentflow.agent-workflow.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	workflow := document.Workflow
+	setPattern := regexp.MustCompile(`--set "([A-Za-z_][A-Za-z0-9_]*)=`)
+	for _, match := range setPattern.FindAllStringSubmatch(string(bootstrap), -1) {
+		if _, ok := workflow.Spec.Parameters[match[1]]; !ok {
+			t.Fatalf("bootstrap passes undeclared parameter %q", match[1])
+		}
+	}
+	if !strings.Contains(string(bootstrap), "./scripts/check.sh") {
+		t.Fatal("bootstrap does not invoke the canonical Bash gate directly")
+	}
 	if got, want := workflow.Spec.Tools["canonical-gate"].Command, "./{{ spec.paths.canonical_gate }}"; got != want {
 		t.Fatalf("canonical-gate command = %q, want %q", got, want)
 	}

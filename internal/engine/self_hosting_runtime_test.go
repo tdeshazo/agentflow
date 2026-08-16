@@ -320,7 +320,7 @@ func selfHostingWorkflow(t *testing.T, repo string) *workflow.Workflow {
 	w.Spec.Parameters["repo_root"] = workflow.Parameter{Type: "path", Default: repo}
 	for i := range w.Spec.Preconditions {
 		if w.Spec.Preconditions[i].Type == "commands-exist" {
-			w.Spec.Preconditions[i].Commands = []string{"git", "sh"}
+			w.Spec.Preconditions[i].Commands = []string{"git", "sh", "bash"}
 		}
 	}
 	for actor, definition := range w.Spec.Agents {
@@ -359,8 +359,10 @@ func newSelfHostingRepo(t *testing.T) string {
 		"README.md":  "seed\n",
 		"ROADMAP.md": "# roadmap\n",
 		"docs/research/agent-workflow-orchestration-landscape.md": "research\n",
-		"scripts/check.sh":                               "#!/bin/sh\nset -eu\ntest -f README.md\n",
-		".github/workflows/quality.yml":                  "run: sh scripts/check.sh\n",
+		// Bash-only syntax makes the executable-bit/shebang contract
+		// observable: invoking this through `sh scripts/check.sh` must fail.
+		"scripts/check.sh":                               "#!/usr/bin/env bash\nset -euo pipefail\n[[ -f README.md ]]\n",
+		".github/workflows/quality.yml":                  "run: ./scripts/check.sh\n",
 		"examples/develop-agentflow.agent-workflow.yaml": "self-hosting fixture definition\n",
 	}
 	for name, contents := range files {
