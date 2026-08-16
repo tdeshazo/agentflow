@@ -163,7 +163,7 @@ spec:
       mutates_workspace: false
     canonical-gate:
       type: shell
-      command: "sh {{ spec.paths.canonical_gate }}"
+      command: "./{{ spec.paths.canonical_gate }}"
       mutates_workspace: false
       capture:
         stdout: true
@@ -185,7 +185,7 @@ spec:
       path: "{{ parameters.repo_root }}"
     - id: required-commands
       type: commands-exist
-      commands: [git, codex, sh]
+      commands: [git, codex, sh, bash, go, gofmt, rg]
     - id: required-files
       type: files-exist
       paths:

@@ -399,7 +399,7 @@ fallback_gate() {
 
 bootstrap_gate() {
   if [[ -f scripts/check.sh ]]; then
-    sh scripts/check.sh
+    ./scripts/check.sh
   else
     fallback_gate
   fi
@@ -1092,7 +1092,6 @@ fi
 ###############################################################################
 
 SELFHOST_WORKFLOW="examples/develop-agentflow.agent-workflow.yaml"
-SELFHOST_NAME="develop-agentflow"
 
 [[ -f "$SELFHOST_WORKFLOW" ]] \
   || die "$SELFHOST_WORKFLOW was not created"
@@ -1111,36 +1110,16 @@ go build -o "$BIN" ./cmd/agentflow
   -f "$SELFHOST_WORKFLOW" \
   -C "$ROOT"
 
-sh scripts/check.sh
+./scripts/check.sh
 
 has_dirty_files \
   && die "cutover requires a clean worktree"
-
-###############################################################################
-# Self-host state refs
-###############################################################################
-
-NS="refs/agentflow/${SELFHOST_NAME}"
-
-IMPLEMENT_REF="${NS}/phases/implement"
-AUDIT_REF="${NS}/phases/audit"
-HUMAN_REF="${NS}/human/self-host-review"
-COMPLETE_REF="${NS}/complete"
-
-ref_exists() {
-  git show-ref --verify --quiet "$1"
-}
 
 ###############################################################################
 # Initialize the live self-hosting proof
 ###############################################################################
 
 if [[ ! -f "$SELFHOST_START_FILE" ]]; then
-  # A pre-existing namespace would make this first proof ambiguous.
-  if git for-each-ref --format='%(refname)' "${NS}/" | grep -q .; then
-    die "existing ${NS}/ AgentFlow state found; inspect/reset it before starting a new MVP proof"
-  fi
-
   git rev-parse HEAD > "$SELFHOST_START_FILE"
 
   note "Starting first real AgentFlow self-development run"
@@ -1157,8 +1136,11 @@ git merge-base --is-ancestor "$SELFHOST_BASE" HEAD \
 ###############################################################################
 # First leg:
 #
-# Let AgentFlow execute its real implementation and audit. Once the durable
-# audit marker exists, kill the interpreter before the human/completion stage.
+# Let AgentFlow execute its real implementation and audit. Once the public
+# status reaches human-gated, kill the interpreter before the human/completion
+# stage. The runtime derives that state only after implementation and audit
+# acceptance, so the bootstrap does not need to know the runtime's state refs or
+# configured record names.
 #
 # This is intentionally shell-observed but NOT shell-orchestrated: phase order,
 # validation, repair, checkpointing, and acceptance are all AgentFlow-owned.
@@ -1168,6 +1150,7 @@ interrupt_after_audit_checkpoint() {
   local fifo="$TMP_ROOT/selfhost.stdin"
   local log="$STATE_DIR/selfhost-first-leg.log"
   local elapsed=0
+  local state=""
 
   rm -f "$fifo"
   mkfifo "$fifo"
@@ -1182,7 +1165,6 @@ interrupt_after_audit_checkpoint() {
     -f "$SELFHOST_WORKFLOW" \
     -C "$ROOT" \
     --set "task=$SELF_HOST_TASK" \
-    --set "require_human_verification=true" \
     < "$fifo" \
     > "$log" \
     2>&1 &
@@ -1190,16 +1172,16 @@ interrupt_after_audit_checkpoint() {
   SELFHOST_PID=$!
 
   while (( elapsed < SELFHOST_WAIT_SECONDS )); do
-    if ref_exists "$COMPLETE_REF"; then
+    state="$("$BIN" status -f "$SELFHOST_WORKFLOW" -C "$ROOT" 2>/dev/null |
+      awk -F': ' '$1 == "state" { print $2; exit }' || true)"
+
+    if [[ "$state" == "completed" ]]; then
       cat "$log" >&2
       die "self-host workflow completed before the required interruption/human gate"
     fi
 
-    if ref_exists "$AUDIT_REF"; then
-      ref_exists "$IMPLEMENT_REF" \
-        || die "audit checkpoint exists without implementation checkpoint"
-
-      note "Durable audit checkpoint observed; interrupting interpreter"
+    if [[ "$state" == "human-gated" ]]; then
+      note "Durable human-gated state observed; interrupting interpreter"
 
       kill -TERM "$SELFHOST_PID" 2>/dev/null || true
 
@@ -1220,12 +1202,6 @@ interrupt_after_audit_checkpoint() {
       exec 9>&-
       rm -f "$fifo"
 
-      git rev-parse "$IMPLEMENT_REF" \
-        > "$STATE_DIR/implement-ref-before-resume"
-
-      git rev-parse "$AUDIT_REF" \
-        > "$STATE_DIR/audit-ref-before-resume"
-
       git rev-parse HEAD > "$SELFHOST_INTERRUPTED_FILE"
 
       printf '\n==> AgentFlow was intentionally stopped after accepted audit state.\n'
@@ -1237,7 +1213,7 @@ interrupt_after_audit_checkpoint() {
       SELFHOST_PID=""
 
       cat "$log" >&2
-      die "self-hosting run exited before reaching the durable audit checkpoint"
+      die "self-hosting run exited before reaching durable human-gated state (state=${state:-unknown})"
     fi
 
     sleep 1
@@ -1249,49 +1225,39 @@ interrupt_after_audit_checkpoint() {
   SELFHOST_PID=""
 
   cat "$log" >&2
-  die "timed out waiting for the self-host audit checkpoint"
+  die "timed out waiting for AgentFlow human-gated state"
 }
 
-if [[ ! -f "$SELFHOST_INTERRUPTED_FILE" ]] && ! ref_exists "$COMPLETE_REF"; then
-  if ref_exists "$AUDIT_REF"; then
-    # A previous shell process may have died after AgentFlow reached the
-    # checkpoint but before writing the local bootstrap marker.
-    note "Existing durable audit checkpoint found; recording interruption state"
+if [[ ! -f "$SELFHOST_INTERRUPTED_FILE" && ! -f "$SELFHOST_COMPLETE_FILE" ]]; then
+  state="$("$BIN" status -f "$SELFHOST_WORKFLOW" -C "$ROOT" |
+    awk -F': ' '$1 == "state" { print $2; exit }')"
 
-    git rev-parse "$IMPLEMENT_REF" \
-      > "$STATE_DIR/implement-ref-before-resume"
-
-    git rev-parse "$AUDIT_REF" \
-      > "$STATE_DIR/audit-ref-before-resume"
-
-    git rev-parse HEAD > "$SELFHOST_INTERRUPTED_FILE"
-  else
-    interrupt_after_audit_checkpoint
-  fi
+  case "$state" in
+    uninitialized|ready|active|validation-failed/recoverable)
+      interrupt_after_audit_checkpoint
+      ;;
+    human-gated)
+      # A previous bootstrap process may have observed the public checkpoint
+      # just before it stopped, so preserve that durable progress locally.
+      git rev-parse HEAD > "$SELFHOST_INTERRUPTED_FILE"
+      ;;
+    completed)
+      # A previous bootstrap process may have died after AgentFlow completed
+      # but before it wrote its local proof marker. The public status is the
+      # durable source of truth, so resume the shell proof from there.
+      git rev-parse HEAD > "$SELFHOST_COMPLETE_FILE"
+      ;;
+    *)
+      die "unexpected AgentFlow self-host state: ${state:-unknown}"
+      ;;
+  esac
 fi
 
 ###############################################################################
 # Verify the interrupted state
 ###############################################################################
 
-if [[ ! -f "$SELFHOST_COMPLETE_FILE" ]] && ! ref_exists "$COMPLETE_REF"; then
-  ref_exists "$IMPLEMENT_REF" \
-    || die "implementation phase marker missing after interruption"
-
-  ref_exists "$AUDIT_REF" \
-    || die "audit phase marker missing after interruption"
-
-  ref_exists "$COMPLETE_REF" \
-    && die "workflow should not already be complete"
-
-  IMPLEMENT_BEFORE="$(
-    cat "$STATE_DIR/implement-ref-before-resume"
-  )"
-
-  AUDIT_BEFORE="$(
-    cat "$STATE_DIR/audit-ref-before-resume"
-  )"
-
+if [[ ! -f "$SELFHOST_COMPLETE_FILE" ]]; then
   note "Inspecting interrupted AgentFlow state"
 
   "$BIN" status \
@@ -1312,23 +1278,12 @@ if [[ ! -f "$SELFHOST_COMPLETE_FILE" ]] && ! ref_exists "$COMPLETE_REF"; then
     "$BIN" run \
       -f "$SELFHOST_WORKFLOW" \
       -C "$ROOT" \
-      --set "task=$SELF_HOST_TASK" \
-      --set "require_human_verification=true"
+      --set "task=$SELF_HOST_TASK"
 
-  ref_exists "$COMPLETE_REF" \
-    || die "self-host workflow did not write its completion marker"
-
-  ref_exists "$HUMAN_REF" \
-    || die "self-host workflow did not record durable human confirmation"
-
-  IMPLEMENT_AFTER="$(git rev-parse "$IMPLEMENT_REF")"
-  AUDIT_AFTER="$(git rev-parse "$AUDIT_REF")"
-
-  [[ "$IMPLEMENT_AFTER" == "$IMPLEMENT_BEFORE" ]] \
-    || die "accepted implementation phase was replayed/replaced during resume"
-
-  [[ "$AUDIT_AFTER" == "$AUDIT_BEFORE" ]] \
-    || die "accepted audit phase was replayed/replaced during resume"
+  state="$("$BIN" status -f "$SELFHOST_WORKFLOW" -C "$ROOT" |
+    awk -F': ' '$1 == "state" { print $2; exit }')"
+  [[ "$state" == "completed" ]] \
+    || die "self-host workflow did not reach completed state: ${state:-unknown}"
 
   git rev-parse HEAD > "$SELFHOST_COMPLETE_FILE"
 fi
@@ -1339,8 +1294,10 @@ fi
 
 note "Verifying self-hosting MVP proof"
 
-ref_exists "$COMPLETE_REF" \
-  || die "AgentFlow complete ref is missing"
+state="$("$BIN" status -f "$SELFHOST_WORKFLOW" -C "$ROOT" |
+  awk -F': ' '$1 == "state" { print $2; exit }')"
+[[ "$state" == "completed" ]] \
+  || die "AgentFlow self-host workflow is not completed: ${state:-unknown}"
 
 git merge-base --is-ancestor "$SELFHOST_BASE" HEAD \
   || die "self-host result no longer descends from its starting commit"
@@ -1385,7 +1342,7 @@ grep -Eiq 'complete|completed' "$STATE_DIR/final-status.log" \
 
 note "Final repository-owned validation"
 
-sh scripts/check.sh
+./scripts/check.sh
 
 git diff --check
 
@@ -1421,11 +1378,6 @@ git --no-pager log \
   --decorate \
   "${SELFHOST_BASE}..HEAD"
 
-printf '\nAgentFlow durable state:\n'
-git for-each-ref \
-  --format='%(refname:short) -> %(objectname:short)' \
-  "${NS}/"
-
 printf '\nMVP evidence:\n'
 printf '  [x] executable workflow validation\n'
 printf '  [x] v1alpha1 runtime parity bootstrap\n'
@@ -1437,7 +1389,7 @@ printf '  [x] bounded repair policy exercised by deterministic tests\n'
 printf '  [x] protected/out-of-scope mutation rejection tested\n'
 printf '  [x] accepted implementation/audit checkpointed\n'
 printf '  [x] interpreter intentionally interrupted after checkpoint\n'
-printf '  [x] restart preserved accepted phase refs without replay\n'
+printf '  [x] restart preserved accepted implementation/audit state without replay\n'
 printf '  [x] durable human confirmation\n'
 printf '  [x] durable completion marker\n'
 printf '  [x] fresh interpreter built from self-hosted source\n'

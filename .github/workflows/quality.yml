@@ -19,7 +19,3 @@ jobs:
           go-version-file: go.mod
       - name: Run canonical AgentFlow gate
         run: ./scripts/check.sh
-      - name: Exercise deterministic self-hosting runtime
-        run: go test ./internal/engine -run '^TestSelfHosting' -count=1
-      - name: Validate self-hosting definition
-        run: go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml

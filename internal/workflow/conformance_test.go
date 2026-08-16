@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -146,6 +147,68 @@ func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
 	for _, path := range []string{"ROADMAP.md", "docs/research/**", "scripts/check.sh", "examples/develop-agentflow.agent-workflow.yaml", ".github/workflows/quality.yml"} {
 		if !protected[path] {
 			t.Errorf("protected integrity path %q is missing", path)
+		}
+	}
+}
+
+func TestSelfHostingCutoverContract(t *testing.T) {
+	root := filepath.Join("..", "..")
+	bootstrap, err := os.ReadFile(filepath.Join(root, "bootstrap-agentflow-mvp.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, forbidden := range []string{
+		"require_human_verification",
+		"refs/agentflow/develop-agentflow",
+		"phases/implement",
+		"phases/audit",
+		"human/self-host-review",
+		"sh scripts/check.sh",
+	} {
+		if strings.Contains(string(bootstrap), forbidden) {
+			t.Fatalf("bootstrap contains private or obsolete cutover contract %q", forbidden)
+		}
+	}
+	if !strings.Contains(string(bootstrap), "./scripts/check.sh") {
+		t.Fatal("bootstrap does not invoke the canonical Bash gate directly")
+	}
+
+	document, err := Decode(filepath.Join(root, "examples", "develop-agentflow.agent-workflow.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := document.Workflow
+	if got, want := workflow.Spec.Tools["canonical-gate"].Command, "./{{ spec.paths.canonical_gate }}"; got != want {
+		t.Fatalf("canonical-gate command = %q, want %q", got, want)
+	}
+	commands := map[string]bool{}
+	for _, check := range workflow.Spec.Preconditions {
+		if check.Type == "commands-exist" {
+			for _, command := range check.Commands {
+				commands[command] = true
+			}
+		}
+	}
+	for _, command := range []string{"git", "codex", "sh", "bash", "go", "gofmt", "rg"} {
+		if !commands[command] {
+			t.Errorf("required-commands is missing %q", command)
+		}
+	}
+
+	ci, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "quality.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ci), "run: ./scripts/check.sh") {
+		t.Fatal("CI does not delegate to the canonical gate")
+	}
+	for _, duplicate := range []string{
+		"go test ./internal/engine -run '^TestSelfHosting'",
+		"go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml",
+	} {
+		if strings.Contains(string(ci), duplicate) {
+			t.Fatalf("CI repeats canonical-gate-owned check %q", duplicate)
 		}
 	}
 }

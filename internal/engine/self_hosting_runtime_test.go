@@ -372,6 +372,9 @@ func newSelfHostingRepo(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	if err := os.Chmod(filepath.Join(repo, "scripts/check.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	gitIn(t, repo, "add", ".")
 	gitIn(t, repo, "commit", "-qm", "fixture seed")
 	return repo
