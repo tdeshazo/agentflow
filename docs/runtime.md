@@ -49,6 +49,14 @@ names; the interpreter uses those names within the same workflow namespace.
 Commit-valued records point directly at repository commits. Structured records
 such as the active phase, branch name, and integrity baseline are JSON blobs
 written with `git hash-object -w` and referenced through the same namespace.
+An active-phase record also carries `actor_completed`: it becomes true only
+after the primary phase provider returns successfully. A green deterministic
+gate is not a substitute for that evidence, so recovery reruns an actor whose
+completion was never durably recorded and resumes acceptance without replaying
+an actor whose completion was recorded.
+When deterministic validation fails, the same record stores a typed
+`failure_kind` (`validation` or `safety`); repair budgeting applies only to the
+former, while repository-policy safety failures remain terminal.
 The workflow-name component is a byte-for-byte hex encoding, so two names that
 would sanitize to the same Git-ref spelling still retain isolated state.
 Deleting/resetting workflow state deletes only these refs; normal repository

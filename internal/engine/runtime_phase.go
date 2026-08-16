@@ -143,7 +143,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	}
 
 	fmt.Fprintf(e.Out, "==> Phase %s: %s\n", id, p.Label)
-	if err := e.runAgent(ctx, p.Actor, p.Reasoning, p.Prompt, p); err != nil {
+	if err := e.runPhaseActor(ctx, p, p.Prompt, &active); err != nil {
 		return err
 	}
 	return e.finishPhase(ctx, p, active)
@@ -209,38 +209,32 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 		// clear only the stale in-progress record and never rerun the actor.
 		return e.Store.Delete(e.activeRecord())
 	}
-	if p.Kind == "criterion" && p.Criterion != "" {
-		checked, err := e.criterionChecked(p.Criterion)
-		if err != nil {
-			return err
-		}
-		if checked {
-			return e.finishPhase(ctx, p, a)
-		}
-	} else {
-		// An implementation/audit phase has no external checkbox to tell us
-		// whether its actor finished. Re-run the normal deterministic acceptance
-		// path first. This accepts a useful committed or dirty partial result only
-		// when every normal gate passes; it also covers interruption after a
-		// checkpoint but before the phase marker was written.
-		if err := e.finishPhase(ctx, p, a); err == nil {
-			return nil
-		} else {
-			var exhausted *repairBudgetExhaustedError
-			if errors.As(err, &exhausted) {
-				return err
-			}
-			var validationErr *phaseValidationFailure
-			if !errors.As(err, &validationErr) {
-				return err
-			}
-		}
+	if a.ActorCompleted {
+		// The provider has durably returned. Resume only deterministic phase
+		// acceptance; a successful gate is never evidence that an interrupted
+		// actor completed, but it may complete a pending acceptance sequence.
+		return e.finishPhase(ctx, p, a)
 	}
 	prompt := "Resume this phase from the repository state already present.\nInspect partial commits and working-tree changes first; preserve correct work and finish only this phase's objective.\n\n" + p.Prompt
-	if err := e.runAgent(ctx, p.Actor, p.Reasoning, prompt, p); err != nil {
+	if err := e.runPhaseActor(ctx, p, prompt, &a); err != nil {
 		return err
 	}
 	return e.finishPhase(ctx, p, a)
+}
+
+// runPhaseActor records the only evidence that authorizes deterministic phase
+// acceptance: the primary phase actor returned successfully. It intentionally
+// does not cover repair actors; their bounded invocation is governed by their
+// validation policy, while this record answers whether the phase itself ran.
+func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt string, active *ActivePhase) error {
+	if err := e.runAgent(ctx, p.Actor, p.Reasoning, prompt, p); err != nil {
+		return err
+	}
+	active.ActorCompleted = true
+	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+		return fmt.Errorf("persist successful actor completion for phase %s: %w", p.ID, err)
+	}
+	return nil
 }
 func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase) error {
 	a, ok := e.Workflow.Spec.Agents[actorName]
@@ -341,6 +335,11 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	if err != nil || !ok || active.PhaseID != p.ID {
 		return err
 	}
+	active.FailureKind = PhaseFailureValidation
+	var safetyErr *safetyViolation
+	if errors.As(failure, &safetyErr) {
+		active.FailureKind = PhaseFailureSafety
+	}
 	active.Validation = name
 	active.ValidationError = errorOutput(failure)
 	return e.Store.SetJSON(e.activeRecord(), active)
@@ -357,6 +356,7 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			if active.Validation != name {
 				return nil
 			}
+			active.FailureKind = ""
 			active.Validation = ""
 			active.ValidationError = ""
 			return e.Store.SetJSON(e.activeRecord(), active)

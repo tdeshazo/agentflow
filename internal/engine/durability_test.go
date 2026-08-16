@@ -111,6 +111,10 @@ func TestResumeInterruptedBeforeCheckpointPreservesDirtyPartialWork(t *testing.T
 	if ok, err := e.Store.GetJSON("active", &ActivePhase{}); err != nil || !ok {
 		t.Fatalf("active state after interruption: ok=%v err=%v", ok, err)
 	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.ActorCompleted {
+		t.Fatalf("interrupted actor completion evidence: active=%+v ok=%v err=%v", active, ok, err)
+	}
 	if got := gitIn(t, repo, "status", "--porcelain"); !strings.Contains(got, "work.txt") {
 		t.Fatalf("partial work was not retained: %q", got)
 	}
@@ -127,7 +131,77 @@ func TestResumeInterruptedBeforeCheckpointPreservesDirtyPartialWork(t *testing.T
 	assertDurableCompletion(t, e, repo)
 }
 
-func TestResumeAcceptsInterruptedPostCheckpointWithoutRerunningAgent(t *testing.T) {
+func TestResumeInterruptedBeforeImplementationMutationRerunsActor(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "resume-before-first-mutation")
+	p := &durableProvider{}
+	p.action = func(_ context.Context, request provider.Request) error {
+		if p.calls == 1 {
+			return context.Canceled
+		}
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted run error = %v, want context cancellation", err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.ActorCompleted {
+		t.Fatalf("interrupted actor completion evidence: active=%+v ok=%v err=%v", active, ok, err)
+	}
+	if _, ok, _ := e.Store.Resolve("phases/change"); ok {
+		t.Fatal("uninvoked implementation was incorrectly marked complete")
+	}
+
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want actor rerun after pre-mutation interruption", p.calls)
+	}
+	assertDurableCompletion(t, e, repo)
+}
+
+func TestResumeInterruptedNoChangeAuditRerunsActor(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "resume-no-change-audit")
+	w.Spec.Tools["gate"] = workflow.Tool{Type: "shell", Command: "true"}
+	w.Spec.PhaseDefaults.After = []workflow.PhaseAction{
+		{Validate: "phaseGate"},
+		{Checkpoint: "checkpoint"},
+		{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+		{ClearActivePhase: true},
+	}
+	w.Spec.Phases = []workflow.Phase{{ID: "audit", Kind: "audit", Label: "audit", Actor: "worker", RequiresChange: false, Prompt: "audit"}}
+	w.Spec.Flow = []workflow.FlowStep{{Phase: "audit"}, {Complete: "done"}}
+	p := &durableProvider{}
+	p.action = func(_ context.Context, _ provider.Request) error {
+		if p.calls == 1 {
+			return context.Canceled
+		}
+		return nil
+	}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted audit error = %v, want context cancellation", err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.ActorCompleted {
+		t.Fatalf("interrupted audit completion evidence: active=%+v ok=%v err=%v", active, ok, err)
+	}
+
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want audit actor rerun instead of gate-only acceptance", p.calls)
+	}
+	if _, ok, err := e.Store.Resolve("phases/audit"); err != nil || !ok {
+		t.Fatalf("audit marker: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestResumeAfterActorCompletionCanAcceptPostCheckpointWithoutRerunningActor(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "resume-after-checkpoint")
 	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test"}
@@ -145,7 +219,7 @@ func TestResumeAcceptsInterruptedPostCheckpointWithoutRerunningAgent(t *testing.
 	}
 	gitIn(t, repo, "add", "work.txt")
 	gitIn(t, repo, "commit", "-qm", "checkpointed work")
-	if err := e.Store.SetJSON("active", ActivePhase{PhaseID: "change", StartCommit: start, CheckpointPending: true}); err != nil {
+	if err := e.Store.SetJSON("active", ActivePhase{PhaseID: "change", StartCommit: start, ActorCompleted: true, CheckpointPending: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,12 +227,12 @@ func TestResumeAcceptsInterruptedPostCheckpointWithoutRerunningAgent(t *testing.
 		t.Fatal(err)
 	}
 	if p.calls != 0 {
-		t.Fatalf("provider calls = %d; post-checkpoint work should be accepted by validation", p.calls)
+		t.Fatalf("provider calls = %d; completed actor work should be accepted by validation", p.calls)
 	}
 	assertDurableCompletion(t, e, repo)
 }
 
-func TestResumeAfterInterruptedValidationDoesNotReplayAcceptedWork(t *testing.T) {
+func TestResumeAfterSuccessfulActorReturnBeforeAcceptanceDoesNotReplayActor(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "resume-interrupted-validation")
 	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
@@ -172,6 +246,10 @@ func TestResumeAfterInterruptedValidationDoesNotReplayAcceptedWork(t *testing.T)
 	}
 	if ok, err := e.Store.GetJSON("active", &ActivePhase{}); err != nil || !ok {
 		t.Fatalf("active state after validation interruption: ok=%v err=%v", ok, err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || !active.ActorCompleted {
+		t.Fatalf("successful actor completion evidence: active=%+v ok=%v err=%v", active, ok, err)
 	}
 	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -221,7 +299,7 @@ func TestValidationRepairsOnceAndExhaustionSurvivesRestart(t *testing.T) {
 			t.Fatalf("first run calls = %d, want main plus one repair", p.calls)
 		}
 		var active ActivePhase
-		if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.RepairAttempts["phaseGate"] != 1 {
+		if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.RepairAttempts["phaseGate"] != 1 || active.FailureKind != PhaseFailureValidation {
 			t.Fatalf("repair budget was not persisted: active=%+v ok=%v err=%v", active, ok, err)
 		}
 		if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
@@ -234,6 +312,122 @@ func TestValidationRepairsOnceAndExhaustionSurvivesRestart(t *testing.T) {
 			t.Fatal("failed validation was marked as an accepted phase")
 		}
 	})
+}
+
+func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "durable-safety-failure")
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "not-allowed.txt"), []byte("unsafe\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "out-of-scope file changed") {
+		t.Fatalf("safety failure = %v", err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || !active.ActorCompleted || active.FailureKind != PhaseFailureSafety {
+		t.Fatalf("durable safety state: active=%+v ok=%v err=%v", active, ok, err)
+	}
+	var out bytes.Buffer
+	e.Out = &out
+	if err := e.Status(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "state: safety-failed/terminal") || !strings.Contains(out.String(), "actor_completed: true") || !strings.Contains(out.String(), "failure_kind: safety") {
+		t.Fatalf("safety status = %s", out.String())
+	}
+
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "out-of-scope file changed") {
+		t.Fatalf("recovered safety failure = %v", err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("safety failure replayed a completed actor: calls = %d", p.calls)
+	}
+}
+
+func TestResumeAfterInterruptedAgentCreatedCommitRerunsActor(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "resume-agent-created-commit")
+	p := &durableProvider{}
+	p.action = func(_ context.Context, request provider.Request) error {
+		if p.calls == 1 {
+			if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+				return err
+			}
+			cmd := exec.Command("git", "-C", request.Workspace, "add", "work.txt")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("stage agent work: %w: %s", err, output)
+			}
+			cmd = exec.Command("git", "-C", request.Workspace, "commit", "-qm", "agent: partial work")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("commit agent work: %w: %s", err, output)
+			}
+			return context.Canceled
+		}
+		if got, err := os.ReadFile(filepath.Join(request.Workspace, "work.txt")); err != nil || string(got) != "complete\n" {
+			return fmt.Errorf("resumed actor did not receive preserved agent commit: contents=%q err=%v", got, err)
+		}
+		return nil
+	}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted run error = %v, want context cancellation", err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.ActorCompleted {
+		t.Fatalf("interrupted actor completion evidence: active=%+v ok=%v err=%v", active, ok, err)
+	}
+
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want resumed actor after agent-created commit", p.calls)
+	}
+	if !strings.Contains(gitIn(t, repo, "log", "--format=%s"), "agent: partial work") {
+		t.Fatal("agent-created partial commit was not preserved")
+	}
+	assertDurableCompletion(t, e, repo)
+}
+
+func TestPhaseMarkerIsAuthoritativeBeforeActiveStateCleanup(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "marker-before-active-cleanup")
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := e.phaseByID("change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := e.newActivePhase(phase.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Store.SetJSON("active", active); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runPhaseActor(context.Background(), phase, phase.Prompt, &active); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.checkpoint(phase.Label, phase); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.markPhaseComplete(phase); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("provider calls = %d, want no replay after phase marker", p.calls)
+	}
+	assertDurableCompletion(t, e, repo)
 }
 
 func TestAgentCreatedCommitIsPreservedAsCheckpointEvidence(t *testing.T) {

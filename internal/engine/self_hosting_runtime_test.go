@@ -131,7 +131,7 @@ func TestSelfHostingWorkflowRequiresABoundedTaskBeforeProviderExecution(t *testi
 	}
 }
 
-func TestSelfHostingResumeAfterCheckpointDoesNotReplayPhase(t *testing.T) {
+func TestSelfHostingResumeInterruptedAuditRerunsActor(t *testing.T) {
 	repo := newSelfHostingRepo(t)
 	w := selfHostingWorkflow(t, repo)
 	p := &selfHostingFakeProvider{interruptPhase: "audit", commitLuna: true}
@@ -154,8 +154,8 @@ func TestSelfHostingResumeAfterCheckpointDoesNotReplayPhase(t *testing.T) {
 	if err := e2.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := strings.Join(p.calls, ","), "luna:implement,terra:audit"; got != want {
-		t.Fatalf("restart replayed an accepted phase or actor: got %q want %q", got, want)
+	if got, want := strings.Join(p.calls, ","), "luna:implement,terra:audit,terra:audit"; got != want {
+		t.Fatalf("restart did not resume interrupted audit actor: got %q want %q", got, want)
 	}
 	if got := gitIn(t, repo, "status", "--porcelain"); got != "" {
 		t.Fatalf("resumed fixture is dirty: %q", got)

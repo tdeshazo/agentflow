@@ -91,7 +91,14 @@ Typical safety invariants:
 
 Completed phase markers are commonly valid only if their recorded commits exist and remain ancestors of current `HEAD`.
 
-An active phase can store its phase id, start commit, and progress snapshot. Recovery may preserve partial commits and working-tree changes.
+An active phase can store its phase id, start commit, progress snapshot, and a
+durable `actor_completed` flag. The runtime writes that flag immediately after
+the primary phase actor returns successfully, before validation or checkpoint
+work begins. Recovery may preserve partial commits and working-tree changes,
+but may only attempt deterministic acceptance when this flag is true.
+Deterministic validation failures are classified in the same runtime record as
+either `validation` (which may use its configured bounded repair policy) or
+`safety` (which is terminal and never authorizes further actor work).
 
 ## `spec.workspace`
 
@@ -201,6 +208,13 @@ Typical `after` operations:
 5. write completed-phase marker at current `HEAD`;
 6. clear active-phase state.
 
+The phase actor's successful return is persisted before these operations. An
+interruption before that evidence reruns the same actor against the retained
+repository state; an interruption after it resumes the normal deterministic
+acceptance sequence without replaying the actor. A completed phase marker is
+still authoritative even if the process stopped before active state was
+cleared.
+
 Skip behavior may use completed markers or already-checked criteria. The
 reference runtime does not permit an acceptance bypass: an accepted phase marker
 requires a successful validation in the current lifecycle attempt, and an
@@ -258,11 +272,11 @@ A strong recovery contract:
 1. reads durable active-phase state;
 2. restores the same phase definition;
 3. validates saved phase-start lineage;
-4. checks whether criterion progress may already have completed;
-5. validates existing repository state before throwing away partial work;
-6. preserves useful commits/working-tree changes;
-7. reruns or repairs only the same phase when needed;
-8. applies the normal after-phase validation/checkpoint/marker path.
+4. treats a valid completed phase marker as accepted and clears only stale active state;
+5. reruns the same actor when `actor_completed` is absent, preserving partial work;
+6. resumes deterministic validation/checkpoint/marker work without replaying the actor when `actor_completed` is present;
+7. preserves useful commits/working-tree changes;
+8. keeps deterministic validation repair budgets and repository-policy failures bounded or terminal as configured.
 
 ## `spec.flow`
 

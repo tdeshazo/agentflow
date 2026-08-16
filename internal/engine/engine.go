@@ -34,17 +34,31 @@ type Engine struct {
 }
 
 type ActivePhase struct {
-	PhaseID           string         `json:"phase_id"`
-	StartCommit       string         `json:"phase_start_commit"`
-	CheckpointCommit  string         `json:"checkpoint_commit,omitempty"`
-	CheckpointPending bool           `json:"checkpoint_pending,omitempty"`
-	UncheckedBefore   int            `json:"unchecked_count_before"`
-	CheckedBefore     []string       `json:"checked_before"`
-	RepairAttempts    map[string]int `json:"repair_attempts,omitempty"`
-	Validation        string         `json:"validation,omitempty"`
-	ValidationError   string         `json:"validation_error,omitempty"`
-	ValidationPassed  bool           `json:"validation_passed,omitempty"`
+	PhaseID     string `json:"phase_id"`
+	StartCommit string `json:"phase_start_commit"`
+	// ActorCompleted is durable evidence that the phase's primary actor
+	// returned successfully. Until it is true, recovery must not let
+	// deterministic validation substitute for the actor invocation.
+	ActorCompleted    bool             `json:"actor_completed"`
+	CheckpointCommit  string           `json:"checkpoint_commit,omitempty"`
+	CheckpointPending bool             `json:"checkpoint_pending,omitempty"`
+	UncheckedBefore   int              `json:"unchecked_count_before"`
+	CheckedBefore     []string         `json:"checked_before"`
+	RepairAttempts    map[string]int   `json:"repair_attempts,omitempty"`
+	FailureKind       PhaseFailureKind `json:"failure_kind,omitempty"`
+	Validation        string           `json:"validation,omitempty"`
+	ValidationError   string           `json:"validation_error,omitempty"`
+	ValidationPassed  bool             `json:"validation_passed,omitempty"`
 }
+
+// PhaseFailureKind records the runtime classification of a pending acceptance
+// failure without requiring recovery to infer authority from an error string.
+type PhaseFailureKind string
+
+const (
+	PhaseFailureValidation PhaseFailureKind = "validation"
+	PhaseFailureSafety     PhaseFailureKind = "safety"
+)
 
 type IntegrityBaseline map[string]string
 
@@ -413,8 +427,18 @@ func (e *Engine) Status() error {
 	}
 	if bok && !cok && aok {
 		state = "active"
-		if active.Validation != "" {
+		switch active.FailureKind {
+		case PhaseFailureSafety:
+			state = "safety-failed/terminal"
+		case PhaseFailureValidation:
 			state = "validation-failed/recoverable"
+		case "":
+			// Active records written by older runtimes did not classify the
+			// failure. Preserve their previous status presentation while the
+			// next lifecycle attempt records a typed classification.
+			if active.Validation != "" {
+				state = "validation-failed/recoverable"
+			}
 		}
 	}
 	pendingGate := ""
@@ -436,7 +460,11 @@ func (e *Engine) Status() error {
 	}
 	if aok {
 		fmt.Fprintf(e.Out, "active_phase: %s @ %s\n", active.PhaseID, active.StartCommit)
+		fmt.Fprintf(e.Out, "actor_completed: %v\n", active.ActorCompleted)
 		if active.Validation != "" {
+			if active.FailureKind != "" {
+				fmt.Fprintf(e.Out, "failure_kind: %s\n", active.FailureKind)
+			}
 			fmt.Fprintf(e.Out, "validation_failed: %s\nvalidation_error: %s\n", active.Validation, active.ValidationError)
 		}
 	}

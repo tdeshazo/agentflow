@@ -41,11 +41,10 @@ func (p *priority5FixtureProvider) Run(ctx context.Context, request provider.Req
 		criterion := request.Metadata["criterion"]
 		old := "- [ ] " + criterion
 		updated := strings.Replace(string(b), old, "- [x] "+criterion, 1)
-		if updated == string(b) {
-			return provider.Result{}, errors.New("target criterion was not unchecked in fixture roadmap")
-		}
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-			return provider.Result{}, err
+		if updated != string(b) {
+			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+				return provider.Result{}, err
+			}
 		}
 	}
 	if phase == "09" {
@@ -93,8 +92,8 @@ func TestPriority5WorkflowRunsWithDeterministicProviderAndResumes(t *testing.T) 
 	if err := newPriority5FixtureEngine(t, w, p).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p.calls != 9 { // 01 plus 02..09; no replay of accepted 01 work.
-		t.Fatalf("provider calls after resume = %d, want 9", p.calls)
+	if p.calls != 10 { // 01 is resumed, then 02..09 complete normally.
+		t.Fatalf("provider calls after resume = %d, want 10", p.calls)
 	}
 	if _, ok, err := e.Store.Resolve("complete"); err != nil || !ok {
 		t.Fatalf("completion marker: ok=%v err=%v", ok, err)
