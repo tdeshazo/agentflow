@@ -6,8 +6,9 @@ This repository contains:
 
 - a reference `agentflow.dev/v1alpha1` `AgentWorkflow` definition;
 - a field-level specification reference;
-- an agent skill for efficiently describing, reviewing, and comparing workflow specifications; and
-- a concrete Priority 5 workflow example translated from an imperative shell orchestrator.
+- an agent skill for efficiently describing, reviewing, and comparing workflow specifications;
+- a concrete Priority 5 workflow example translated from an imperative shell orchestrator; and
+- an experimental Go interpreter with a provider-neutral execution interface and an initial Codex CLI provider.
 
 ## Repository layout
 
@@ -16,10 +17,22 @@ This repository contains:
 ├── README.md
 ├── CHANGELOG.md
 ├── .gitignore
+├── go.mod
+├── go.sum
+├── cmd/agentflow/
+├── provider/
+│   ├── provider.go
+│   └── codex/
+├── internal/
+│   ├── engine/
+│   ├── gitstate/
+│   └── workflow/
 ├── spec/
 │   └── agent-workflow-v1alpha1.yaml
 ├── docs/
-│   └── agentflow-v1alpha1.md
+│   ├── agentflow-v1alpha1.md
+│   ├── runtime.md
+│   └── research/
 ├── skills/
 │   └── agent-workflow-spec-describer/
 │       ├── SKILL.md
@@ -46,6 +59,21 @@ A central invariant is that an agent may mutate the workspace, but it does not d
 ## Start here
 
 Read [`docs/agentflow-v1alpha1.md`](docs/agentflow-v1alpha1.md) for the field semantics, then inspect [`spec/agent-workflow-v1alpha1.yaml`](spec/agent-workflow-v1alpha1.yaml) for a complete reference definition.
+
+## Go interpreter
+
+The repository now includes an experimental interpreter for the executable core of `v1alpha1`. It keeps durable orchestration state in Git objects and namespaced refs rather than a separate database, and exposes AI execution through the public [`provider.Provider`](provider/provider.go) interface. The initial adapter uses non-interactive Codex CLI execution.
+
+```sh
+go run ./cmd/agentflow run \
+  -f examples/finish-priority-05.agent-workflow.yaml \
+  -C /path/to/target/repository
+
+go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
+go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
+```
+
+See [`docs/runtime.md`](docs/runtime.md) for state layout, supported constructs, provider behavior, and current limits.
 
 The [`examples/finish-priority-05.agent-workflow.yaml`](examples/finish-priority-05.agent-workflow.yaml) file demonstrates a concrete workflow with:
 
@@ -83,7 +111,7 @@ kind: AgentWorkflow
 
 ## Validation
 
-The YAML files in this repository are expected to parse as YAML. This package describes orchestration semantics; it does not include an execution engine or claim compatibility with an existing external runtime.
+The YAML files in this repository are expected to parse as YAML. The Go interpreter implements a conservative subset of the experimental specification and fails closed on unsupported executable constructs; the field guide remains broader than the current runtime.
 
 ## Publishing
 
