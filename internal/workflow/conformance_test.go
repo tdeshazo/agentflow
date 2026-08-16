@@ -76,11 +76,67 @@ func TestConformanceShippedDefinitions(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"),
 		filepath.Join("..", "..", "examples", "finish-priority-05.agent-workflow.yaml"),
+		filepath.Join("..", "..", "examples", "develop-agentflow.agent-workflow.yaml"),
 	}
 	for _, path := range paths {
 		result := ValidateFile(path)
 		if result.Status == Invalid {
 			t.Fatalf("%s invalid: %#v", path, result.Diagnostics)
+		}
+	}
+}
+
+func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "develop-agentflow.agent-workflow.yaml")
+	document, err := Decode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := Validate(document); result.Status != Executable {
+		t.Fatalf("self-hosting workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	w := document.Workflow
+	if w.Metadata.Name != "develop-agentflow" {
+		t.Fatalf("metadata.name = %q", w.Metadata.Name)
+	}
+	if task, ok := w.Spec.Parameters["task"]; !ok || task.Type != "string" {
+		t.Fatalf("task parameter = %#v, want string parameter", task)
+	}
+	byID := map[string]Phase{}
+	for _, phase := range w.Spec.Phases {
+		byID[phase.ID] = phase
+	}
+	if phase := byID["implement"]; phase.Actor != "luna" || phase.Reasoning != "high" || !phase.RequiresChange || !strings.Contains(phase.Prompt, "parameters.task") {
+		t.Fatalf("implement phase = %#v", phase)
+	}
+	if phase := byID["audit"]; phase.Actor != "terra" || phase.Reasoning != "high" || !strings.Contains(phase.Prompt, "actual current checkout") {
+		t.Fatalf("audit phase = %#v", phase)
+	}
+	gate := w.Spec.Validation["implementation-gate"].OnFailure
+	if gate.Strategy != "repair-once" || gate.MaxRepairAttempts != 1 || gate.Repair.Actor != "terra" || gate.Repair.Reasoning != "high" {
+		t.Fatalf("implementation repair policy = %#v", gate)
+	}
+	if audit := w.Spec.Validation["audit-gate"]; audit.OnFailure.MaxRepairAttempts != 0 || audit.Repair != "none" {
+		t.Fatalf("audit gate must not add a repair attempt: %#v", audit)
+	}
+	var review *HumanGate
+	for i := range w.Spec.HumanGates {
+		if w.Spec.HumanGates[i].ID == "self-host-review" {
+			review = &w.Spec.HumanGates[i]
+		}
+	}
+	if review == nil || review.Acknowledgement.Type != "exact-text" || review.Acknowledgement.Value != "yes" {
+		t.Fatalf("self-host-review gate = %#v", review)
+	}
+	protected := map[string]bool{}
+	for _, rule := range w.Spec.Workspace.MutationPolicy.Integrity {
+		for _, path := range rule.Paths {
+			protected[path] = true
+		}
+	}
+	for _, path := range []string{"ROADMAP.md", "docs/research/**", "scripts/check.sh", "examples/develop-agentflow.agent-workflow.yaml", ".github/workflows/quality.yml"} {
+		if !protected[path] {
+			t.Errorf("protected integrity path %q is missing", path)
 		}
 	}
 }
