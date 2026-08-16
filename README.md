@@ -77,6 +77,7 @@ go run ./cmd/agentflow run \
 
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
 go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
+go run ./cmd/agentflow validate -f workflow.yaml
 ```
 
 See [`docs/runtime.md`](docs/runtime.md) for state layout, supported constructs, provider behavior, and current limits.
@@ -117,7 +118,12 @@ kind: AgentWorkflow
 
 ## Validation
 
-The YAML files in this repository are expected to parse as YAML. The Go interpreter implements a conservative subset of the experimental specification and fails closed on unsupported executable constructs; the field guide remains broader than the current runtime.
+`agentflow validate -f workflow.yaml` decodes the authoritative executable
+model, checks structural types and document references, and reports whether a
+workflow is invalid, executable, or spec-valid but unsupported by this runtime.
+It does not create workspace or Git state. The Go interpreter fails closed on
+unsupported executable constructs; the field guide remains broader than the
+current runtime.
 
 ## Publishing
 

@@ -80,6 +80,21 @@ message; deterministic validation still owns advancement.
 
 ## Executed v1alpha1 core
 
+Before running a workflow, validate its document without opening a repository,
+creating Git state, or starting a provider:
+
+```sh
+go run ./cmd/agentflow validate -f workflow.yaml
+```
+
+Validation reports one of three outcomes: `invalid` for YAML/schema/reference
+errors, `valid and executable` for the current runtime surface, and `valid but
+unsupported by this runtime` for documented `v1alpha1` constructs that this
+bootstrap interpreter intentionally does not execute. `run`, `status`, and
+`reset` reject both invalid and unsupported workflows before creating an engine.
+Diagnostics include YAML paths and source positions for semantic errors where
+the YAML parser exposes them.
+
 The initial runtime supports the constructs needed by the concrete Priority 5
 workflow:
 

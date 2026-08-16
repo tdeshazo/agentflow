@@ -12,8 +12,8 @@ import (
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
 
-func (e *Engine) runFlowAssertion(a map[string]any) error {
-	typeName := fmt.Sprint(a["type"])
+func (e *Engine) runFlowAssertion(a workflow.Assertion) error {
+	typeName := a.Type
 	switch typeName {
 	case "implementation-workspace-clean":
 		d, err := e.implementationDirtyFiles()
@@ -139,8 +139,8 @@ func (e *Engine) runAssertion(a workflow.Assertion) error {
 		case "assert-change-scope":
 			return e.assertScope()
 		case "assert-regex":
-			p := fmt.Sprint(a.With["path"])
-			r := fmt.Sprint(a.With["regex"])
+			p := a.With.Path
+			r := a.With.Regex
 			var err error
 			p, err = e.context(nil).Expand(p)
 			if err != nil {

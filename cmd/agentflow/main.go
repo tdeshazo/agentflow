@@ -55,10 +55,30 @@ func run() error {
 	if *file == "" {
 		return fmt.Errorf("-f workflow YAML is required")
 	}
-	w, err := workflow.Load(*file)
-	if err != nil {
-		return err
+	result := workflow.ValidateFile(*file)
+	if cmd == "validate" {
+		for _, diagnostic := range result.Diagnostics {
+			fmt.Fprintln(os.Stdout, diagnostic.String())
+		}
+		switch result.Status {
+		case workflow.Executable:
+			fmt.Fprintln(os.Stdout, "valid and executable")
+			return nil
+		case workflow.Unsupported:
+			fmt.Fprintln(os.Stdout, "valid but unsupported by this runtime")
+			return nil
+		default:
+			fmt.Fprintln(os.Stdout, "invalid")
+			return fmt.Errorf("workflow is invalid")
+		}
 	}
+	if result.Status == workflow.Invalid {
+		return diagnosticsError(result)
+	}
+	if result.Status == workflow.Unsupported {
+		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
+	}
+	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
 	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: map[string]string(overrides)})
 	if err != nil {
@@ -79,6 +99,17 @@ func run() error {
 }
 
 func usage() error {
-	fmt.Fprintln(os.Stderr, "usage: agentflow <run|status|reset> -f workflow.yaml [-C repo] [--set key=value]")
+	fmt.Fprintln(os.Stderr, "usage: agentflow <validate|run|status|reset> -f workflow.yaml [-C repo] [--set key=value]")
 	return fmt.Errorf("invalid command")
+}
+
+func diagnosticsError(result workflow.Result) error {
+	if len(result.Diagnostics) == 0 {
+		return fmt.Errorf("workflow is %s", result.Status)
+	}
+	parts := make([]string, 0, len(result.Diagnostics))
+	for _, d := range result.Diagnostics {
+		parts = append(parts, d.String())
+	}
+	return fmt.Errorf("%s", strings.Join(parts, "; "))
 }

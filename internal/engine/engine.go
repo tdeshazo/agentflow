@@ -195,7 +195,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				return err
 			}
 		case step.Assert != nil:
-			if err := e.runFlowAssertion(step.Assert); err != nil {
+			if err := e.runFlowAssertion(*step.Assert); err != nil {
 				return err
 			}
 		}
