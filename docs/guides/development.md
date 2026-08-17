@@ -46,11 +46,16 @@ Validate a workflow without opening a repository or invoking a provider:
 
 ```sh
 go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml
+go run ./cmd/agentflow plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
 ```
 
 The validator distinguishes invalid documents from documents that are valid but
 unsupported by this runtime. The shipped definitions can all be checked with
 `./scripts/check.sh`.
+
+Use the expanded plan when reviewing concise authoring defaults. It shows the
+normalized executable lifecycle and safety/repair/completion contract without
+calling an actor or a mutable tool.
 
 ## Bounded self-development
 

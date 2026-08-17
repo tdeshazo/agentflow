@@ -24,13 +24,14 @@ import (
 // Engine orchestrates workflow execution, managing durability, phase lifecycle,
 // and coordination with external providers.
 type Engine struct {
-	Workflow   *workflow.Workflow
-	Repo       gitstate.Repo
-	Store      gitstate.Store
-	Providers  map[string]provider.Provider
-	Parameters map[string]any
-	In         io.Reader
-	Out        io.Writer
+	Workflow         *workflow.Workflow
+	identityWorkflow *workflow.Workflow
+	Repo             gitstate.Repo
+	Store            gitstate.Store
+	Providers        map[string]provider.Provider
+	Parameters       map[string]any
+	In               io.Reader
+	Out              io.Writer
 
 	lastFailure        string
 	phase              *workflow.Phase
@@ -102,9 +103,17 @@ type Options struct {
 // New creates a new Engine for executing the given workflow with the provided providers.
 // It resolves parameters, initializes Git state storage, and validates configuration.
 func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Options) (*Engine, error) {
+	// Callers in Go may construct a Workflow directly, while file callers have
+	// already validated the authored form. Normalize here as the final boundary
+	// so execution always sees the same explicit contract as `plan --expanded`.
+	authored := w
+	normalized, err := workflow.NormalizeWorkflow(&workflow.Document{Workflow: authored})
+	if err != nil {
+		return nil, err
+	}
+	w = normalized.Workflow
 	params := map[string]any{}
 	parametersResolved := false
-	var err error
 	if !opts.StateOnly {
 		params, err = resolveParameters(w, opts.Overrides)
 		if err != nil {
@@ -142,7 +151,7 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	e := &Engine{Workflow: w, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved}
+	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved}
 	if !opts.StateOnly && w.Spec.Temp.Directory != "" {
 		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
 		if err != nil {

@@ -23,10 +23,18 @@ State can be inspected or reset independently:
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo --json
 go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
+go run ./cmd/agentflow plan --expanded -f workflow.yaml
 ```
 
 Runtime parameters can be overridden with repeated `--set key=value` flags.
 Environment-backed parameter defaults continue to work through the workflow.
+
+`plan --expanded` validates the authored document, normalizes concise defaults,
+and validates the resulting executable representation without opening a
+repository or invoking actors/tools. Its YAML output exposes the resolved
+lifecycle, recovery, safety boundaries, per-gate repair behavior, phase
+acceptance/progress transitions, checkpoint contract, human gates, and
+completion contract.
 
 ## Git-backed state
 

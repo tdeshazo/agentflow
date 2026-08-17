@@ -52,8 +52,12 @@ func (d Diagnostic) String() string {
 
 // Result is the output of workflow validation, containing status and diagnostics.
 type Result struct {
-	Status      Status
-	Document    *Document
+	Status   Status
+	Document *Document
+	// Normalized is the fully resolved executable form when authoring defaults
+	// are used. It is retained for tooling; execution independently normalizes
+	// at its construction boundary.
+	Normalized  *Document
 	Diagnostics []Diagnostic
 }
 

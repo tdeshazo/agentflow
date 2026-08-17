@@ -1,0 +1,43 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: concise-defaults
+spec:
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+    lifecycle:
+      policy: safe-resume
+      validation: gate
+    phases:
+      implementation:
+        actor: worker
+        reasoning: high
+        requiresChange: true
+    repair:
+      actor: worker
+      reasoning: medium
+      prompt: repair the bounded failure
+  agents:
+    worker:
+      model: gpt-5.6-terra
+      may_commit: false
+  tools:
+    gate:
+      type: shell
+      command: "true"
+  validation:
+    gate:
+      repair: once
+      steps:
+        - uses: gate
+  phases:
+    - id: build
+      kind: implementation
+      prompt: make the bounded change
+  flow:
+    - phase: build

@@ -11,6 +11,37 @@ import (
 // Validate performs document-only checks. It intentionally does not expand
 // templates, resolve a repository, create Git state, or construct an engine.
 func Validate(d *Document) Result {
+	authored := validateOnly(d)
+	if authored.Status == Invalid {
+		return authored
+	}
+	normalized, err := NormalizeWorkflow(d)
+	if err != nil {
+		authored.Status = Invalid
+		authored.Diagnostics = append(authored.Diagnostics, Diagnostic{Status: Invalid, Message: "normalize workflow: " + err.Error()})
+		return authored
+	}
+	executable := validateOnly(normalized)
+	if executable.Status == Invalid {
+		// The authored form was structurally valid, but compilation produced an
+		// invalid executable form. Keep the diagnostic explicit instead of
+		// letting a later engine construction fail mysteriously.
+		authored.Status = Invalid
+		authored.Diagnostics = append(authored.Diagnostics, executable.Diagnostics...)
+		return authored
+	}
+	authored.Document = d
+	authored.Normalized = normalized
+	if authored.Status == Unsupported || executable.Status == Unsupported {
+		authored.Status = Unsupported
+		if executable.Status == Unsupported {
+			authored.Diagnostics = append(authored.Diagnostics, executable.Diagnostics...)
+		}
+	}
+	return authored
+}
+
+func validateOnly(d *Document) Result {
 	r := Result{Status: Executable, Document: d}
 	if d == nil || d.Workflow == nil {
 		return Result{Status: Invalid, Document: d, Diagnostics: []Diagnostic{{Status: Invalid, Message: "empty workflow document"}}}
@@ -96,9 +127,38 @@ func (v validator) roots() {
 	v.uniqueCriteria()
 	v.uniqueGates()
 	v.uniqueIntegrity()
+	v.authoringDefaults()
 	if strategy := v.w.Spec.Progress.Selection.Strategy; strategy != "" && strategy != "first-unchecked" {
 		v.add(Invalid, "spec.progress.selection.strategy", "unsupported progress selection strategy %q", strategy)
 	}
+}
+
+func (v validator) authoringDefaults() {
+	for kind, phase := range v.w.Spec.Defaults.Phases {
+		switch kind {
+		case "criterion", "implementation", "audit", "bookkeeping":
+		default:
+			v.add(Invalid, "spec.defaults.phases."+kind, "unsupported phase kind default %q", kind)
+		}
+		if phase.Actor != "" {
+			v.agent("spec.defaults.phases."+kind+".actor", phase.Actor)
+		}
+		if phase.Validation != "" {
+			v.validation("spec.defaults.phases."+kind+".validation", phase.Validation)
+		}
+	}
+	if r := v.w.Spec.Defaults.Repair; r.Actor != "" {
+		v.agent("spec.defaults.repair.actor", r.Actor)
+	}
+}
+
+func (v validator) phaseTemplate(p Phase) PhaseTemplate { return v.w.Spec.Defaults.Phases[p.Kind] }
+func (v validator) effectiveLifecycle() LifecyclePolicy {
+	l := v.w.Spec.Lifecycle
+	if l.Policy == "" && l.Validation == "" && l.Checkpoint == "" {
+		return v.w.Spec.Defaults.Lifecycle
+	}
+	return l
 }
 func (v validator) parameterDefault(name string, p Parameter) {
 	if p.Default == nil {
@@ -244,13 +304,18 @@ func (v validator) references() {
 	}
 	for i, p := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d]", i)
+		template := v.phaseTemplate(p)
 		engineBookkeeping := p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0
 		if engineBookkeeping && p.Actor != "" {
 			v.add(Invalid, path+".actor", "engine-owned bookkeeping phases must not declare an actor")
-		} else if !engineBookkeeping && p.Actor == "" {
+		} else if !engineBookkeeping && p.Actor == "" && template.Actor == "" {
 			v.add(Invalid, path+".actor", "is required")
-		} else if p.Actor != "" {
-			v.agent(path+".actor", p.Actor)
+		} else if p.Actor != "" || template.Actor != "" {
+			actor := p.Actor
+			if actor == "" {
+				actor = template.Actor
+			}
+			v.agent(path+".actor", actor)
 		}
 		if p.Kind == "criterion" {
 			if p.Criterion != "" && p.CriterionID != "" {
@@ -273,8 +338,12 @@ func (v validator) references() {
 		for j, transition := range p.Bookkeeping {
 			v.markdownTransition(fmt.Sprintf("%s.bookkeeping[%d]", path, j), transition)
 		}
-		if p.Validation != "" {
-			v.validation(path+".validation", p.Validation)
+		if p.Validation != "" || template.Validation != "" {
+			name := p.Validation
+			if name == "" {
+				name = template.Validation
+			}
+			v.validation(path+".validation", name)
 		}
 		v.actions(path+".after", p.After)
 		v.condition(path+".if", p.If)
@@ -354,7 +423,7 @@ func (v validator) references() {
 }
 
 func (v validator) lifecycle() {
-	lifecycle := v.w.Spec.Lifecycle
+	lifecycle := v.effectiveLifecycle()
 	configured := lifecycle.Policy != "" || lifecycle.Validation != "" || lifecycle.Checkpoint != ""
 	if !configured {
 		return
@@ -370,7 +439,7 @@ func (v validator) lifecycle() {
 	}
 	if lifecycle.Validation == "" {
 		for i, phase := range v.w.Spec.Phases {
-			if phase.Validation == "" {
+			if phase.Validation == "" && v.phaseTemplate(phase).Validation == "" {
 				v.add(Invalid, fmt.Sprintf("spec.phases[%d].validation", i), "is required when spec.lifecycle.validation is not set")
 			}
 		}
@@ -386,13 +455,18 @@ func (v validator) lifecycle() {
 }
 
 func (v validator) validationFailurePolicy(path string, validation Validation) {
-	if validation.Repair != "" && validation.Repair != "none" {
+	if validation.Repair != "" && validation.Repair != "none" && validation.Repair != "once" {
 		v.add(Invalid, path+".repair", "unsupported validation repair policy %q", validation.Repair)
 	}
 	if validation.Failure != "" && validation.Failure != "fail-workflow" {
 		v.add(Invalid, path+".failure", "unsupported validation failure policy %q", validation.Failure)
 	}
 	policy := validation.OnFailure
+	if validation.Repair == "once" && policy.Strategy == "" {
+		policy.Strategy = "repair-once"
+		policy.MaxRepairAttempts = 1
+		policy.Repair = v.w.Spec.Defaults.Repair
+	}
 	if policy.Exhausted != "" && policy.Exhausted != "fail-workflow" {
 		v.add(Invalid, path+".onFailure.exhausted", "unsupported exhausted policy %q", policy.Exhausted)
 	}
@@ -404,6 +478,9 @@ func (v validator) validationFailurePolicy(path string, validation Validation) {
 	case "repair-once":
 		if policy.MaxRepairAttempts != 1 {
 			v.add(Invalid, path+".onFailure.maxRepairAttempts", "repair-once requires exactly one repair attempt")
+		}
+		if policy.Repair.Actor == "" {
+			policy.Repair = mergeRepair(v.w.Spec.Defaults.Repair, policy.Repair)
 		}
 		if policy.Repair.Actor == "" {
 			v.add(Invalid, path+".onFailure.repair.actor", "is required for repair-once")
@@ -708,7 +785,7 @@ func (v validator) runtimeSurface() {
 		v.add(Unsupported, "spec.progress.source.type", "progress source type %q is not implemented by this runtime", sourceType)
 	}
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
-		a := v.w.Spec.Agents[name]
+		a := mergeAgent(v.w.Spec.Defaults.Agent, v.w.Spec.Agents[name])
 		if a.Runner != "codex" {
 			v.add(Unsupported, "spec.agents."+name+".runner", "runner %q is not implemented by this runtime", a.Runner)
 		}

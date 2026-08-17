@@ -13,6 +13,28 @@ This reference describes the semantics used by the workflow definitions in this 
 
 Runtime inputs and environment-backed overrides. Parameters may alter models, repository root, human verification, reset behavior, or iteration bounds.
 
+`env` names an override source; the typed YAML `default` is the fallback. Do
+not interpret shell fallback expressions in parameter defaults.
+
+## `spec.defaults`
+
+Optional concise authoring defaults are normalized into the executable model
+before runtime execution. `agent` inherits capability values (runner, sandbox,
+approval, ephemeral, commit, and output settings); `lifecycle` supplies the
+safe-resume contract; `phases.<kind>` supplies actor-facing defaults for an
+explicit phase kind; and `repair` supplies the bounded repair actor. Local
+fields override inherited values, including explicit boolean `false`.
+
+Defaults never grant mutation authority or replace deterministic validation.
+When describing a concise workflow, report these resolved values. The command
+`agentflow plan --expanded -f workflow.yaml` presents the normalized lifecycle,
+recovery, validation/repair, progress, checkpoint, human-gate, and completion
+contract without executing actors or mutable tools.
+
+Named agents, tools, validations, paths, phases, and criteria remain the
+concise reference surface. Tool invocations use the stable `uses`/`with`/`if`
+shape; do not infer authority from a named reference alone.
+
 ## `spec.paths`
 
 Named repository paths used elsewhere by templates. This is convenience/indirection, not authority by itself.

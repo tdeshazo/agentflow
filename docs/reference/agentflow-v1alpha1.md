@@ -20,6 +20,10 @@ type; unknown overrides, malformed values, and cyclic parameter defaults fail
 before the engine opens a repository. A default may reference another declared
 parameter, including one declared later in YAML.
 
+Use `env: NAME` for an environment override. Do not put shell fallback syntax
+such as `${NAME:-value}` in a parameter default: the declared typed `default`
+is the fallback and is checked before execution.
+
 `-C` is a workspace-root override, not an implicit parameter override. This
 keeps the command-line repository target independent from a workflow's own
 parameter names.
@@ -135,6 +139,34 @@ Named AI execution capabilities. Typical fields select runner, model, sandbox, a
 
 Agent capability does not determine phase acceptance. Validation does.
 
+## `spec.defaults`
+
+`defaults` is an optional concise authoring layer. It is compiled before
+execution into ordinary v1alpha1 fields and is validated both before and after
+that compilation. It may contain:
+
+- `agent`: inherited runner, model, sandbox, approval, ephemeral, color,
+  commit, and output capability values. A locally written agent field,
+  including `false` for a boolean, overrides the inherited value.
+- `lifecycle`: the safe-resume lifecycle used when `spec.lifecycle` is absent.
+- `phases.<kind>`: actor, reasoning, `requiresChange`, and validation defaults
+  for an explicitly named phase kind. A local phase field wins.
+- `repair`: actor, reasoning, and prompt defaults for a bounded repair policy.
+  A validation may use `repair: once`; it compiles to exactly one repair attempt
+  and reruns its own ordered deterministic `steps` unless it explicitly names
+  different post-repair steps.
+
+Defaults cannot introduce mutation allowlists, validation tools/steps, flow,
+human gates, or completion behavior. Those separate authority domains remain
+explicit. Temporary directories, validation logs, and Git state record names
+are runtime-owned when omitted.
+
+Use named agents, tools, validations, paths, phase IDs, criterion IDs, and
+completion IDs as references rather than duplicating their definitions. A tool
+invocation stays structurally stable as `uses`, optional typed `with`, and
+optional boolean `if`; this convenience does not merge actor, mutation, and
+validation authority.
+
 ## `spec.tools`
 
 Named deterministic or orchestration-native operations.
@@ -210,6 +242,11 @@ repair is bounded and redacted; prompts, complete environments, resolved
 parameter values, and secrets are not durable evidence.
 
 Do not assume every named gate shares the same repair policy.
+
+The concise `repair: once` spelling is equivalent to the explicit
+`onFailure.strategy: repair-once`, `maxRepairAttempts: 1`, and inherited repair
+actor settings. Its default post-repair behavior is intentionally the same
+validation steps, not implicit success.
 
 ## `spec.lifecycle`
 

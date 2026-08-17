@@ -7,8 +7,32 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestPlanExpandedCLI(t *testing.T) {
+	workflowFile := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = write
+	runErr := runArgs([]string{"plan", "--expanded", "-f", workflowFile})
+	_ = write.Close()
+	os.Stdout = original
+	output, _ := io.ReadAll(read)
+	_ = read.Close()
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	for _, want := range []string{"resolvedLifecycle:", "safetyEnforcementPoints:", "recoveryBehavior:", "completionContract:"} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("plan output missing %q:\n%s", want, output)
+		}
+	}
+}
 
 func TestStatusJSONCLI(t *testing.T) {
 	repo := t.TempDir()

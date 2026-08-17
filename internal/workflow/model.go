@@ -53,6 +53,28 @@ type Spec struct {
 	Recovery      Recovery              `yaml:"recovery"`
 	Flow          []FlowStep            `yaml:"flow"`
 	Completion    map[string]Completion `yaml:"completion"`
+	// Defaults is an authoring convenience. Normalize resolves it before an
+	// engine is constructed, so it never weakens the executable contract.
+	Defaults AuthoringDefaults `yaml:"defaults"`
+}
+
+// AuthoringDefaults contains only inherited capability and lifecycle values.
+// It deliberately cannot declare mutation policy, validation steps, or flow:
+// those authorities remain explicit in their own sections.
+type AuthoringDefaults struct {
+	Agent     Agent                    `yaml:"agent"`
+	Lifecycle LifecyclePolicy          `yaml:"lifecycle"`
+	Phases    map[string]PhaseTemplate `yaml:"phases"`
+	Repair    Repair                   `yaml:"repair"`
+}
+
+// PhaseTemplate is selected by the phase's explicit kind. Local phase fields
+// override it. It is intentionally a subset of Phase's actor-facing fields.
+type PhaseTemplate struct {
+	Actor          string `yaml:"actor"`
+	Reasoning      string `yaml:"reasoning"`
+	RequiresChange *bool  `yaml:"requiresChange"`
+	Validation     string `yaml:"validation"`
 }
 
 // LifecyclePolicy describes the runtime-owned lifecycle for mutable AI
@@ -198,7 +220,20 @@ type Agent struct {
 	Color             string `yaml:"color"`
 	MayCommit         bool   `yaml:"may_commit"`
 	OutputLastMessage bool   `yaml:"output_last_message"`
+	present           map[string]bool
 }
+
+func (a *Agent) UnmarshalYAML(n *yaml.Node) error {
+	type plain Agent
+	var out plain
+	if err := decodeKnownNode(n, &out); err != nil {
+		return err
+	}
+	out.present = nodeFields(n)
+	*a = Agent(out)
+	return nil
+}
+
 type Tool struct {
 	Type              string  `yaml:"type"`
 	Command           string  `yaml:"command"`
@@ -394,6 +429,18 @@ type Phase struct {
 	If             string               `yaml:"if"`
 	Prompt         string               `yaml:"prompt"`
 	After          []PhaseAction        `yaml:"after"`
+	present        map[string]bool
+}
+
+func (p *Phase) UnmarshalYAML(n *yaml.Node) error {
+	type plain Phase
+	var out plain
+	if err := decodeKnownNode(n, &out); err != nil {
+		return err
+	}
+	out.present = nodeFields(n)
+	*p = Phase(out)
+	return nil
 }
 
 // MarkdownTransition is a constrained, byte-preserving Markdown mutation. It
@@ -560,4 +607,15 @@ func decodeKnownNode(n *yaml.Node, out any) error {
 		return fmt.Errorf("line %d: %w", n.Line, err)
 	}
 	return nil
+}
+
+func nodeFields(n *yaml.Node) map[string]bool {
+	out := map[string]bool{}
+	if n.Kind != yaml.MappingNode {
+		return out
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		out[n.Content[i].Value] = true
+	}
+	return out
 }

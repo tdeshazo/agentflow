@@ -14,6 +14,7 @@ func TestConformanceCorpus(t *testing.T) {
 		status Status
 	}{
 		{name: "valid/minimal.yaml", status: Executable},
+		{name: "valid/concise-defaults.yaml", status: Executable},
 		{name: "unsupported/runtime-surface.yaml", status: Unsupported},
 	}
 	for _, tc := range cases {
