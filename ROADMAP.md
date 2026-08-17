@@ -150,35 +150,78 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 ---
 
-## Priority 4 — GitHub-Actions-like SDL authoring model
+## Priority 4 — Runtime-owned orchestration and concise SDL authoring
 
-**Goal:** Make non-trivial workflows concise, regular, and learnable without weakening AgentFlow's authority model.
+**Goal:** Make AgentFlow workflows materially more concise than equivalent imperative orchestrators by keeping workflow-specific policy in YAML while moving generic lifecycle mechanics into the runtime.
+
+The first executable examples proved that AgentFlow can preserve the semantics of large shell orchestrators. They also exposed the next design constraint: a declarative workflow should not have to restate how AgentFlow itself persists an active phase, resumes it, checkpoints accepted work, advances progress, or reuses deterministic evidence. Priority 4 therefore treats the current self-hosting and `finish-priority-05` workflows as compression and authority benchmarks before adding more execution topology.
+
+### Immediate implementation order
+
+1. **Runtime-owned phase lifecycle and recovery.** Replace procedural lifecycle/recovery YAML with safe runtime defaults plus explicit policy overrides.
+2. **Engine-owned progress and completion bookkeeping.** Let deterministic acceptance advance declared progress and completion metadata instead of asking an agent to edit its own acceptance state.
+3. **Content-addressed deterministic validation evidence.** Reuse a successful deterministic check when its tool definition, inputs, and relevant workspace identity are unchanged.
+4. **Concise authoring surface and expanded plan.** Remove repeated configuration from authored YAML while preserving a fully inspectable normalized execution contract.
 
 ### Scope
 
-Evaluate and stabilize familiar declarative concepts such as:
+#### Runtime-owned phase lifecycle and recovery
 
-- `needs` for explicit dependencies;
-- `if` for conditions;
-- `uses` for reusable tools, actions, or workflow fragments;
-- `with` for typed inputs;
-- `env` for scoped environment values;
-- named outputs and output references;
-- defaults inherited by execution units;
-- concise step syntax for deterministic operations;
-- clear separation between AI execution units and deterministic steps.
+- Define a safe default lifecycle for mutable AI phases that covers clean-boundary checks, phase-start capture, durable actor-completion evidence, deterministic validation, checkpointing, completed-phase evidence, and active-state cleanup.
+- Let workflows select concise lifecycle policy such as safe resume, accepted-phase checkpointing, and clean phase boundaries instead of spelling out each runtime operation.
+- Derive normal interrupted-phase recovery from phase state and lifecycle policy rather than requiring a procedural `recovery` sequence in every workflow.
+- Preserve explicit escape hatches for workflows that genuinely require non-default lifecycle behavior; defaults must never weaken authority or silently skip validation.
+- Enforce workspace mutation policy, protected-resource integrity, branch lineage, and cleanliness continuously at relevant runtime mutation and acceptance boundaries so authors do not have to repeat scope/integrity assertions around every gate and checkpoint.
+- Centralize equivalent lineage and safety declarations so the same invariant does not need parallel spelling under state, workspace, preconditions, validation, and completion.
 
-Use the self-hosting workflow as a primary ergonomics test. Syntax changes should be justified by concrete reductions in repetition or ambiguity observed while developing AgentFlow with AgentFlow.
+#### Engine-owned progress and deterministic bookkeeping
 
-The language should avoid carrying forward accidental complexity from the original shell workflows. If the improved grammar requires incompatible field changes, introduce a new alpha API version with a documented migration rather than silently changing `v1alpha1` semantics.
+- Reference progress criteria by stable IDs from phases instead of repeating the complete human-readable criterion text.
+- Allow a criterion phase to declare that successful deterministic acceptance advances its targeted progress item; the phase actor should implement the criterion, not mark its own acceptance checkbox.
+- Make the runtime enforce that only the targeted criterion advances and that the declared progress delta is satisfied.
+- Add deterministic completion/bookkeeping operations for structured Markdown status, checklist, or index updates where the required transition is fully declarative.
+- Remove bookkeeping-only model calls when the engine can perform the same constrained transition deterministically.
+- Prefer structured Markdown-aware progress/bookkeeping semantics over shell normalization commands such as `sed` when protecting all non-bookkeeping content.
+
+#### Deterministic validation evidence and reuse
+
+- Make deterministic validation invocations produce durable evidence identified by the validation/tool definition, resolved non-secret inputs, and relevant workspace/content identity.
+- Reuse successful evidence when a later workflow transition requires the same deterministic validation against an unchanged relevant workspace state.
+- Invalidate cached evidence whenever relevant files, tool definitions, resolved inputs, policy, or other declared dependencies change.
+- Preserve gate-specific repair budgets and failure classification; cached success must never convert a safety failure or stale validation into acceptance.
+- Keep bounded failure logs available to repair actors without persisting unnecessary prompt, secret, or environment data.
+- Exercise the canonical repository gate as the first content-addressed validation benchmark so post-audit and final transitions do not rerun identical work against the same tree.
+
+#### Concise authoring model
+
+- Add inherited agent/executor defaults so common runner, sandbox, approval, ephemeral, commit, and output settings are declared once.
+- Add phase-kind and lifecycle defaults with clear overrides; common `criterion`, `implementation`, `audit`, and bookkeeping behavior should not require repeated boilerplate.
+- Stabilize familiar declarative concepts such as `uses`, `with`, `if`, scoped `env`, and named references where they concretely reduce repeated YAML without blurring authority boundaries.
+- Make repair configuration concise: a validation may name its bounded repair actor/policy and, by default, rerun the same deterministic validation after repair rather than repeating the validation step list.
+- Keep temporary directories, log file naming, Git-ref record plumbing, and similar interpreter implementation details out of workflow YAML unless they are observable semantic requirements.
+- Normalize parameter environment/default spelling onto the typed parameter model rather than embedding shell-style fallback expressions.
+- Keep domain-specific phase prompts focused on the work itself; generic instructions such as marking criteria complete, preserving phase state, or obeying runtime-owned checkpoint semantics should not need prompt repetition.
+
+#### Normalized executable plan
+
+- Compile concise authoring syntax and runtime defaults into an explicit normalized workflow representation before execution.
+- Add or extend `agentflow plan --expanded` so authors and reviewers can inspect the resolved lifecycle, recovery behavior, policy enforcement points, validation/repair behavior, progress transitions, and completion contract without reading interpreter source.
+- Make validation operate on both the authoring document and the normalized executable representation so defaults cannot introduce unsupported or ambiguous behavior.
+- Use the expanded representation as the basis for future semantic workflow comparison: authoring concision must not come at the cost of hidden behavior.
 
 ### Exit criteria
 
-- The self-hosting workflow is materially easier to read and maintain under the improved authoring model.
-- A representative workflow can be read top-to-bottom without consulting runtime implementation details.
-- Common orchestration patterns require materially less repeated YAML than the initial reference format.
-- Actor authority, mutation authority, and validation authority remain structurally distinguishable.
-- A migration path exists for any superseded `v1alpha1` syntax.
+- `examples/finish-priority-05.agent-workflow.yaml` and the self-hosting workflow are materially smaller in non-prompt orchestration surface while preserving their existing mutation, validation, repair, recovery, human-gate, and completion guarantees.
+- Representative workflows no longer require an explicit procedural active-phase recovery sequence for the normal safe-resume case.
+- Workspace scope, protected integrity, lineage, and cleanliness policy are declared once and are enforced at every required runtime boundary.
+- Criterion prompts no longer ask an agent to mark its own acceptance criterion complete; deterministic acceptance owns that transition.
+- Completion bookkeeping that can be expressed as a constrained deterministic update no longer consumes an AI phase.
+- Requiring the same deterministic gate twice against the same relevant workspace state reuses valid evidence; changing a declared dependency forces the gate to run again.
+- Common agents, phase lifecycle behavior, and validation repair policy can be expressed through defaults/references rather than repeated blocks.
+- `agentflow plan --expanded` exposes all runtime-generated lifecycle, recovery, validation, progress, checkpoint, and completion behavior before execution.
+- A representative workflow can be read top-to-bottom primarily as domain policy and work intent rather than interpreter implementation detail.
+- Actor authority, mutation authority, and deterministic validation authority remain structurally distinguishable in both concise and expanded forms.
+- Any incompatible grammar change uses a new alpha API version with an explicit migration path rather than silently changing `v1alpha1` semantics.
 
 ---
 
@@ -332,7 +375,7 @@ The language should avoid carrying forward accidental complexity from the origin
 
 - `agentflow fmt` for canonical formatting where safe.
 - `agentflow lint` for semantic and policy guidance beyond schema validity.
-- `agentflow plan` to display the resolved execution graph without running it.
+- `agentflow plan` to display the resolved execution graph without running it; Priority 4 establishes the expanded normalized-plan foundation this tooling builds on.
 - Graph visualization for dependencies and gates.
 - Shell/editor completion for CLI and workflow fields.
 - JSON Schema or equivalent editor integration.
@@ -383,7 +426,6 @@ These are deliberately not on the critical path to a stable declarative runtime,
 - procedural workflow memory;
 - formal verification backends;
 - distributed schedulers and remote execution;
-- caching and content-addressed deterministic steps;
 - policy-as-code integrations; and
 - learned orchestration policies constrained by declarative authority.
 
@@ -394,9 +436,9 @@ The recommended implementation order is:
 1. **Schema and diagnostics** — make the language mechanically precise.
 2. **`v1alpha1` runtime parity** — close the documented/runtime gap.
 3. **Self-hosting MVP** — use AgentFlow plus the Go interpreter to make a real, validated, resumable change to AgentFlow itself.
-4. **SDL authoring model** — use dogfooding experience to simplify and stabilize the YAML surface before adding more topology.
-5. **DAG scheduler** — add dependency-driven concurrency on top of proven sequential semantics.
-6. **Typed artifacts/evidence** — strengthen contracts between nodes.
+4. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
+5. **DAG scheduler** — add dependency-driven concurrency on top of concise, proven sequential semantics.
+6. **Typed artifacts/evidence** — strengthen contracts between nodes beyond deterministic validation evidence.
 7. **Extensibility and security** — broaden executors while keeping authority enforceable.
 8. **Trace and composition** — make larger systems explainable and reusable.
 9. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
