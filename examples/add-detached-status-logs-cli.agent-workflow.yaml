@@ -1,0 +1,514 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: add-detached-status-logs-cli
+  description: >-
+    Repository-owned workflow to add detached workflow execution, repository-wide
+    workflow status, and durable workflow log viewing to the AgentFlow CLI. The
+    workflow keeps Git-backed orchestration state authoritative, treats process
+    liveness and logs as observational data, requires deterministic regression
+    coverage, independently audits lifecycle/privacy boundaries, and records
+    human verification before completion.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    canonical_gate: scripts/check.sh
+    ci_policy: .github/workflows/quality.yml
+    workflow_file: examples/add-detached-status-logs-cli.agent-workflow.yaml
+    runtime_reference: docs/reference/runtime.md
+
+  state:
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    localControlFiles:
+      ignoredForDirtyState:
+        - "{{ workflow.file | default('') }}"
+      note: >-
+        Git-backed orchestration state, discovery metadata, process metadata, and
+        runtime logs must remain outside the implementation worktree. The
+        workflow definition itself is integrity-protected and is not mutable.
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - cmd/agentflow/**
+        - internal/engine/**
+        - internal/gitstate/**
+        - provider/**
+        - docs/reference/runtime.md
+        - README.md
+        - CHANGELOG.md
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+      integrity:
+        - id: roadmap
+          paths: [ROADMAP.md]
+          mode: exact-hash
+        - id: research-documents
+          paths: [docs/research/**]
+          mode: group-exact-hash
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+        - id: combined-cli-workflow
+          paths: [examples/add-detached-status-logs-cli.agent-workflow.yaml]
+          mode: exact-hash
+        - id: ci-validation-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: gate
+    phases:
+      implementation:
+        actor: luna
+        reasoning: high
+        requiresChange: true
+        validation: implementation-gate
+      audit:
+        actor: terra
+        reasoning: high
+        requiresChange: false
+        validation: audit-gate
+    repair:
+      actor: terra
+      reasoning: high
+      prompt: |
+        The deterministic AgentFlow quality gate failed while implementing the
+        detached execution, repository-wide status, or workflow log feature.
+
+        Inspect the actual checkout and repair only the failure required by this
+        bounded CLI task. Preserve the mutation allowlist and protected
+        resources. Do not weaken scripts/check.sh, CI policy, the roadmap,
+        research documents, or this workflow.
+
+        Required invariants:
+        - foreground `agentflow run` remains backward compatible;
+        - detached execution re-enters the ordinary run/engine path;
+        - Git-backed workflow acceptance state remains authoritative;
+        - process liveness is never inferred only from an active-phase record;
+        - repository-wide status and logs can work without `-f`;
+        - discovery/process metadata and logs cannot authorize advancement,
+          recovery, human acceptance, or completion;
+        - detached output uses the same durable workflow log path;
+        - no parameter values, environment values, prompts, or canonical
+          run-identity inputs are persisted merely for observability;
+        - focused tests and runtime documentation cover the behavior without
+          adding an external dependency.
+
+        --- gate output ---
+        {{ tail(validation.failure.log, 260) }}
+
+  agents:
+    luna:
+      model: "{{ parameters.luna_model }}"
+    terra:
+      model: "{{ parameters.terra_model }}"
+
+  tools:
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, bash, go, gofmt, rg]
+    - id: required-files
+      type: files-exist
+      paths:
+        - cmd/agentflow/main.go
+        - cmd/agentflow/main_test.go
+        - internal/engine/engine.go
+        - internal/gitstate/store.go
+        - "{{ spec.paths.runtime_reference }}"
+        - "{{ spec.paths.canonical_gate }}"
+        - "{{ spec.paths.ci_policy }}"
+        - "{{ spec.paths.workflow_file }}"
+    - id: ci-delegates-to-canonical-gate
+      type: file-contains
+      path: "{{ spec.paths.ci_policy }}"
+      text: scripts/check.sh
+
+  validation:
+    gate:
+      steps:
+        - uses: canonical-gate
+    starting-state:
+      steps:
+        - uses: canonical-gate
+    implementation-gate:
+      steps:
+        - uses: canonical-gate
+      repair: once
+    audit-gate:
+      steps:
+        - uses: canonical-gate
+    final-gate:
+      steps:
+        - uses: canonical-gate
+
+  phases:
+    - id: implement-observability
+      kind: implementation
+      label: implement-repository-status-and-workflow-logs
+      prompt: |
+        Implement the shared observability substrate and CLI needed to inspect
+        workflows without requiring their YAML file.
+
+        Inspect the current CLI, Git-backed state implementation, engine status
+        behavior, provider/tool output handling, tests, and runtime docs before
+        changing anything. Preserve existing workflow execution and acceptance
+        semantics.
+
+        Required CLI contract:
+
+        1. Repository-wide status
+           Add:
+             `agentflow status --all -C <repo>`
+             `agentflow status --all -C <repo> --json`
+
+           Semantics:
+           - `--all` does not require `-f`.
+           - Discover initialized AgentFlow workflow namespaces in the target
+             repository.
+           - Report at minimum workflow name, durable workflow state, active
+             phase when present, completion status, and branch/base/head context
+             when safely available.
+           - Include process liveness only when it can be verified from durable
+             PID/start metadata. An active-phase record alone must never be
+             labeled "running".
+           - Existing `status -f workflow.yaml` and its JSON form remain
+             backward compatible.
+           - Reject ambiguous selector combinations such as `--all` with `-f`
+             rather than silently choosing one.
+           - A malformed/stale workflow namespace must not make another workflow
+             disappear; report or skip it with deterministic context.
+           - JSON output must have a stable documented collection shape.
+
+        2. Fixed observational discovery metadata
+           Existing acceptance state may use workflow-configurable record names,
+           so generic status cannot safely interpret every namespace without a
+           small fixed-name descriptor.
+
+           Add a versioned, non-secret observational descriptor under each
+           workflow namespace that is sufficient for generic discovery. It may
+           include:
+           - schema version and workflow name;
+           - configured record names required for read-only state projection;
+           - workflow file path only as optional non-authoritative context;
+           - process PID/start metadata only when maintained correctly.
+
+           Requirements:
+           - authoritative phase/completion/recovery checks continue reading the
+             existing Git-backed acceptance records;
+           - the descriptor is derivable/rebuildable and never acceptance
+             authority;
+           - stale or malformed metadata cannot fabricate completion or permit
+             advancement;
+           - do not persist parameter values, environment values, prompts,
+             secret values, or canonical run-identity source bytes.
+
+        3. Durable workflow logs
+           Add:
+             `agentflow logs --workflow <name> -C <repo>`
+             `agentflow logs --workflow <name> -C <repo> --tail <n>`
+             `agentflow logs --workflow <name> -C <repo> --follow`
+
+           Semantics:
+           - logs are repository-local runtime data resolved through Git and
+             stored outside the worktree; prefer `git rev-parse --git-path` or
+             an equivalent Git-aware helper so linked worktrees are correct;
+           - one workflow gets an isolated deterministic log path;
+           - logs survive the AgentFlow process exiting and do not require the
+             workflow YAML to read;
+           - permissions are restrictive where supported;
+           - ordinary Git commits/pushes do not publish logs;
+           - log data is observational and never acceptance evidence;
+           - preserve logs on workflow reset unless an explicit tested cleanup
+             contract is added and documented;
+           - unknown workflow and no-log states return clear deterministic
+             results;
+           - `--tail <n>` rejects negative values and returns the final n lines;
+           - `--follow` streams appended content and exits cleanly on interrupt
+             without signaling or canceling the workflow process.
+
+           Capture operational events such as workflow start/resume, phase
+           start/end, validation, checkpoint, human-gate transitions,
+           completion/failure, and deterministic tool/provider execution
+           boundaries. Tee existing user-visible output where appropriate
+           rather than replacing stdout/stderr behavior.
+
+           Do not introduce parameter/env/prompt/identity material solely for
+           logging. If raw execution/provider output is persisted, document
+           that execution output itself may contain sensitive content and keep
+           files local with restrictive permissions.
+
+        4. Regression coverage
+           Add deterministic tests for:
+           - discovery of multiple workflow namespaces;
+           - workflow-name isolation/decoding and path traversal rejection;
+           - configurable record-name discovery;
+           - malformed/stale descriptors;
+           - `status --all` text and JSON;
+           - backward-compatible single-workflow status;
+           - selector conflicts;
+           - log creation outside the worktree;
+           - log isolation between workflows;
+           - `logs --tail`, invalid tail values, unknown/no-log behavior;
+           - follow cancellation without affecting a workflow process;
+           - absence of parameter/env/prompt/identity inputs from discovery
+             metadata.
+
+        Prefer small helpers/packages with explicit responsibilities for
+        discovery/indexing, status projection, log storage/writing, and CLI
+        presentation. Do not turn Git refs into a general logging database.
+        Run focused tests, gofmt, and the canonical gate before returning.
+
+    - id: implement-detached-run
+      kind: implementation
+      label: implement-detached-workflow-execution
+      prompt: |
+        Add detached workflow execution and integrate it with the observability
+        substrate from the previous phase.
+
+        Required CLI contract:
+
+        1. Run surface
+           Add:
+             `agentflow run --detach -f workflow.yaml ...`
+
+           Foreground `agentflow run` remains the default. `--detach` is valid
+           only with `run`; `validate`, `plan`, `status`, `logs`, and `reset`
+           must reject it with a clear command-specific error. Update usage/help
+           and docs/reference/runtime.md.
+
+        2. Detached launch
+           - Start a new process of the same AgentFlow executable and have that
+             child execute the ordinary run path.
+           - Preserve effective run inputs including `-f`, `-C`, `--codex-bin`,
+             and repeated `--set` values.
+           - Remove/neutralize `--detach` in the child invocation so recursive
+             detachment is impossible.
+           - The launcher returns success only after process start succeeds and
+             reports a concise workflow identity/PID confirmation.
+           - Process-start errors return useful failures.
+           - Do not add an external dependency for process detachment.
+
+        3. Process lifetime and liveness
+           - Detached child stdin must not depend on the launcher.
+           - The child must not remain coupled to the launcher's cancellation
+             context, signals, or terminal lifetime.
+           - Isolate OS-specific process attributes behind small build-tagged
+             helpers where required; do not put non-portable syscall constants
+             in shared code.
+           - Maintain only the minimal PID/process-start metadata needed to let
+             `status --all` verify liveness. Clear/update it on normal exit when
+             possible and treat stale PID reuse conservatively; unknown is
+             better than a false "running" claim.
+           - Process metadata is observational and cannot authorize workflow
+             state transitions.
+
+        4. Logging integration
+           - Detached execution writes to the same durable per-workflow log
+             implemented by the observability phase.
+           - The launcher must not need to stay alive for logging.
+           - Redirect/tee child stdout/stderr in a way that preserves useful
+             durable diagnostics without making log writes acceptance evidence.
+           - A detached workflow can be inspected with:
+               `agentflow status --all -C <repo>`
+               `agentflow logs --workflow <name> -C <repo> [--tail N|--follow]`
+
+        5. Runtime/state compatibility
+           - The detached child enters the normal engine/run-state path; do not
+             create a second workflow-state model.
+           - Existing validation, run identity, Git-backed state, recovery,
+             checkpoints, human gates, completion markers, status, and reset
+             semantics remain authoritative.
+           - Launcher success means child process start succeeded, not that the
+             workflow itself succeeded.
+
+        6. Regression coverage
+           Add deterministic tests for:
+           - foreground run never taking the detached path;
+           - `--detach` accepted only for run;
+           - child args preserve inputs and cannot recursively detach;
+           - process-start failures propagate;
+           - a detached helper can outlive the launcher boundary on supported
+             test platforms and does not depend on stdin;
+           - detached output reaches the normal durable log store;
+           - status reports verified liveness only with valid process metadata
+             and handles stale metadata/PID reuse conservatively;
+           - existing status/log tests remain green.
+
+        Keep changes inside the workflow allowlist. Prefer testable launch and
+        process-metadata helpers over embedding OS/process behavior directly in
+        CLI dispatch. Run focused tests, gofmt, and the canonical gate before
+        returning.
+
+    - id: audit-detached-status-logs
+      kind: audit
+      label: audit-detached-status-and-logs-cli
+      prompt: |
+        Independently audit the completed detached execution, repository-wide
+        status, and workflow logs feature set.
+
+        Do not accept implementation-phase completion claims as evidence.
+        Inspect the actual diff from the saved base through HEAD, CLI parsing,
+        process launch helpers, Git-backed state/discovery logic, log storage,
+        tests, and runtime documentation. Run focused checks as needed.
+
+        Verify:
+
+        Authority and state:
+        - existing per-workflow Git-backed state remains the only acceptance
+          authority;
+        - discovery descriptors, PID/start metadata, and logs are observational
+          and cannot authorize advancement, recovery, human acceptance, or
+          completion;
+        - configurable record names are supported;
+        - malformed/stale observational metadata cannot fabricate completion;
+        - durable orchestration state is not confused with OS process liveness.
+
+        Detached execution:
+        - foreground run/signal behavior is unchanged;
+        - `--detach` is run-only and cannot recurse into the child;
+        - effective run arguments and repeated overrides are preserved;
+        - launcher success means process start, not workflow success;
+        - detached child lifetime is independent of launcher stdin,
+          cancellation, signals, and terminal lifetime;
+        - platform-specific process behavior is isolated and compile-safe;
+        - detached execution uses the ordinary engine/state path.
+
+        Status and logs:
+        - `status --all` works without `-f`, has stable JSON, and identifies a
+          workflow as running only when liveness is actually verified;
+        - existing single-workflow status remains compatible;
+        - `logs --workflow <name>` works without workflow YAML;
+        - tail/follow behavior is deterministic and interrupt-safe;
+        - logs are outside the worktree, isolated, Git-aware for worktrees, and
+          survive process exit;
+        - workflow-name/path handling cannot escape the intended runtime root;
+        - detached output reaches the same log store;
+        - logs and descriptors do not introduce parameter/env/prompt/canonical
+          identity inputs merely for observability;
+        - any persisted raw execution output is documented as potentially
+          sensitive local data.
+
+        Quality:
+        - tests exercise lifecycle, stale-state, multi-workflow, and process
+          boundaries rather than only flag parsing;
+        - runtime docs clearly distinguish workflow state, process liveness,
+          logs, and acceptance authority;
+        - no unrelated or protected files changed;
+        - the canonical repository gate passes.
+
+        Repair a genuine in-scope defect if necessary; otherwise leave the
+        checkout unchanged. Do not broaden the feature or weaken validation.
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: "Detached/status/logs CLI workflow already completed at {{ state.workflow_complete.value }}"
+        - stop: success
+    - id: starting-state
+      validate: starting-state
+    - phase: implement-observability
+    - phase: implement-detached-run
+    - phase: audit-detached-status-logs
+    - id: post-audit
+      validate: audit-gate
+    - human: detached-status-logs-review
+    - complete: detached-status-logs-cli
+
+  humanGates:
+    - id: detached-status-logs-review
+      requires: [audit-detached-status-logs]
+      after:
+        - validation: post-audit
+      instructions: >-
+        Review the final diff and canonical gate output. In a repository with an
+        initialized workflow, perform or inspect a representative detached
+        launch, repository-wide status, and workflow log view. Confirm that the
+        launcher returns after child start, verified liveness is distinguishable
+        from durable workflow state, logs remain available after launcher exit,
+        and observational data is not acceptance authority.
+      checklist:
+        - id: detached-run
+          text: "Detached run returns after child start while foreground run remains the default."
+        - id: status-all
+          text: "Repository-wide status works without -f and does not infer running from durable active state alone."
+        - id: durable-logs
+          text: "Workflow logs are durable local runtime data outside the worktree and can be viewed without workflow YAML."
+        - id: integration
+          text: "Detached execution uses the normal state path and writes to the same workflow log inspected by the logs command."
+        - id: authority-privacy
+          text: "Discovery/process metadata and logs cannot authorize workflow progress and do not persist secrets merely for observability."
+        - id: tests-docs-gate
+          text: "Focused lifecycle tests and runtime documentation cover the feature, and scripts/check.sh passes."
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        value: head_commit
+
+  completion:
+    detached-status-logs-cli:
+      assertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+      finalValidation: final-gate
+      afterCheckpointAssertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+      writeMarker:
+        value: head_commit
+      summary:
+        title: "AgentFlow detached execution, status, and logs CLI task complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
