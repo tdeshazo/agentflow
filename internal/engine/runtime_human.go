@@ -37,7 +37,15 @@ func (e *Engine) runFlowAssertion(a workflow.Assertion) error {
 		return fmt.Errorf("unsupported flow assertion %q", typeName)
 	}
 }
-func (e *Engine) runHuman(ctx context.Context, id string) error {
+func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
+	e.logEvent("human_gate_start", map[string]string{"gate": id})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("human_gate_end", map[string]string{"gate": id, "result": result})
+	}()
 	var gate *workflow.HumanGate
 	for i := range e.Workflow.Spec.HumanGates {
 		if e.Workflow.Spec.HumanGates[i].ID == id {
@@ -177,7 +185,15 @@ func (e *Engine) persistHumanEvidence(gate *workflow.HumanGate, record, head str
 	}
 	return nil
 }
-func (e *Engine) runCompletion(ctx context.Context, name string) error {
+func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) {
+	e.logEvent("completion_start", map[string]string{"completion": name})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("completion_end", map[string]string{"completion": name, "result": result})
+	}()
 	c, ok := e.Workflow.Spec.Completion[name]
 	if !ok {
 		return fmt.Errorf("unknown completion %q", name)

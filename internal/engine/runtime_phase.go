@@ -49,7 +49,7 @@ type standaloneRepairState struct {
 	Attempts int `json:"attempts"`
 }
 
-func (e *Engine) runPhase(ctx context.Context, id string) error {
+func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 	p, err := e.phaseByID(id)
 	if err != nil {
 		return err
@@ -159,6 +159,14 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	}
 
 	fmt.Fprintf(e.Out, "==> Phase %s: %s\n", id, p.Label)
+	e.logEvent("phase_start", map[string]string{"phase": id})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("phase_end", map[string]string{"phase": id, "result": result})
+	}()
 	if p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0 {
 		active.ActorCompleted = true // engine-only deterministic phase; no actor owns this transition.
 		if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
@@ -340,13 +348,24 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 			}
 		}
 	}
+	e.logEvent("provider_start", map[string]string{"provider": prov.Name(), "actor": actorName})
 	_, err = prov.Run(ctx, provider.Request{Workspace: e.Repo.Root, Model: model, Reasoning: reasoning, Prompt: prompt, Sandbox: a.Sandbox, Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color, Metadata: metadata})
 	if err != nil {
+		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
 	}
+	e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "success"})
 	return nil
 }
-func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) error {
+func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) (runErr error) {
+	e.logEvent("validation_start", map[string]string{"validation": name})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("validation_end", map[string]string{"validation": name, "result": result})
+	}()
 	v, ok := e.Workflow.Spec.Validation[name]
 	if !ok {
 		for _, step := range e.Workflow.Spec.Flow {
@@ -649,8 +668,16 @@ func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *w
 func (e *Engine) runTool(ctx context.Context, name string, p *workflow.Phase) error {
 	return e.runToolUse(ctx, workflow.ToolUse{Uses: name}, p)
 }
-func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workflow.Phase) error {
+func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workflow.Phase) (runErr error) {
 	name := use.Uses
+	e.logEvent("tool_start", map[string]string{"tool": name})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("tool_end", map[string]string{"tool": name, "result": result})
+	}()
 	t, ok := e.Workflow.Spec.Tools[name]
 	if !ok {
 		return fmt.Errorf("unknown tool %q", name)

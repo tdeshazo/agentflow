@@ -10,7 +10,15 @@ import (
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
 
-func (e *Engine) checkpoint(label string, p *workflow.Phase) error {
+func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
+	e.logEvent("checkpoint_start", map[string]string{"label": label})
+	defer func() {
+		result := "success"
+		if runErr != nil {
+			result = "failure"
+		}
+		e.logEvent("checkpoint_end", map[string]string{"label": label, "result": result})
+	}()
 	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return err
 	}

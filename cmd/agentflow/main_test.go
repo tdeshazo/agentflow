@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
 )
 
 func TestPlanExpandedCLI(t *testing.T) {
@@ -77,4 +80,102 @@ func TestStatusJSONCLI(t *testing.T) {
 	if status["state"] != "uninitialized" || status["initialized"] != false {
 		t.Fatalf("CLI status JSON = %v", status)
 	}
+}
+
+func TestStatusAllCLITextAndJSON(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		store := gitstate.NewStore(repo, name)
+		if err := store.SetJSON(gitstate.DescriptorRecord, gitstate.NewDescriptor(name, "", gitstate.RecordNames{})); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetCommit("base", head); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetJSON("branch", "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	textOutput := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "-C", repo.Root}) })
+	if !strings.Contains(textOutput, "workflow: alpha") || !strings.Contains(textOutput, "workflow: beta") || !strings.Contains(textOutput, "state: ready") {
+		t.Fatalf("status --all text = %s", textOutput)
+	}
+	jsonOutput := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "--json", "-C", repo.Root}) })
+	var collection struct {
+		SchemaVersion int                         `json:"schema_version"`
+		Repo          string                      `json:"repo"`
+		Workflows     []gitstate.StatusProjection `json:"workflows"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &collection); err != nil {
+		t.Fatalf("status --all JSON = %q: %v", jsonOutput, err)
+	}
+	if collection.SchemaVersion != 1 || collection.Repo != repo.Root || len(collection.Workflows) != 2 {
+		t.Fatalf("status --all collection = %+v", collection)
+	}
+}
+
+func TestStatusAllRejectsWorkflowFileSelector(t *testing.T) {
+	if err := runArgs([]string{"status", "--all", "-f", "workflow.yaml"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("selector conflict error = %v", err)
+	}
+}
+
+func TestLogsCLIRejectsNegativeTailAndReportsUnknownWorkflow(t *testing.T) {
+	if err := runArgs([]string{"logs", "--workflow", "x", "--tail", "-1"}); err == nil || !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("negative tail error = %v", err)
+	}
+	repo := newCLIStatusRepo(t)
+	if err := runLogs(repo.Root, "unknown", -1, false); err == nil || !strings.Contains(err.Error(), "unknown workflow") {
+		t.Fatalf("unknown workflow error = %v", err)
+	}
+	store := gitstate.NewStore(repo, "no-log")
+	if err := store.SetJSON(gitstate.DescriptorRecord, gitstate.NewDescriptor("no-log", "", gitstate.RecordNames{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := runLogs(repo.Root, "no-log", -1, false); err == nil || !strings.Contains(err.Error(), "no logs") {
+		t.Fatalf("no-log error = %v", err)
+	}
+}
+
+func newCLIStatusRepo(t *testing.T) gitstate.Repo {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.name", "AgentFlow Test"},
+		{"config", "user.email", "agentflow@example.invalid"},
+		{"commit", "--allow-empty", "-qm", "init"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	return gitstate.Repo{Root: dir}
+}
+
+func captureCLIStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = write
+	callErr := fn()
+	_ = write.Close()
+	os.Stdout = original
+	data, readErr := io.ReadAll(read)
+	_ = read.Close()
+	if callErr != nil {
+		t.Fatal(callErr)
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	return string(bytes.TrimSpace(data))
 }

@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/tdeshazo/agentflow-spec/internal/engine"
+	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
+	"github.com/tdeshazo/agentflow-spec/internal/observability"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 	"github.com/tdeshazo/agentflow-spec/provider"
 	codexprovider "github.com/tdeshazo/agentflow-spec/provider/codex"
@@ -54,17 +58,57 @@ func runArgs(args []string) error {
 	repo := fs.String("C", "", "repository root override")
 	codexBin := fs.String("codex-bin", "codex", "Codex CLI binary")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON (status only)")
+	all := fs.Bool("all", false, "inspect every discovered workflow (status only)")
+	workflowName := fs.String("workflow", "", "workflow name (logs only)")
+	tail := fs.Int("tail", -1, "show the final N log lines (logs only)")
+	follow := fs.Bool("follow", false, "follow appended workflow log output (logs only)")
 	expanded := fs.Bool("expanded", false, "show resolved executable plan")
 	var overrides sets
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *file == "" {
-		return fmt.Errorf("-f workflow YAML is required")
-	}
+	tailProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tail" {
+			tailProvided = true
+		}
+	})
 	if *jsonOutput && cmd != "status" {
 		return fmt.Errorf("--json is only supported with status")
+	}
+	if *all && cmd != "status" {
+		return fmt.Errorf("--all is only supported with status")
+	}
+	if *workflowName != "" && cmd != "logs" {
+		return fmt.Errorf("--workflow is only supported with logs")
+	}
+	if *tail != -1 && cmd != "logs" {
+		return fmt.Errorf("--tail is only supported with logs")
+	}
+	if tailProvided && *tail < 0 {
+		return fmt.Errorf("--tail must not be negative")
+	}
+	if *follow && cmd != "logs" {
+		return fmt.Errorf("--follow is only supported with logs")
+	}
+	if cmd == "status" && *all && *file != "" {
+		return fmt.Errorf("status selectors --all and -f are mutually exclusive")
+	}
+	if cmd == "logs" {
+		if *file != "" {
+			return fmt.Errorf("logs does not accept -f; use --workflow")
+		}
+		if *workflowName == "" {
+			return fmt.Errorf("logs requires --workflow")
+		}
+		return runLogs(*repo, *workflowName, *tail, *follow)
+	}
+	if cmd == "status" && *all {
+		return runAllStatus(*repo, *jsonOutput)
+	}
+	if *file == "" {
+		return fmt.Errorf("-f workflow YAML is required")
 	}
 	result := workflow.ValidateFile(*file)
 	if cmd == "validate" {
@@ -132,7 +176,120 @@ func runArgs(args []string) error {
 
 func usage() error {
 	fmt.Fprintln(os.Stderr, "usage: agentflow <validate|plan|run|status|reset> -f workflow.yaml [-C repo] [--expanded] [--json] [--set key=value]")
+	fmt.Fprintln(os.Stderr, "       agentflow status --all [-C repo] [--json]")
+	fmt.Fprintln(os.Stderr, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
 	return fmt.Errorf("invalid command")
+}
+
+type statusAllOutput struct {
+	SchemaVersion int                         `json:"schema_version"`
+	Repo          string                      `json:"repo"`
+	Workflows     []gitstate.StatusProjection `json:"workflows"`
+}
+
+func runAllStatus(repoRoot string, jsonOutput bool) error {
+	repo, err := targetRepo(repoRoot)
+	if err != nil {
+		return err
+	}
+	items, err := repo.DiscoverDescriptors()
+	if err != nil {
+		return err
+	}
+	statuses := make([]gitstate.StatusProjection, 0, len(items))
+	for _, item := range items {
+		if item.Error != "" || item.Descriptor == nil {
+			status := gitstate.StatusProjection{SchemaVersion: 1, Namespace: item.Namespace, Workflow: item.Workflow, Repo: repo.Root, State: "malformed", Error: item.Error}
+			statuses = append(statuses, status)
+			continue
+		}
+		status, projectErr := item.Descriptor.ProjectStatus(repo, item.Namespace)
+		if projectErr != nil {
+			statuses = append(statuses, gitstate.StatusProjection{SchemaVersion: 1, Namespace: item.Namespace, Workflow: item.Workflow, Repo: repo.Root, State: "malformed", Error: projectErr.Error()})
+			continue
+		}
+		if liveness, verified := gitstate.ProcessLiveness(item.Descriptor.Process); verified {
+			status.ProcessLiveness = liveness
+		}
+		statuses = append(statuses, status)
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(statusAllOutput{SchemaVersion: 1, Repo: repo.Root, Workflows: statuses})
+	}
+	fmt.Fprintf(os.Stdout, "repository: %s\nworkflows: %d\n", repo.Root, len(statuses))
+	for _, status := range statuses {
+		fmt.Fprintf(os.Stdout, "- workflow: %s\n  state: %s\n", status.Workflow, status.State)
+		if status.Namespace != "" {
+			fmt.Fprintf(os.Stdout, "  namespace: %s\n", status.Namespace)
+		}
+		if status.Error != "" {
+			fmt.Fprintf(os.Stdout, "  error: %s\n", status.Error)
+			continue
+		}
+		if status.Initialized {
+			fmt.Fprintf(os.Stdout, "  base: %s\n  branch: %s\n  head: %s\n", status.Base, status.Branch, status.Head)
+		}
+		if status.ActivePhase != "" {
+			fmt.Fprintf(os.Stdout, "  active_phase: %s\n", status.ActivePhase)
+		}
+		fmt.Fprintf(os.Stdout, "  complete: %v\n", status.Complete)
+		if status.ProcessLiveness != "" {
+			fmt.Fprintf(os.Stdout, "  process_liveness: %s\n", status.ProcessLiveness)
+		}
+	}
+	return nil
+}
+
+func targetRepo(root string) (gitstate.Repo, error) {
+	if root == "" {
+		root = "."
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return gitstate.Repo{}, err
+	}
+	repo := gitstate.Repo{Root: abs}
+	if !repo.IsRepository() {
+		return gitstate.Repo{}, fmt.Errorf("%s is not a Git repository", abs)
+	}
+	return repo, nil
+}
+
+func runLogs(repoRoot, workflowName string, tail int, follow bool) error {
+	repo, err := targetRepo(repoRoot)
+	if err != nil {
+		return err
+	}
+	discovery, found, err := repo.FindDescriptor(workflowName)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("unknown workflow %q", workflowName)
+	}
+	if discovery.Error != "" || discovery.Descriptor == nil {
+		return fmt.Errorf("workflow %q has malformed observability metadata: %s", workflowName, discovery.Error)
+	}
+	data, path, readErr := observability.Read(repo, workflowName)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return fmt.Errorf("no logs for workflow %q", workflowName)
+		}
+		return readErr
+	}
+	if follow {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return observability.Follow(ctx, path, os.Stdout)
+	}
+	if tail >= 0 {
+		data, err = observability.Tail(data, tail)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = os.Stdout.Write(data)
+	return err
 }
 
 func diagnosticsError(result workflow.Result) error {

@@ -23,11 +23,7 @@ func NewStore(repo Repo, workflowName string) Store {
 	// example, "release candidate" and "release-candidate" would otherwise
 	// share one state namespace. Encode every byte instead, so the mapping is
 	// deterministic and injective without relying on an external state index.
-	name := "workflow-"
-	for _, b := range []byte(workflowName) {
-		name += fmt.Sprintf("%02x", b)
-	}
-	return Store{Repo: repo, Namespace: "refs/agentflow/" + name}
+	return Store{Repo: repo, Namespace: NamespaceForWorkflow(workflowName)}
 }
 
 func (s Store) ref(name string) string { return s.Namespace + "/" + strings.TrimPrefix(name, "/") }
@@ -114,6 +110,12 @@ func (s Store) Reset() error {
 	}
 	for _, ref := range strings.Split(string(b), "\n") {
 		if ref == "" {
+			continue
+		}
+		if strings.TrimPrefix(ref, s.Namespace+"/") == DescriptorRecord {
+			// Observational discovery metadata survives an explicit acceptance
+			// reset so local logs remain addressable and status can report the
+			// namespace as uninitialized. It is rebuilt on the next run.
 			continue
 		}
 		if _, err := s.Repo.run(nil, "update-ref", "-d", ref); err != nil {

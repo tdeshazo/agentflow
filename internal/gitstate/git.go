@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -31,6 +32,24 @@ func (r Repo) run(stdin []byte, args ...string) ([]byte, error) {
 func (r Repo) IsRepository() bool {
 	_, err := r.run(nil, "rev-parse", "--git-dir")
 	return err == nil
+}
+
+// GitPath resolves a repository-local runtime path through Git. This matters
+// for linked worktrees, where the effective Git directory is not necessarily
+// the worktree's .git directory.
+func (r Repo) GitPath(path string) (string, error) {
+	b, err := r.run(nil, "rev-parse", "--git-path", path)
+	if err != nil {
+		return "", err
+	}
+	resolved := strings.TrimSpace(string(b))
+	if !filepath.IsAbs(resolved) {
+		resolved, err = filepath.Abs(filepath.Join(r.Root, resolved))
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.Clean(resolved), nil
 }
 
 func (r Repo) Head() (string, error) {

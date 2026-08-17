@@ -57,6 +57,7 @@ spec:
         - cmd/agentflow/**
         - internal/engine/**
         - internal/gitstate/**
+        - internal/observability/**
         - provider/**
         - docs/reference/runtime.md
         - README.md

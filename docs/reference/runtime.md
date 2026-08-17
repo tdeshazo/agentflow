@@ -22,6 +22,11 @@ State can be inspected or reset independently:
 ```sh
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
 go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo --json
+go run ./cmd/agentflow status --all -C /path/to/repo
+go run ./cmd/agentflow status --all -C /path/to/repo --json
+go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo
+go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo --tail 100
+go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo --follow
 go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
 go run ./cmd/agentflow plan --expanded -f workflow.yaml
 ```
@@ -106,6 +111,38 @@ history is not rewritten.
 
 These refs are local workflow state unless a user deliberately configures Git to
 push them. AgentFlow does not push orchestration refs by default.
+
+Each run also maintains a fixed `observability/descriptor` JSON record in its
+workflow namespace. The versioned descriptor contains the workflow name and
+the configured names of the base, branch, active-phase, and completion
+records, plus optional workflow-file context and process PID/start metadata.
+It is rebuildable and observational only: status projection, recovery,
+validation, phase advancement, and completion continue to read the existing
+acceptance records. It never stores parameter values, environment values,
+prompts, secret values, or run-identity source bytes. A PID is reported as
+live only when its durable process-start token can be verified; an active phase
+alone is never proof that an AgentFlow process is running.
+
+`status --all` scans these fixed descriptors and returns a stable JSON
+collection shaped as `{"schema_version":1,"repo":"...","workflows":[...]}`.
+Each workflow item reports its durable state, completion flag, optional active
+phase, and safely available base/branch/head context. A malformed namespace is
+retained as a `malformed` item with deterministic context so it cannot hide
+other workflows. `status -f workflow.yaml` remains the authoritative
+definition-aware status view and retains its single-object JSON shape.
+
+Runtime logs are stored as restrictive JSON Lines files below the repository's
+Git directory, resolved with `git rev-parse --git-path`; linked worktrees
+therefore use the correct Git storage location. Each workflow has an isolated
+encoded path. Logs are local runtime data, are not in the worktree, are not
+published by ordinary commits or pushes, and are preserved by workflow reset.
+They record operational boundaries such as workflow start/end, phase start/end,
+provider execution, validation, checkpoint, human-gate, and completion events.
+The logger does not persist prompts, parameters, environments, or identity
+inputs. If a future provider/tool integration persists raw execution output,
+that output may contain sensitive content and must remain local with restrictive
+permissions. `logs --follow` only watches the log file and cancellation of the
+reader does not signal or cancel the workflow process.
 
 ## Runtime-owned phase lifecycle
 

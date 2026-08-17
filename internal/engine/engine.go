@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 
 	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
+	"github.com/tdeshazo/agentflow-spec/internal/observability"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 	"github.com/tdeshazo/agentflow-spec/provider"
 )
@@ -38,6 +39,7 @@ type Engine struct {
 	invocationID       string
 	tempDirectory      string
 	parametersResolved bool
+	logStore           *observability.LogStore
 }
 
 // ActivePhase is the durable record of a phase's current execution state,
@@ -295,12 +297,31 @@ func coerce(kind string, v any) (any, error) {
 
 // Run executes the workflow, orchestrating phases, managing durability, and coordinating
 // with providers. It returns an error if the workflow fails.
-func (e *Engine) Run(ctx context.Context) error {
+func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
 		defer os.RemoveAll(e.tempDirectory)
 	}
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
+	}
+	if err := e.startObservation(); err != nil {
+		return err
+	}
+	defer func() {
+		if e.logStore != nil {
+			fields := map[string]string{"result": "success"}
+			if runErr != nil {
+				fields["result"] = "failure"
+			}
+			_ = e.logStore.Event("workflow_end", fields)
+			_ = e.logStore.Close()
+			e.logStore = nil
+		}
+		_ = e.finishObservation()
+	}()
+	e.logEvent("workflow_start", map[string]string{"workflow": e.Workflow.Metadata.Name})
+	if _, active, err := e.Store.Resolve(e.activeRecord()); err == nil && active {
+		e.logEvent("workflow_resume", map[string]string{"workflow": e.Workflow.Metadata.Name})
 	}
 	if err := e.runBasicPreconditions(); err != nil {
 		return err
@@ -365,6 +386,47 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (e *Engine) startObservation() error {
+	logStore, err := observability.Open(e.Repo, e.Workflow.Metadata.Name)
+	if err != nil {
+		return err
+	}
+	descriptor := gitstate.NewDescriptor(e.Workflow.Metadata.Name, e.Workflow.File, gitstate.RecordNames{
+		Base:                 e.baseRecord(),
+		Branch:               e.branchRecord(),
+		ActivePhase:          e.activeRecord(),
+		WorkflowComplete:     e.workflowCompleteMarker(),
+		CompletedPhasePrefix: e.Workflow.Spec.State.Records.CompletedPhases,
+	})
+	descriptor.Process = gitstate.CurrentProcessMetadata()
+	if err := descriptor.Validate(e.Workflow.Metadata.Name); err != nil {
+		_ = logStore.Close()
+		return fmt.Errorf("observability descriptor: %w", err)
+	}
+	if err := e.Store.SetJSON(gitstate.DescriptorRecord, descriptor); err != nil {
+		_ = logStore.Close()
+		return fmt.Errorf("persist observability descriptor: %w", err)
+	}
+	e.logStore = logStore
+	return nil
+}
+
+func (e *Engine) finishObservation() error {
+	var descriptor gitstate.Descriptor
+	ok, err := e.Store.GetJSON(gitstate.DescriptorRecord, &descriptor)
+	if err != nil || !ok {
+		return err
+	}
+	descriptor.Process = nil
+	return e.Store.SetJSON(gitstate.DescriptorRecord, descriptor)
+}
+
+func (e *Engine) logEvent(kind string, fields map[string]string) {
+	if e.logStore != nil {
+		_ = e.logStore.Event(kind, fields)
+	}
 }
 
 func (e *Engine) workflowCompleteMarker() string {
@@ -645,7 +707,7 @@ func (e *Engine) initializeOrResumeState() error {
 		if err != nil {
 			return err
 		}
-		if len(names) != 0 {
+		if len(names) != 0 && !(len(names) == 1 && names[0] == gitstate.DescriptorRecord) {
 			if err := e.resetInterruptedInitialization(); err != nil {
 				return err
 			}
@@ -744,7 +806,7 @@ func (e *Engine) resetInterruptedInitialization() error {
 	if err != nil {
 		return err
 	}
-	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true, e.runIdentityRecord(): true}
+	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true, e.runIdentityRecord(): true, gitstate.DescriptorRecord: true}
 	for _, record := range e.Workflow.Spec.State.Records.Integrity {
 		allowed[record] = true
 	}
