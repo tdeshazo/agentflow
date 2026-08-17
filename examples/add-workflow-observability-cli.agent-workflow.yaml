@@ -1,0 +1,632 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: add-workflow-observability-cli
+  description: >-
+    Repository-owned workflow to add repository-wide workflow status discovery
+    and durable workflow log viewing to the AgentFlow CLI. The workflow
+    preserves existing per-workflow Git-backed acceptance state as the source
+    of truth, adds only observational discovery metadata and local durable logs,
+    requires deterministic regression coverage, independently audits privacy
+    and state semantics, and records human verification before completion.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    canonical_gate: scripts/check.sh
+    ci_policy: .github/workflows/quality.yml
+    workflow_file: examples/add-workflow-observability-cli.agent-workflow.yaml
+    runtime_reference: docs/reference/runtime.md
+
+  state:
+    backend: git-dir
+    directory: .git/agentflow/add-workflow-observability-cli
+    records:
+      base_commit: base
+      branch: branch
+      active_phase: active-phase
+      completed_phase_pattern: "{{ phase.id }}.done"
+      manual_confirmation: workflow-observability-review
+      workflow_complete: complete
+    initialize:
+      require_clean_implementation_workspace: true
+      require_named_branch: true
+      capture:
+        base_commit: head_commit
+        branch: current_branch
+        integrity_baseline: true
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+    lineage:
+      require_base_commit_exists: true
+      require_base_is_ancestor_of_head: true
+      require_same_named_branch: true
+    resume:
+      enabled: true
+      completed_phase_marker:
+        value: head_commit
+        valid_when_marker_commit_exists: true
+        valid_when_marker_is_ancestor_of_head: true
+      active_phase:
+        fields:
+          - phase_id
+          - phase_start_commit
+        require_phase_start_commit_exists: true
+        require_phase_start_is_ancestor_of_head: true
+        preserve_partial_commits: true
+        preserve_partial_worktree_changes: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    localControlFiles:
+      ignoredForDirtyState:
+        - "{{ workflow.file | default('') }}"
+      note: >-
+        Git-backed orchestration state and local runtime logs must not dirty the
+        implementation worktree. The workflow definition itself is
+        integrity-protected and is not in the mutation allowlist.
+    cleanliness:
+      before_first_run: required
+      before_new_phase: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - cmd/agentflow/**
+        - internal/engine/**
+        - internal/gitstate/**
+        - provider/**
+        - docs/reference/runtime.md
+        - README.md
+        - CHANGELOG.md
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+      integrity:
+        - id: roadmap
+          paths: [ROADMAP.md]
+          mode: exact-hash
+        - id: research-documents
+          paths: [docs/research/**]
+          mode: group-exact-hash
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+        - id: observability-workflow
+          paths: [examples/add-workflow-observability-cli.agent-workflow.yaml]
+          mode: exact-hash
+        - id: ci-validation-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+    checkpointing:
+      agent_commits_allowed: true
+      checkpoint_uncommitted_success: true
+      stage_only_allowed_dirty_files: true
+      commit_if_dirty: true
+      commit_message: "AgentFlow workflow observability: {{ phase.label }}"
+      require_clean_after: true
+      assert_scope_before_and_after: true
+
+  agents:
+    luna:
+      runner: codex
+      model: "{{ parameters.luna_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    terra:
+      runner: codex
+      model: "{{ parameters.terra_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+
+  tools:
+    assert-change-scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+      mutates_workspace: false
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+      mutates_workspace: false
+      capture:
+        stdout: true
+        stderr: true
+        log: "{{ temp.directory }}/gate-{{ invocation.id }}.log"
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+  temp:
+    directory: "{{ mktemp('${TMPDIR:-/tmp}/agentflow-observability.XXXXXX') }}"
+    cleanup: on-exit
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, bash, go, gofmt, rg]
+    - id: required-files
+      type: files-exist
+      paths:
+        - cmd/agentflow/main.go
+        - cmd/agentflow/main_test.go
+        - internal/engine/engine.go
+        - internal/gitstate/store.go
+        - "{{ spec.paths.runtime_reference }}"
+        - "{{ spec.paths.canonical_gate }}"
+        - "{{ spec.paths.ci_policy }}"
+        - "{{ spec.paths.workflow_file }}"
+    - id: ci-delegates-to-canonical-gate
+      type: file-contains
+      path: "{{ spec.paths.ci_policy }}"
+      text: scripts/check.sh
+    - id: saved-base-exists
+      when: "{{ state.initialized }}"
+      type: git-object-exists
+      object: "{{ state.base_commit }}^{commit}"
+    - id: saved-base-is-ancestor
+      when: "{{ state.initialized }}"
+      type: git-ancestor
+      ancestor: "{{ state.base_commit }}"
+      descendant: HEAD
+    - id: branch-unchanged
+      when: "{{ state.initialized }}"
+      type: git-current-branch-equals
+      expected: "{{ state.branch }}"
+    - id: protected-boundaries-unchanged
+      when: "{{ state.initialized }}"
+      type: workspace-integrity
+      policy: spec.workspace.mutationPolicy.integrity
+
+  validation:
+    starting-state:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    implementation-gate:
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      onFailure:
+        strategy: repair-once
+        maxRepairAttempts: 1
+        repair:
+          actor: terra
+          reasoning: high
+          prompt: |
+            The deterministic AgentFlow quality gate failed while implementing
+            repository-wide status discovery or workflow logs.
+
+            Diagnose the actual checkout and repair only the failure necessary
+            for this bounded observability task. Preserve the mutation allowlist
+            and every protected resource. Do not weaken scripts/check.sh, CI
+            policy, the roadmap, research documents, or this workflow.
+
+            The required behavioral contract is:
+
+            Repository-wide status:
+            - `agentflow status --all -C <repo>` discovers initialized
+              AgentFlow workflows in that repository without requiring `-f`;
+            - the output distinguishes durable workflow state from OS process
+              liveness and does not claim "running" merely because an active
+              phase record exists;
+            - `--json` returns a stable machine-readable collection;
+            - existing `agentflow status -f ...` behavior remains compatible;
+            - generic discovery works with configurable workflow record names
+              without making a workflow definition file mandatory.
+
+            Workflow logs:
+            - `agentflow logs --workflow <name> -C <repo>` reads durable local
+              logs for a discovered workflow;
+            - `--tail <n>` limits output to the last n lines;
+            - `--follow` may stream appended log content for a currently
+              executing workflow and exits cleanly on interrupt;
+            - logs survive launcher/interpreter exit and do not dirty the
+              worktree;
+            - log storage is local repository runtime data and is not workflow
+              acceptance evidence;
+            - logs never persist parameter values, environment values, prompts,
+              run-identity canonical inputs, or other secrets merely to support
+              discovery.
+
+            Discovery/state model:
+            - keep existing namespaced Git refs and workflow acceptance records
+              authoritative;
+            - add a fixed, versioned, non-secret observational descriptor or
+              status record per workflow namespace so a repository scanner can
+              discover and summarize workflows without the original YAML;
+            - the observational record must be derivable/rebuildable and must
+              never authorize advancement, recovery, human acceptance, or
+              completion;
+            - do not add a second acceptance-state database.
+
+            --- gate output ---
+            {{ tail(validation.failure.log, 260) }}
+        then:
+          - uses: assert-change-scope
+          - uses: canonical-gate
+        exhausted: fail-workflow
+
+    audit-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    final-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+  phaseDefaults:
+    before:
+      - require_clean_implementation_workspace: true
+      - capture_phase_start_commit: true
+      - persist_active_phase:
+          fields:
+            - phase_id
+            - phase_start_commit
+
+  phases:
+    - id: implement-observability
+      kind: implementation
+      label: implement-workflow-status-and-logs
+      actor: luna
+      reasoning: high
+      requiresChange: true
+      prompt: |
+        Implement one bounded AgentFlow operator-observability feature set:
+        repository-wide workflow status and durable workflow logs.
+
+        Inspect the current CLI, Git-backed state implementation, status logic,
+        provider/tool output handling, runtime documentation, and tests before
+        changing anything. Preserve existing workflow execution and acceptance
+        semantics.
+
+        Required CLI contract:
+
+        1. Repository-wide status
+           Add:
+             `agentflow status --all -C <repo>`
+             `agentflow status --all -C <repo> --json`
+
+           Semantics:
+           - `--all` does not require `-f`.
+           - Discover AgentFlow workflow namespaces from the target repository.
+           - Report at minimum: workflow name, durable state, active phase when
+             present, completion status, branch/base/head context when safely
+             available, and enough process metadata to report liveness only
+             when it is actually known.
+           - Do not label a workflow "running" solely because durable state is
+             active. Process liveness and orchestration state are different.
+           - Human-gated, validation-failed/recoverable,
+             safety-failed/terminal, ready, active, and completed semantics
+             should remain consistent with the existing single-workflow status
+             model where the required durable facts are available.
+           - Existing `status -f workflow.yaml` and `status -f ... --json`
+             remain backward compatible.
+           - `--all` combined with `-f` must either have one clearly documented
+             precedence rule or fail with a clear argument error; prefer
+             rejecting ambiguous selector combinations.
+
+        2. Generic discovery metadata
+           Current workflow state is stored under isolated namespaced Git refs,
+           while configurable record names make generic interpretation unsafe
+           without workflow metadata.
+
+           Add a small fixed-name, versioned observational record under each
+           workflow namespace. It may contain only non-secret information
+           needed for discovery/status, such as:
+           - schema version;
+           - workflow name;
+           - configured state-record names needed for inspection;
+           - durable state summary fields or identifiers needed to derive them;
+           - workflow file path only if useful and non-authoritative;
+           - current process id/start metadata only if the runtime can maintain
+             it correctly.
+
+           Requirements:
+           - this record is an index/descriptor, never acceptance authority;
+           - normal phase/completion checks continue reading the existing
+             authoritative records;
+           - stale or malformed observational metadata must not make a workflow
+             advance or appear complete;
+           - discovery tolerates one malformed namespace by reporting/skipping
+             it deterministically rather than failing the entire repository
+             listing without context;
+           - do not persist parameter values, environment values, prompts,
+             secret values, or canonical run-identity input bytes.
+
+        3. Durable workflow logs
+           Add:
+             `agentflow logs --workflow <name> -C <repo>`
+             `agentflow logs --workflow <name> -C <repo> --tail <n>`
+             `agentflow logs --workflow <name> -C <repo> --follow`
+
+           Use a repository-local runtime log directory resolved through Git,
+           not a path in the working tree. Prefer `git rev-parse --git-path`
+           (or an equivalent Git-aware helper) so normal repositories and
+           worktrees resolve correctly.
+
+           Log requirements:
+           - one workflow gets an isolated deterministic log location;
+           - logs survive the AgentFlow process exiting;
+           - opening logs does not require the workflow YAML;
+           - permissions are appropriately restrictive for local runtime data;
+           - logs are not Git commits/refs and are not pushed by ordinary Git
+             operations;
+           - reset behavior is documented: preserve logs by default unless a
+             deliberate log-cleanup contract is implemented and tested;
+           - empty/no-log state produces a clear non-error or documented error;
+           - an unknown workflow name produces a clear error.
+
+           Capture operationally useful events such as workflow start/resume,
+           phase start/end, validation/checkpoint/human-gate transitions,
+           completion/failure, and deterministic tool/provider execution
+           boundaries. Tee user-visible engine output where appropriate rather
+           than replacing stdout/stderr behavior.
+
+           Never add parameter values, environment-backed values, prompts,
+           run-identity source bytes, or secrets solely for logging. If command
+           output or provider output is persisted, document that repository
+           execution output may contain sensitive content and keep the files
+           local with restrictive permissions.
+
+           `--tail <n>` must reject negative values and deterministically return
+           the last n lines. `--follow` should follow appended content and stop
+           cleanly on SIGINT/SIGTERM without affecting the workflow process.
+
+        4. Detached-run compatibility
+           If the repository already contains `run --detach`, integrate with
+           it rather than creating a parallel mechanism:
+           - detached execution must write to the same durable workflow log;
+           - the launcher should not need to stay alive for logging;
+           - `status --all` may show detached process liveness only when PID and
+             process-start metadata are durably maintained and validated;
+           - stale PID reuse must not be reported as definitive liveness.
+
+           If detached execution is not yet present in the checkout, design the
+           observability APIs so the later detached feature can use them
+           without changing the public status/log CLI contract.
+
+        5. Regression coverage
+           Add focused deterministic tests for at least:
+           - discovery of multiple workflow namespaces;
+           - workflow-name decoding/isolation;
+           - configurable record-name discovery;
+           - malformed/stale observational metadata;
+           - `status --all` text and JSON output;
+           - backward-compatible `status -f` behavior;
+           - selector-conflict errors;
+           - durable log creation outside the worktree;
+           - log isolation between workflows;
+           - `logs --tail`;
+           - unknown workflow/no-log handling;
+           - follow cancellation without canceling the workflow;
+           - no persistence of parameter/env/prompt values in discovery
+             metadata;
+           - compatibility with detached execution when present.
+
+        Keep changes inside the mutation allowlist. Prefer small packages/helpers
+        with explicit responsibilities: discovery/index, status projection, log
+        storage/writer, and CLI presentation. Do not turn the Git-backed
+        acceptance store into a general logging database.
+
+        Run focused tests, gofmt, and the canonical gate before returning.
+      after:
+        - validate: implementation-gate
+        - checkpoint: checkpoint
+        - assertNetRepositoryChangeSincePhaseStart: true
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+    - id: audit-observability
+      kind: audit
+      label: audit-workflow-status-and-logs
+      actor: terra
+      reasoning: high
+      requiresChange: false
+      prompt: |
+        Independently audit the repository-wide status and workflow-log feature.
+
+        Do not accept the implementation phase's completion claim as evidence.
+        Inspect the actual diff from the saved base through HEAD, CLI parsing,
+        state/discovery implementation, log storage, tests, and runtime docs.
+        Run focused checks as needed.
+
+        Verify:
+
+        Authority and state:
+        - existing per-workflow Git-backed state remains the only acceptance
+          authority;
+        - the generic discovery/index record is observational, versioned, and
+          contains no run parameters, environment values, prompts, or canonical
+          identity input bytes;
+        - malformed/stale discovery data cannot fabricate completion or permit
+          workflow advancement;
+        - configurable record names are handled rather than assuming defaults;
+        - durable orchestration state is not confused with OS process liveness.
+
+        CLI:
+        - `status --all` works without -f and supports stable JSON;
+        - existing single-workflow status remains compatible;
+        - selector conflicts and invalid arguments fail clearly;
+        - `logs --workflow <name>` works without workflow YAML;
+        - tail and follow behavior are deterministic and interrupt-safe.
+
+        Logs:
+        - logs are stored outside the worktree in a Git-resolved local runtime
+          path and survive interpreter exit;
+        - workflow log paths cannot escape their intended root via workflow
+          names or user selectors;
+        - multiple workflows cannot collide;
+        - restrictive local permissions are used where supported;
+        - ordinary Git push does not publish the log files;
+        - log persistence does not become workflow acceptance evidence;
+        - sensitive parameter/env/prompt material is not introduced into logs
+          or discovery metadata merely for observability;
+        - if raw execution output is persisted, its sensitivity is documented.
+
+        Detached compatibility:
+        - if detached run exists, detached output reaches the same log store and
+          the launcher is not required to remain alive;
+        - PID reuse/stale process metadata is not represented as certain
+          liveness.
+
+        Quality:
+        - tests cover cross-workflow discovery and lifecycle behavior, not only
+          flag parsing;
+        - runtime documentation explains the distinction among workflow state,
+          process liveness, logs, and acceptance authority;
+        - no unrelated or protected files changed.
+
+        Repair a genuine in-scope defect if necessary; otherwise leave the
+        checkout unchanged. Do not broaden the feature or weaken validation.
+      after:
+        - validate: audit-gate
+        - checkpoint: checkpoint
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+  recovery:
+    activePhase:
+      - readActivePhase:
+          fields:
+            - phase_id
+            - phase_start_commit
+      - restorePhaseDefinition: true
+      - assertPhaseStartCommitExists: true
+      - assertPhaseStartIsAncestorOfHead: true
+      - validate_existing_state_first: true
+      - if_invalid:
+          - run_repair_policy: implementation-gate
+          - if_still_incomplete:
+              rerun_same_agent_phase_with_prefix: |
+                Resume only this interrupted phase. Inspect existing commits
+                and worktree changes first; preserve valid partial work rather
+                than restarting the observability task.
+      - runPhaseAfterSequence: true
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: "Workflow observability task already completed at {{ state.workflow_complete.value }}"
+        - stop: success
+    - id: recover-interrupted-phase
+      if: "{{ state.active_phase.exists }}"
+      recover: activePhase
+    - id: require-clean-after-recovery
+      assert:
+        type: implementation-workspace-clean
+    - id: starting-state
+      validate: starting-state
+    - phase: implement-observability
+    - phase: audit-observability
+    - id: post-audit
+      validate: audit-gate
+    - id: post-audit-checkpoint
+      checkpoint: checkpoint
+      label: post-audit
+    - human: workflow-observability-review
+    - complete: workflow-observability-cli
+
+  humanGates:
+    - id: workflow-observability-review
+      idempotent_record: "{{ state.manual_confirmation }}"
+      requires: [audit-observability]
+      after:
+        - validation: post-audit
+      instructions: >-
+        Review the final diff and canonical gate output. In a repository with
+        more than one AgentFlow state namespace, inspect `status --all` and the
+        logs for a selected workflow. Confirm that the status view is useful
+        without a workflow YAML, that logs survive process exit, and that
+        neither feature is treated as acceptance authority.
+      checklist:
+        - id: multi-workflow-status
+          text: "Repository-wide status discovers and distinguishes multiple workflows without requiring -f."
+        - id: state-vs-process
+          text: "Durable workflow state is clearly distinguished from OS process liveness."
+        - id: durable-logs
+          text: "Workflow logs are durable local runtime data outside the worktree and can be viewed by workflow name."
+        - id: authority-boundary
+          text: "Discovery metadata and logs cannot authorize phase advancement, human acceptance, or completion."
+        - id: privacy-boundary
+          text: "Discovery/logging does not persist parameters, environment values, prompts, or canonical run-identity inputs merely for observability."
+        - id: tests-docs-gate
+          text: "Focused tests and runtime documentation cover the feature, and scripts/check.sh passes."
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        record: "{{ state.manual_confirmation }}"
+        value: head_commit
+
+  completion:
+    workflow-observability-cli:
+      assertions:
+        - uses: assert-change-scope
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+      finalValidation: final-gate
+      checkpoint:
+        uses: checkpoint
+        label: workflow-observability-cli-complete
+      afterCheckpointAssertions:
+        - uses: assert-change-scope
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+      writeMarker:
+        record: "{{ state.workflow_complete }}"
+        value: head_commit
+      summary:
+        title: "AgentFlow workflow status and logs task complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - state_directory
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
