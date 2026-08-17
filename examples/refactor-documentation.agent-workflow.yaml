@@ -1,0 +1,794 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+
+metadata:
+  name: refactor-documentation
+  description: >-
+    Reorganize AgentFlow documentation by purpose, following the successful
+    documentation-information-architecture pattern used in mothership-tui where
+    it transfers cleanly, while preserving AgentFlow-specific evidence and
+    existing runtime/governance boundaries.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+
+    organizer_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+
+    reviewer_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    canonical_gate: scripts/check.sh
+    docs_index: docs/README.md
+    architecture_index: docs/architecture/README.md
+    architecture_authority: docs/architecture/execution-authority.md
+    development_guide: docs/guides/development.md
+    self_hosting_guide: docs/guides/self-hosting.md
+    planning_index: docs/planning/README.md
+    specification_reference: docs/reference/agentflow-v1alpha1.md
+    runtime_reference: docs/reference/runtime.md
+    research_index: docs/research/README.md
+    evidence_index: docs/evidence/README.md
+    reviews_index: docs/reviews/README.md
+    refactor_review: docs/reviews/documentation-refactor.md
+
+  state:
+    backend: git-dir
+    directory: .git/agentflow/refactor-documentation
+
+    records:
+      base_commit: base
+      branch: branch
+      active_phase: active-phase
+      completed_phase_pattern: "{{ phase.id }}.done"
+      workflow_complete: complete
+
+    initialize:
+      require_clean_implementation_workspace: true
+      require_named_branch: true
+      capture:
+        base_commit: head_commit
+        branch: current_branch
+        integrity_baseline: true
+
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+    lineage:
+      require_base_commit_exists: true
+      require_base_is_ancestor_of_head: true
+      require_same_named_branch: true
+
+    resume:
+      enabled: true
+      completed_phase_marker:
+        value: head_commit
+        valid_when_marker_commit_exists: true
+        valid_when_marker_is_ancestor_of_head: true
+      active_phase:
+        fields:
+          - phase_id
+          - phase_start_commit
+        require_phase_start_commit_exists: true
+        require_phase_start_is_ancestor_of_head: true
+        preserve_partial_commits: true
+        preserve_partial_worktree_changes: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+
+    cleanliness:
+      before_first_run: required
+      before_new_phase: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+
+    mutationPolicy:
+      # This workflow is documentation-only. README.md is allowed because it is
+      # the repository front door and must point at the new documentation index.
+      allowed:
+        - docs/**
+        - README.md
+
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+
+      integrity:
+        # Planning remains rooted at ROADMAP.md because current self-hosting
+        # workflows deliberately protect and reference that governance path.
+        - id: canonical-roadmap
+          paths: [ROADMAP.md]
+          mode: exact-hash
+
+        # Existing research and MVP evidence are source material for the
+        # reorganization, not content to rewrite during an information-
+        # architecture refactor.
+        - id: research-source
+          paths: [docs/research/agent-workflow-orchestration-landscape.md]
+          mode: exact-hash
+
+        - id: mvp-evidence
+          paths: [docs/evidence/self-hosting-mvp.md]
+          mode: exact-hash
+
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+
+        - id: ci-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+        - id: workflow-examples
+          paths: [examples/**]
+          mode: group-exact-hash
+
+        - id: executable-specification
+          paths: [spec/**]
+          mode: group-exact-hash
+
+        - id: agent-skills
+          paths: [skills/**]
+          mode: group-exact-hash
+
+        - id: command-source
+          paths: [cmd/**]
+          mode: group-exact-hash
+
+        - id: runtime-source
+          paths: [internal/**]
+          mode: group-exact-hash
+
+        - id: provider-source
+          paths: [provider/**]
+          mode: group-exact-hash
+
+        - id: module-definition
+          paths: [go.mod, go.sum]
+          mode: group-exact-hash
+
+    checkpointing:
+      agent_commits_allowed: false
+      checkpoint_uncommitted_success: true
+      stage_only_allowed_dirty_files: true
+      commit_if_dirty: true
+      commit_message: "Refactor AgentFlow docs: {{ phase.label }}"
+      require_clean_after: true
+      assert_scope_before_and_after: true
+
+  agents:
+    organizer:
+      runner: codex
+      model: "{{ parameters.organizer_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: false
+      output_last_message: true
+
+    reviewer:
+      runner: codex
+      model: "{{ parameters.reviewer_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: false
+      output_last_message: true
+
+  tools:
+    assert-change-scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+      mutates_workspace: false
+
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+      mutates_workspace: false
+      capture:
+        stdout: true
+        stderr: true
+        log: "{{ temp.directory }}/canonical-gate-{{ invocation.id }}.log"
+
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+    ###########################################################################
+    # Structural contract for the target information architecture.
+    ###########################################################################
+
+    docs-structure-contract:
+      type: shell
+      mutates_workspace: false
+      command: |
+        set -eu
+
+        required_files='docs/README.md
+        docs/architecture/README.md
+        docs/architecture/execution-authority.md
+        docs/guides/development.md
+        docs/guides/self-hosting.md
+        docs/planning/README.md
+        docs/reference/README.md
+        docs/reference/agentflow-v1alpha1.md
+        docs/reference/runtime.md
+        docs/research/README.md
+        docs/research/agent-workflow-orchestration-landscape.md
+        docs/evidence/README.md
+        docs/evidence/self-hosting-mvp.md
+        docs/reviews/README.md
+        docs/agentflow-v1alpha1.md
+        docs/runtime.md
+        docs/self-hosting.md'
+
+        printf '%s\n' "$required_files" |
+          while IFS= read -r path; do
+            test -s "$path" || {
+              printf 'missing required documentation file: %s\n' "$path" >&2
+              exit 1
+            }
+          done
+
+        # docs/README.md is the single purpose-oriented front door.
+        for entry in \
+          '[Architecture](architecture/)' \
+          '[Guides](guides/)' \
+          '[Planning](planning/)' \
+          '[Reference](reference/)' \
+          '[Research](research/README.md)' \
+          '[Evidence](evidence/README.md)' \
+          '[Reviews](reviews/README.md)'
+        do
+          grep -Fq "$entry" docs/README.md || {
+            printf 'docs/README.md missing category link: %s\n' "$entry" >&2
+            exit 1
+          }
+        done
+
+        # Planning is intentionally indexed under docs without duplicating or
+        # relocating the executable-workflow governance boundary at ROADMAP.md.
+        grep -Fq '../../ROADMAP.md' docs/planning/README.md
+        grep -Eiq 'source of truth|canonical' docs/planning/README.md
+
+        # The development guide centralizes contributor workflow rather than
+        # scattering it through the root README and runtime reference.
+        grep -Fq './scripts/check.sh' docs/guides/development.md || \
+          grep -Fq 'scripts/check.sh' docs/guides/development.md
+        grep -Fq 'go run ./cmd/agentflow validate' docs/guides/development.md
+        grep -Fq 'examples/develop-agentflow.agent-workflow.yaml' \
+          docs/guides/development.md
+
+        # The normative/reference material has canonical homes.
+        grep -Fq '# AgentFlow' docs/reference/agentflow-v1alpha1.md
+        grep -Eiq '^# .*runtime|^# Go .*interpreter|^# AgentFlow .*runtime' \
+          docs/reference/runtime.md
+
+        # Architecture should state the authority boundary explicitly rather
+        # than merely restating the field reference.
+        grep -Eiq 'validation.*authoriz|authoriz.*validation' \
+          docs/architecture/execution-authority.md
+        grep -Eiq 'agent.*mutat|mutat.*agent' \
+          docs/architecture/execution-authority.md
+
+        # Existing source research and evidence must remain byte-identical to
+        # their captured integrity baseline; indexes explain their role.
+        grep -Fq 'agent-workflow-orchestration-landscape.md' \
+          docs/research/README.md
+        grep -Fq 'self-hosting-mvp.md' docs/evidence/README.md
+
+        # Compatibility entry points are intentionally short. They prevent
+        # historical links and completed workflows from becoming dead paths,
+        # while making the categorized files canonical.
+        test "$(wc -l < docs/agentflow-v1alpha1.md)" -le 12
+        test "$(wc -l < docs/runtime.md)" -le 12
+        test "$(wc -l < docs/self-hosting.md)" -le 14
+
+        grep -Fq 'reference/agentflow-v1alpha1.md' docs/agentflow-v1alpha1.md
+        grep -Fq 'reference/runtime.md' docs/runtime.md
+        grep -Fq 'guides/self-hosting.md' docs/self-hosting.md
+        grep -Fq 'evidence/self-hosting-mvp.md' docs/self-hosting.md
+
+        # The repository README should direct readers through the docs index and
+        # canonical categorized paths rather than treating old aliases as the
+        # primary documentation surface.
+        grep -Fq 'docs/README.md' README.md
+        grep -Fq 'docs/guides/development.md' README.md
+        grep -Fq 'docs/reference/agentflow-v1alpha1.md' README.md
+        grep -Fq 'docs/planning/README.md' README.md
+
+        # Do not accidentally duplicate the large source documents after the
+        # move. The top-level aliases should be pointers, not second copies.
+        test "$(wc -c < docs/agentflow-v1alpha1.md)" -lt 1200
+        test "$(wc -c < docs/runtime.md)" -lt 1200
+        test "$(wc -c < docs/self-hosting.md)" -lt 1400
+
+    documentation-review-contract:
+      type: shell
+      mutates_workspace: false
+      command: |
+        set -eu
+
+        review="docs/reviews/documentation-refactor.md"
+        test -s "$review"
+
+        grep -Fqx 'Status: Passed' "$review"
+        grep -Fq 'docs/README.md' "$review"
+        grep -Fq 'docs/architecture/' "$review"
+        grep -Fq 'docs/guides/' "$review"
+        grep -Fq 'docs/planning/' "$review"
+        grep -Fq 'docs/reference/' "$review"
+        grep -Fq 'docs/research/' "$review"
+        grep -Fq 'docs/evidence/' "$review"
+        grep -Fq 'scripts/check.sh' "$review"
+
+        # A review may only pass after the main structural contract passes.
+        # This tool is intentionally redundant with review-gate sequencing so a
+        # stale hand-written "Passed" line cannot authorize completion alone.
+        true
+
+  temp:
+    directory: "{{ mktemp('${TMPDIR:-/tmp}/agentflow-docs-refactor.XXXXXX') }}"
+    cleanup: on-exit
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+
+    - id: required-commands
+      type: commands-exist
+      commands:
+        - git
+        - codex
+        - sh
+        - bash
+        - go
+        - gofmt
+        - rg
+        - grep
+        - sed
+        - awk
+        - find
+        - wc
+
+    - id: current-documentation-source
+      type: files-exist
+      paths:
+        - README.md
+        - ROADMAP.md
+        - docs/agentflow-v1alpha1.md
+        - docs/runtime.md
+        - docs/self-hosting.md
+        - docs/research/agent-workflow-orchestration-landscape.md
+        - docs/evidence/self-hosting-mvp.md
+        - scripts/check.sh
+
+    - id: saved-base-exists
+      when: "{{ state.initialized }}"
+      type: git-object-exists
+      object: "{{ state.base_commit }}^{commit}"
+
+    - id: saved-base-is-ancestor
+      when: "{{ state.initialized }}"
+      type: git-ancestor
+      ancestor: "{{ state.base_commit }}"
+      descendant: HEAD
+
+    - id: branch-unchanged
+      when: "{{ state.initialized }}"
+      type: git-current-branch-equals
+      expected: "{{ state.branch }}"
+
+    - id: protected-boundaries-unchanged
+      when: "{{ state.initialized }}"
+      type: workspace-integrity
+      policy: spec.workspace.mutationPolicy.integrity
+
+  validation:
+    starting-state:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    organization-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: docs-structure-contract
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    review-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: docs-structure-contract
+        - uses: documentation-review-contract
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    final-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: docs-structure-contract
+        - uses: documentation-review-contract
+        - uses: canonical-gate
+      failure: fail-workflow
+
+  phaseDefaults:
+    before:
+      - require_clean_implementation_workspace: true
+      - capture_phase_start_commit: true
+      - persist_active_phase:
+          fields:
+            - phase_id
+            - phase_start_commit
+
+  phases:
+    ###########################################################################
+    # Phase 1: reorganize documentation by purpose.
+    ###########################################################################
+
+    - id: organize
+      kind: implementation
+      label: purpose-based-documentation-organization
+      actor: organizer
+      reasoning: high
+      requiresChange: true
+
+      prompt: |
+        Refactor AgentFlow's documentation information architecture.
+
+        The reference pattern is the current mothership-tui documentation
+        organization:
+
+        - docs/README.md is the documentation front door and groups documents
+          by purpose rather than by when they were created;
+        - architecture/ records durable design and ownership contracts;
+        - guides/ contains contributor/development workflows;
+        - planning/ contains the roadmap navigation and completion protocol;
+        - reference/ is the home for source/normative material;
+        - research/ holds exploratory findings that inform planning without
+          silently becoming product requirements;
+        - reviews/ holds explicit project assessments;
+        - the root README remains the product front door and links into the
+          categorized documentation rather than duplicating every developer
+          detail.
+
+        Apply that pattern where it fits AgentFlow. Do not blindly clone the
+        Mothership tree. AgentFlow has durable execution evidence, so evidence/
+        remains a separate first-class category.
+
+        Important intentional differences and constraints:
+
+        1. ROADMAP.md at the repository root remains the canonical roadmap and
+           must not change. Existing AgentFlow workflows treat that path as a
+           protected governance boundary. Create docs/planning/README.md as the
+           documentation navigation page for planning and point it at
+           ../../ROADMAP.md. Do not duplicate the priority list or completion
+           status in a second source of truth.
+
+        2. Preserve docs/research/agent-workflow-orchestration-landscape.md and
+           docs/evidence/self-hosting-mvp.md byte-for-byte. Add indexes around
+           them; do not rewrite their historical content.
+
+        3. Historical workflows and links may still use these paths:
+
+             docs/agentflow-v1alpha1.md
+             docs/runtime.md
+             docs/self-hosting.md
+
+           Keep those files as short compatibility entry points instead of
+           deleting them. Each must point readers to the canonical categorized
+           document. docs/self-hosting.md must also retain a link to the MVP
+           evidence document so the completed closeout workflow's documented
+           evidence path remains discoverable.
+
+        Target documentation surface:
+
+          docs/README.md
+
+          docs/architecture/README.md
+          docs/architecture/execution-authority.md
+
+          docs/guides/development.md
+          docs/guides/self-hosting.md
+
+          docs/planning/README.md
+
+          docs/reference/README.md
+          docs/reference/agentflow-v1alpha1.md
+          docs/reference/runtime.md
+
+          docs/research/README.md
+          docs/research/agent-workflow-orchestration-landscape.md
+
+          docs/evidence/README.md
+          docs/evidence/self-hosting-mvp.md
+
+          docs/reviews/README.md
+
+          plus the three short compatibility files at docs/ root.
+
+        Content responsibilities:
+
+        - docs/README.md: concise purpose-based navigation and "where to start"
+          guidance. Every listed category must actually exist; do not reproduce
+          the stale-reference-directory inconsistency observed in the current
+          Mothership docs index.
+
+        - docs/architecture/execution-authority.md: a compact architecture
+          contract describing the separation among workflow definition,
+          execution, and assurance; agent mutation authority; deterministic
+          validation authority; checkpoint/acceptance semantics; provider
+          execution versus tool authority; and durable state/recovery. Derive
+          it from the repository's existing documentation and implementation.
+          Do not invent future roadmap behavior as current architecture.
+
+        - docs/guides/development.md: the contributor/developer workflow. Cover
+          prerequisites from the actual repository, ./scripts/check.sh as the
+          canonical deterministic gate, useful focused Go/AgentFlow commands,
+          workflow validation, how to run a bounded self-development task, and
+          practical failure diagnosis. Keep detailed field/runtime semantics in
+          reference docs instead of duplicating them here.
+
+        - docs/guides/self-hosting.md: preserve the substantive current
+          self-hosting documentation, update relative links for its new
+          location, and keep the retained MVP proof discoverable.
+
+        - docs/planning/README.md: explain that ../../ROADMAP.md is canonical,
+          how to choose roadmap work, how completed/self-hosted work should
+          update documentation/evidence, and why planning status is not
+          duplicated here.
+
+        - docs/reference/agentflow-v1alpha1.md: preserve the full current field
+          guide as the canonical specification reference. Fix relative links
+          only as necessary.
+
+        - docs/reference/runtime.md: preserve the full current Go interpreter
+          and runtime reference as the canonical runtime document. Fix relative
+          links only as necessary.
+
+        - docs/reference/README.md: explain the distinction between normative
+          SDL/reference material and implementation/runtime reference.
+
+        - docs/research/README.md: index the existing research and explicitly
+          state that research informs design/planning but does not itself change
+          executable semantics or roadmap priority.
+
+        - docs/evidence/README.md: explain that evidence records completed
+          execution/verification claims and is not normative specification text.
+
+        - docs/reviews/README.md: explain that reviews are dated assessments
+          used to evaluate the repository and inform future planning. Do not
+          invent a review result in this phase; the independent review phase
+          writes the first review document.
+
+        - README.md: keep it as the product/repository front door. Update its
+          repository-layout and documentation links so docs/README.md is the
+          main documentation entry point and canonical categorized files are
+          linked. Avoid turning README.md into a duplicate developer guide.
+
+        Preserve technical meaning. When moving current text, prefer preserving
+        it over rewriting it. Fix stale relative links caused by the new
+        locations. Do not alter code, workflows, the executable spec, skills,
+        research source content, MVP evidence content, quality policy, or the
+        canonical roadmap.
+
+        Do not create Git commits. AgentFlow checkpoints only after the
+        deterministic organization gate passes.
+
+      after:
+        - validate: organization-gate
+        - checkpoint: checkpoint
+        - assertNetRepositoryChangeSincePhaseStart: true
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+    ###########################################################################
+    # Phase 2: independent documentation/technical review.
+    ###########################################################################
+
+    - id: review
+      kind: audit
+      label: independent-documentation-review
+      actor: reviewer
+      reasoning: high
+      requiresChange: true
+
+      prompt: |
+        Independently review the completed AgentFlow documentation refactor.
+
+        Do not accept the organizer's completion claim as evidence. Inspect the
+        actual repository, the old-vs-new diff from the saved workflow base,
+        the canonical source documents, current CLI/runtime behavior, and the
+        target documentation tree.
+
+        Use these review criteria:
+
+        1. Purpose-based organization is clear and comparable in discipline to
+           mothership-tui: one docs front door, architecture contracts,
+           developer guides, planning navigation, reference material, research,
+           and explicit reviews.
+
+        2. AgentFlow-specific evidence remains a distinct category rather than
+           being misclassified as normative reference or research.
+
+        3. ROADMAP.md remains canonical and unchanged; planning/README.md does
+           not create a competing priority/status source.
+
+        4. Existing research and self-hosting MVP evidence remain unchanged.
+
+        5. The v1alpha1 field guide and runtime reference retain their technical
+           content after relocation. No current behavior is silently replaced
+           with roadmap/future behavior.
+
+        6. execution-authority.md accurately describes implemented authority
+           boundaries: agents may act/mutate within policy, deterministic
+           validation authorizes phase acceptance, accepted state is durable,
+           and provider/model output is not itself workflow authority.
+
+        7. The development guide reflects the actual repository commands and
+           uses scripts/check.sh as the canonical gate.
+
+        8. The self-hosting guide remains usable from its new location and the
+           MVP proof remains discoverable.
+
+        9. README.md is a useful repository front door but no longer has to
+           carry all developer/reference navigation itself.
+
+        10. Every category named by docs/README.md exists. In particular, do
+            not copy Mothership's current stale Reference-link inconsistency.
+
+        11. The three legacy top-level documentation paths are short,
+            unambiguous compatibility pointers rather than duplicated source
+            documents.
+
+        12. No source code, executable workflow, specification, skill,
+            governance, research source, MVP evidence, or quality-policy file
+            changed.
+
+        Correct documentation defects you find, staying within README.md and
+        docs/**.
+
+        After corrections, create:
+
+            docs/reviews/documentation-refactor.md
+
+        The review should be concise and dated. Record the scope examined, key
+        findings, any corrections made, and the deterministic verification run.
+
+        If and only if the resulting documentation satisfies the criteria and
+        the repository's canonical gate is green, include this exact standalone
+        line:
+
+            Status: Passed
+
+        If material problems remain, do not write that line. Record the
+        blockers instead; the deterministic review gate should then fail and
+        prevent workflow completion.
+
+        Do not create Git commits. AgentFlow owns the checkpoint after the
+        deterministic review gate passes.
+
+      after:
+        - validate: review-gate
+        - checkpoint: checkpoint
+        - assertNetRepositoryChangeSincePhaseStart: true
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+  recovery:
+    activePhase:
+      - readActivePhase:
+          fields:
+            - phase_id
+            - phase_start_commit
+      - restorePhaseDefinition: true
+      - assertPhaseStartCommitExists: true
+      - assertPhaseStartIsAncestorOfHead: true
+      - validate_existing_state_first: true
+      - if_invalid:
+          - if_still_incomplete:
+              rerun_same_agent_phase_with_prefix: |
+                Resume only this interrupted documentation-refactor phase.
+                Inspect existing commits and working-tree changes first,
+                preserve correct partial documentation work, and finish only
+                the current phase.
+      - runPhaseAfterSequence: true
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: >-
+            Documentation refactor already completed at
+            {{ state.workflow_complete.value }}
+        - stop: success
+
+    - id: recover-interrupted-phase
+      if: "{{ state.active_phase.exists }}"
+      recover: activePhase
+
+    - id: require-clean-after-recovery
+      assert:
+        type: implementation-workspace-clean
+
+    - id: verify-starting-state
+      validate: starting-state
+
+    - phase: organize
+
+    - phase: review
+
+    - id: final-documentation-validation
+      validate: final-gate
+
+    - complete: documentation-refactor
+
+  # No human gate is used. The independent review agent supplies a documented
+  # assessment, while deterministic structural checks and scripts/check.sh
+  # remain authoritative for advancement and completion.
+
+  completion:
+    documentation-refactor:
+      assertions:
+        - uses: assert-change-scope
+
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+
+      finalValidation: final-gate
+
+      checkpoint:
+        uses: checkpoint
+        label: documentation-refactor-complete
+
+      afterCheckpointAssertions:
+        - uses: assert-change-scope
+
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+
+        - type: implementation-workspace-clean
+
+      writeMarker:
+        record: "{{ state.workflow_complete }}"
+        value: head_commit
+
+      summary:
+        title: "AgentFlow documentation refactor complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - state_directory
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
