@@ -11,6 +11,7 @@ import (
 // into these types with yaml.Decoder.KnownFields enabled; do not add parallel
 // "validation-only" representations of executable fields.
 
+// Workflow is the top-level agentflow document model.
 type Workflow struct {
 	APIVersion string   `yaml:"apiVersion"`
 	Kind       string   `yaml:"kind"`
@@ -27,6 +28,8 @@ type Metadata struct {
 	Description string `yaml:"description"`
 	Source      Source `yaml:"source"`
 }
+
+// Source describes the origin of a workflow.
 type Source struct {
 	Type string `yaml:"type"`
 	File string `yaml:"file"`

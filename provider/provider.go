@@ -1,3 +1,5 @@
+// Package provider defines the interface for external workflow execution providers.
+// Providers execute agent-owned units of work on behalf of the workflow engine.
 package provider
 
 import "context"
@@ -9,7 +11,8 @@ type Provider interface {
 	Run(context.Context, Request) (Result, error)
 }
 
-// Request is intentionally provider-neutral. Provider-specific adapters translate
+// Request specifies work to be performed by a provider.
+// It is intentionally provider-neutral. Provider-specific adapters translate
 // these capabilities into their native CLI/API options.
 type Request struct {
 	Workspace string
@@ -23,8 +26,9 @@ type Request struct {
 	Metadata  map[string]string
 }
 
-// Result contains provider output useful for audit/debugging. Workflow acceptance
-// never depends solely on this result; deterministic validation decides advancement.
+// Result contains provider output useful for audit and debugging purposes.
+// Workflow acceptance never depends solely on this result; deterministic validation
+// decides advancement.
 type Result struct {
 	FinalMessage string
 }

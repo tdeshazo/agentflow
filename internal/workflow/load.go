@@ -1,3 +1,6 @@
+// Package workflow provides the agentflow workflow specification and utilities.
+// It includes types for the v1alpha1 workflow schema, loading and validation,
+// and template expansion for runtime expression evaluation.
 package workflow
 
 import (
@@ -47,6 +50,7 @@ func (d Diagnostic) String() string {
 	return fmt.Sprintf("%s: %s: %s", where, d.Status, d.Message)
 }
 
+// Result is the output of workflow validation, containing status and diagnostics.
 type Result struct {
 	Status      Status
 	Document    *Document
@@ -93,6 +97,8 @@ func Load(path string) (*Workflow, error) {
 	return d.Workflow, nil
 }
 
+// ValidateFile reads and validates a workflow file, returning a Result with diagnostics.
+// It does not require the workflow to be executable.
 func ValidateFile(path string) Result {
 	d, err := Decode(path)
 	if err != nil {

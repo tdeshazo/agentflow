@@ -8,11 +8,15 @@ import (
 	"strings"
 )
 
+// Store provides durable workflow state persistence using Git refs and objects.
+// Each workflow gets its own namespace under refs/agentflow/ for isolation.
 type Store struct {
 	Repo      Repo
 	Namespace string
 }
 
+// NewStore creates a new Store for the given repository and workflow name.
+// The workflow name is encoded into a deterministic Git ref namespace.
 func NewStore(repo Repo, workflowName string) Store {
 	// A workflow name is user supplied, while a Git ref name has a more
 	// restrictive grammar. Replacing unsafe characters is not sufficient: for

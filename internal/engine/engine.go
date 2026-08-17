@@ -1,3 +1,6 @@
+// Package engine provides the agentflow workflow execution runtime.
+// It orchestrates workflow phases, manages durability through Git state,
+// and coordinates with external providers to execute agent work.
 package engine
 
 import (
@@ -18,6 +21,8 @@ import (
 	"github.com/tdeshazo/agentflow-spec/provider"
 )
 
+// Engine orchestrates workflow execution, managing durability, phase lifecycle,
+// and coordination with external providers.
 type Engine struct {
 	Workflow   *workflow.Workflow
 	Repo       gitstate.Repo
@@ -34,6 +39,8 @@ type Engine struct {
 	parametersResolved bool
 }
 
+// ActivePhase is the durable record of a phase's current execution state,
+// including checkpoints, validation status, and repair attempts.
 type ActivePhase struct {
 	PhaseID     string `json:"phase_id"`
 	StartCommit string `json:"phase_start_commit"`
@@ -61,11 +68,13 @@ const (
 	PhaseFailureSafety     PhaseFailureKind = "safety"
 )
 
+// IntegrityBaseline is a map of paths to their expected hash values for integrity checking.
 type IntegrityBaseline map[string]string
 
 var errFlowStoppedSuccessfully = errors.New("workflow stopped successfully")
 var invocationSequence uint64
 
+// Options specifies configuration for creating a new Engine.
 type Options struct {
 	RepoRoot  string
 	Overrides map[string]string
@@ -76,6 +85,8 @@ type Options struct {
 	StateOnly bool
 }
 
+// New creates a new Engine for executing the given workflow with the provided providers.
+// It resolves parameters, initializes Git state storage, and validates configuration.
 func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Options) (*Engine, error) {
 	params := map[string]any{}
 	parametersResolved := false
@@ -258,6 +269,8 @@ func coerce(kind string, v any) (any, error) {
 	}
 }
 
+// Run executes the workflow, orchestrating phases, managing durability, and coordinating
+// with providers. It returns an error if the workflow fails.
 func (e *Engine) Run(ctx context.Context) error {
 	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
 		defer os.RemoveAll(e.tempDirectory)
@@ -431,6 +444,8 @@ func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error 
 	return nil
 }
 
+// Reset clears the durable workflow state, allowing the workflow to be re-executed.
+// It validates that workspace conditions are met before clearing state.
 func (e *Engine) Reset() error {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)

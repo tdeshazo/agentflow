@@ -31,6 +31,7 @@ type safetyViolation struct{ err error }
 func (e *safetyViolation) Error() string { return e.err.Error() }
 func (e *safetyViolation) Unwrap() error { return e.err }
 
+// repairBudgetExhaustedError indicates that a validation repair budget has been exhausted.
 type repairBudgetExhaustedError struct {
 	validation string
 	failure    error

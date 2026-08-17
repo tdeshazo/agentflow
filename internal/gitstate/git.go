@@ -1,3 +1,6 @@
+// Package gitstate provides Git-based durable state management for workflows.
+// It uses Git objects and refs to durably store workflow execution state
+// and provides repository operations needed by the engine.
 package gitstate
 
 import (
@@ -9,8 +12,10 @@ import (
 	"strings"
 )
 
+// Repo represents a Git repository and provides operations for repository interaction.
 type Repo struct{ Root string }
 
+// run executes a git command in the repository with optional stdin input.
 func (r Repo) run(stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-C", r.Root}, args...)...)
 	if stdin != nil {
