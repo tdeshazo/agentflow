@@ -1,0 +1,832 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+
+metadata:
+  name: close-self-hosting-mvp
+  description: >-
+    Close the AgentFlow self-hosting MVP evidence gate after a successful real
+    dogfood run. Retain sanitized evidence, update stale self-hosting
+    documentation, independently review the proof with a review agent, mark
+    Priority 3 achieved, and finish only after deterministic validation passes.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+
+    curator_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+
+    reviewer_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    roadmap: ROADMAP.md
+    self_hosting_doc: docs/self-hosting.md
+    evidence_doc: docs/evidence/self-hosting-mvp.md
+    canonical_gate: scripts/check.sh
+    self_host_workflow: examples/develop-agentflow.agent-workflow.yaml
+    closeout_workflow: examples/close-self-hosting-mvp.agent-workflow.yaml
+    ci_policy: .github/workflows/quality.yml
+
+  state:
+    backend: git-dir
+    directory: .git/agentflow/close-self-hosting-mvp
+
+    records:
+      base_commit: base
+      branch: branch
+      active_phase: active-phase
+      completed_phase_pattern: "{{ phase.id }}.done"
+      workflow_complete: complete
+
+    initialize:
+      require_clean_implementation_workspace: true
+      require_named_branch: true
+      capture:
+        base_commit: head_commit
+        branch: current_branch
+        integrity_baseline: true
+
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+    lineage:
+      require_base_commit_exists: true
+      require_base_is_ancestor_of_head: true
+      require_same_named_branch: true
+
+    resume:
+      enabled: true
+      completed_phase_marker:
+        value: head_commit
+        valid_when_marker_commit_exists: true
+        valid_when_marker_is_ancestor_of_head: true
+      active_phase:
+        fields:
+          - phase_id
+          - phase_start_commit
+        require_phase_start_commit_exists: true
+        require_phase_start_is_ancestor_of_head: true
+        preserve_partial_commits: true
+        preserve_partial_worktree_changes: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+
+    cleanliness:
+      before_first_run: required
+      before_new_phase: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+
+    mutationPolicy:
+      # This is intentionally much narrower than the normal self-development
+      # workflow. The MVP engine/code is already implemented. This workflow may
+      # only retain evidence and update the two documents whose claims are now
+      # stale.
+      allowed:
+        - docs/evidence/**
+        - docs/self-hosting.md
+        - ROADMAP.md
+
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+
+      integrity:
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+
+        - id: self-host-workflow
+          paths: [examples/develop-agentflow.agent-workflow.yaml]
+          mode: exact-hash
+
+        - id: closeout-workflow
+          paths: [examples/close-self-hosting-mvp.agent-workflow.yaml]
+          mode: exact-hash
+
+        - id: ci-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+        - id: research
+          paths: [docs/research/**]
+          mode: group-exact-hash
+
+        - id: command-source
+          paths: [cmd/**]
+          mode: group-exact-hash
+
+        - id: engine-source
+          paths: [internal/**]
+          mode: group-exact-hash
+
+        - id: providers
+          paths: [provider/**]
+          mode: group-exact-hash
+
+        - id: specification
+          paths: [spec/**]
+          mode: group-exact-hash
+
+        - id: module-definition
+          paths: [go.mod, go.sum]
+          mode: group-exact-hash
+
+    checkpointing:
+      # Review/evidence agents are intentionally not allowed to create their
+      # own commits. AgentFlow checkpoints only after deterministic validation.
+      agent_commits_allowed: false
+      checkpoint_uncommitted_success: true
+      stage_only_allowed_dirty_files: true
+      commit_if_dirty: true
+      commit_message: "Close AgentFlow MVP: {{ phase.label }}"
+      require_clean_after: true
+      assert_scope_before_and_after: true
+
+  agents:
+    curator:
+      runner: codex
+      model: "{{ parameters.curator_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: false
+      output_last_message: true
+
+    reviewer:
+      runner: codex
+      model: "{{ parameters.reviewer_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: false
+      output_last_message: true
+
+  tools:
+    assert-change-scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+      mutates_workspace: false
+
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+      mutates_workspace: false
+      capture:
+        stdout: true
+        stderr: true
+        log: "{{ temp.directory }}/canonical-gate-{{ invocation.id }}.log"
+
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+    ###########################################################################
+    # Verify the historical/live dogfood proof before allowing any agent to
+    # create a claim about it.
+    #
+    # This intentionally relies on the durable artifacts produced by the
+    # recovery workflow that performed the MVP proof. If these files are gone,
+    # the workflow fails rather than inventing replacement evidence.
+    ###########################################################################
+
+    dogfood-proof:
+      type: shell
+      mutates_workspace: false
+      command: |
+        set -eu
+
+        recovery_dir="$(git rev-parse --git-dir)/agentflow-mvp-recovery"
+
+        resume_log="$recovery_dir/selfhost-resume.log"
+        final_status="$recovery_dir/final-status.json"
+        human_head="$recovery_dir/selfhost-human-gate-head"
+        completion_head="$recovery_dir/selfhost-complete"
+
+        test -s "$resume_log"
+        test -s "$final_status"
+        test -s "$human_head"
+        test -s "$completion_head"
+
+        # The real AgentFlow-produced implementation commit must exist and
+        # remain part of current history.
+        implementation_commit="2e8712e11acbc8a4ec1aa00ca96f68b9013284e7"
+        bootstrap_audit_commit="d4dc5004e1ee5fd34734537f1c91bf732cd5e7e0"
+
+        git cat-file -e "${implementation_commit}^{commit}"
+        git cat-file -e "${bootstrap_audit_commit}^{commit}"
+
+        git merge-base --is-ancestor \
+          "$bootstrap_audit_commit" \
+          "$implementation_commit"
+
+        git merge-base --is-ancestor \
+          "$implementation_commit" \
+          HEAD
+
+        test "$(git show -s --format=%s "$implementation_commit")" = \
+          "AgentFlow self-development: bounded-agentflow-implementation"
+
+        # The interrupted/restarted run must have reused its accepted phases.
+        grep -Fq "Skipping completed phase implement" "$resume_log"
+        grep -Fq "Skipping completed phase audit" "$resume_log"
+
+        # The wrapper recorded the durable checkout when it reached the review
+        # gate and the checkout at completion. Both must still identify real
+        # commits.
+        review_head="$(cat "$human_head")"
+        completed_head="$(cat "$completion_head")"
+
+        git cat-file -e "${review_head}^{commit}"
+        git cat-file -e "${completed_head}^{commit}"
+
+        # Human acceptance in the old proof did not itself mutate source.
+        test "$review_head" = "$completed_head"
+
+        # The retained post-run status snapshot must report completion.
+        go tool jq -e '
+          .state == "completed"
+          and .complete == true
+          and (.complete_commit | type == "string")
+          and (.complete_commit | length > 0)
+        ' "$final_status" >/dev/null
+
+        recorded_complete="$(
+          go tool jq -r '.complete_commit' "$final_status"
+        )"
+
+        git cat-file -e "${recorded_complete}^{commit}"
+
+        # The current interpreter must independently see the same durable
+        # develop-agentflow run as complete.
+        current_status="$(
+          go run ./cmd/agentflow status \
+            --json \
+            -f examples/develop-agentflow.agent-workflow.yaml \
+            -C .
+        )"
+
+        printf '%s\n' "$current_status" |
+          go tool jq -e '
+            .state == "completed"
+            and .complete == true
+            and (.complete_commit | length > 0)
+          ' >/dev/null
+
+        current_complete="$(
+          printf '%s\n' "$current_status" |
+            go tool jq -r '.complete_commit'
+        )"
+
+        test "$current_complete" = "$recorded_complete"
+
+    ###########################################################################
+    # ROADMAP.md is normally governance-sensitive. For this one-time workflow,
+    # permit only one precise additive declaration under Priority 3.
+    ###########################################################################
+
+    roadmap-closeout-guard:
+      type: shell
+      mutates_workspace: false
+      command: |
+        set -eu
+
+        allowed='**MVP status: achieved.** The retained proof is documented in [docs/evidence/self-hosting-mvp.md](docs/evidence/self-hosting-mvp.md).'
+
+        patch="$(
+          git diff \
+            --unified=0 \
+            "{{ state.base_commit }}" \
+            -- ROADMAP.md
+        )"
+
+        printf '%s\n' "$patch" |
+          awk -v allowed="$allowed" '
+            /^diff --git / { next }
+            /^index /      { next }
+            /^--- /        { next }
+            /^\+\+\+ /     { next }
+            /^@@ /         { next }
+
+            /^-/ {
+              print "ROADMAP.md existing text was removed or changed" > "/dev/stderr"
+              bad = 1
+              next
+            }
+
+            /^\+/ {
+              line = substr($0, 2)
+
+              # Permit formatting whitespace around the one status addition,
+              # but no other new roadmap prose.
+              if (line != "" && line != allowed) {
+                print "unexpected ROADMAP.md addition: " line > "/dev/stderr"
+                bad = 1
+              }
+            }
+
+            END {
+              if (bad) {
+                exit 1
+              }
+            }
+          '
+
+        test "$(grep -Fxc "$allowed" ROADMAP.md || true)" -eq 1
+
+        awk -v allowed="$allowed" '
+          /^## Priority 3 — Self-hosting development workflow$/ {
+            in_priority = 1
+            next
+          }
+
+          /^## Priority 4 / {
+            in_priority = 0
+          }
+
+          in_priority && $0 == allowed {
+            found = 1
+          }
+
+          END {
+            exit found ? 0 : 1
+          }
+        ' ROADMAP.md
+
+    evidence-contract:
+      type: shell
+      mutates_workspace: false
+      command: |
+        set -eu
+
+        evidence="docs/evidence/self-hosting-mvp.md"
+        recovery_dir="$(git rev-parse --git-dir)/agentflow-mvp-recovery"
+
+        test -s "$evidence"
+
+        grep -Fqx "Status: Passed" "$evidence"
+
+        grep -Fq \
+          'Dogfood workflow: `examples/develop-agentflow.agent-workflow.yaml`' \
+          "$evidence"
+
+        grep -Fq \
+          'Self-hosted implementation commit: `2e8712e11acbc8a4ec1aa00ca96f68b9013284e7`' \
+          "$evidence"
+
+        grep -Fq \
+          'Final durable state: `completed`' \
+          "$evidence"
+
+        grep -Fq \
+          'Restart proof: accepted `implement` and `audit` phases were skipped on restart.' \
+          "$evidence"
+
+        grep -Fq \
+          'Canonical gate: passed' \
+          "$evidence"
+
+        grep -Fq \
+          'Review agent: Passed (Terra/high)' \
+          "$evidence"
+
+        complete_commit="$(
+          go tool jq \
+            -r '.complete_commit' \
+            "$recovery_dir/final-status.json"
+        )"
+
+        grep -Fq "$complete_commit" "$evidence"
+
+        # The stale pre-dogfood disclaimer must be gone.
+        if grep -Fq \
+          "It does not claim that a" \
+          docs/self-hosting.md
+        then
+          printf '%s\n' \
+            "docs/self-hosting.md still contains the pre-dogfood disclaimer" \
+            >&2
+          exit 1
+        fi
+
+        grep -Fq \
+          "evidence/self-hosting-mvp.md" \
+          docs/self-hosting.md
+
+  temp:
+    directory: "{{ mktemp('${TMPDIR:-/tmp}/agentflow-mvp-closeout.XXXXXX') }}"
+    cleanup: on-exit
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+
+    - id: required-commands
+      type: commands-exist
+      commands:
+        - git
+        - codex
+        - sh
+        - bash
+        - go
+        - gofmt
+        - rg
+        - awk
+        - grep
+
+    - id: required-files
+      type: files-exist
+      paths:
+        - ROADMAP.md
+        - docs/self-hosting.md
+        - scripts/check.sh
+        - examples/develop-agentflow.agent-workflow.yaml
+        - examples/close-self-hosting-mvp.agent-workflow.yaml
+        - .github/workflows/quality.yml
+
+    - id: saved-base-exists
+      when: "{{ state.initialized }}"
+      type: git-object-exists
+      object: "{{ state.base_commit }}^{commit}"
+
+    - id: saved-base-is-ancestor
+      when: "{{ state.initialized }}"
+      type: git-ancestor
+      ancestor: "{{ state.base_commit }}"
+      descendant: HEAD
+
+    - id: branch-unchanged
+      when: "{{ state.initialized }}"
+      type: git-current-branch-equals
+      expected: "{{ state.branch }}"
+
+    - id: protected-boundaries-unchanged
+      when: "{{ state.initialized }}"
+      type: workspace-integrity
+      policy: spec.workspace.mutationPolicy.integrity
+
+  validation:
+    ###########################################################################
+    # No model is allowed to run unless the existing historical proof can
+    # actually be demonstrated from current local AgentFlow state/artifacts.
+    ###########################################################################
+
+    starting-state:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: dogfood-proof
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    evidence-assembly-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: dogfood-proof
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    review-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: dogfood-proof
+        - uses: roadmap-closeout-guard
+        - uses: evidence-contract
+        - uses: canonical-gate
+      failure: fail-workflow
+
+    final-gate:
+      repair: none
+      steps:
+        - uses: assert-change-scope
+        - uses: dogfood-proof
+        - uses: roadmap-closeout-guard
+        - uses: evidence-contract
+        - uses: canonical-gate
+      failure: fail-workflow
+
+  phaseDefaults:
+    before:
+      - require_clean_implementation_workspace: true
+      - capture_phase_start_commit: true
+      - persist_active_phase:
+          fields:
+            - phase_id
+            - phase_start_commit
+
+  phases:
+    ###########################################################################
+    # Phase 1:
+    # Curate repository-visible evidence from the already completed real
+    # AgentFlow dogfood run.
+    ###########################################################################
+
+    - id: retain-evidence
+      kind: implementation
+      label: retain-self-hosting-mvp-evidence
+      actor: curator
+      reasoning: high
+      requiresChange: true
+
+      prompt: |
+        Close the documentation/evidence gap for the already completed
+        AgentFlow self-hosting MVP proof.
+
+        This is an evidence-curation task, not another engine implementation
+        task.
+
+        First inspect:
+
+        - ROADMAP.md, especially the Minimum viable product section and
+          Priority 3;
+        - docs/self-hosting.md;
+        - examples/develop-agentflow.agent-workflow.yaml;
+        - commit d4dc5004e1ee5fd34734537f1c91bf732cd5e7e0;
+        - commit 2e8712e11acbc8a4ec1aa00ca96f68b9013284e7;
+        - the current Git history;
+        - `agentflow status --json` for develop-agentflow;
+        - `.git/agentflow-mvp-recovery/selfhost-resume.log`;
+        - `.git/agentflow-mvp-recovery/final-status.json`;
+        - `.git/agentflow-mvp-recovery/selfhost-human-gate-head`;
+        - `.git/agentflow-mvp-recovery/selfhost-complete`.
+
+        The deterministic starting gate has already verified that these local
+        artifacts agree with current durable AgentFlow state. Do not modify
+        those artifacts or AgentFlow state.
+
+        Create:
+
+            docs/evidence/self-hosting-mvp.md
+
+        as a concise, auditable record of the proof.
+
+        The document must describe facts demonstrated by the repository and
+        retained local proof artifacts, not speculate about what probably
+        happened.
+
+        Include these exact machine-verifiable lines:
+
+            Status: Passed
+
+            Dogfood workflow: `examples/develop-agentflow.agent-workflow.yaml`
+
+            Self-hosted implementation commit: `2e8712e11acbc8a4ec1aa00ca96f68b9013284e7`
+
+            Final durable state: `completed`
+
+            Restart proof: accepted `implement` and `audit` phases were skipped on restart.
+
+            Canonical gate: passed
+
+        Also record:
+
+        - the pre-dogfood audit/base context;
+        - the actual durable completion commit from final-status.json;
+        - that the real self-hosted product change was `agentflow status
+          --json`;
+        - that the implementation was performed through the AgentFlow
+          `implement` phase;
+        - that a distinct Terra audit phase existed and was accepted;
+        - that the interpreter was restarted after accepted work and the
+          accepted implement/audit phases were not replayed;
+        - that final durable state was completed;
+        - that repository-owned deterministic validation remained authoritative;
+        - that the canonical GitHub Quality job subsequently passed for the
+          self-hosted implementation commit if this fact is directly available
+          from repository evidence; otherwise do not invent an external CI
+          claim.
+
+        Do not copy complete Codex logs, prompts, model reasoning, environment
+        values, task secrets, or arbitrary validation output into the evidence
+        document.
+
+        Update docs/self-hosting.md so its final stale disclaimer no longer says
+        that no subsequent AgentFlow change has been completed. Replace that
+        claim with a concise link to:
+
+            evidence/self-hosting-mvp.md
+
+        Do NOT yet mark ROADMAP.md achieved.
+
+        Do not write the final review result. In particular, do not add:
+
+            Review agent: Passed (Terra/high)
+
+        That line is reserved for the independent review phase.
+
+        Do not modify code, specification files, scripts/check.sh, CI, either
+        AgentFlow workflow, research material, go.mod, or go.sum.
+
+        Do not create Git commits. AgentFlow owns the checkpoint after
+        deterministic validation.
+
+      after:
+        - validate: evidence-assembly-gate
+        - checkpoint: checkpoint
+        - assertNetRepositoryChangeSincePhaseStart: true
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+    ###########################################################################
+    # Phase 2:
+    # Independent model review replaces the old human approval gate.
+    #
+    # The reviewer still does not authorize itself. Its repository-visible
+    # assessment must survive the deterministic review gate.
+    ###########################################################################
+
+    - id: review-mvp
+      kind: audit
+      label: independent-self-hosting-mvp-review
+      actor: reviewer
+      reasoning: high
+      requiresChange: true
+
+      prompt: |
+        Perform the independent final review of the AgentFlow self-hosting MVP
+        gate.
+
+        You replace the previous manual/human acceptance step for this closeout
+        workflow, but your model judgment is not workflow authority. The
+        deterministic review-gate that follows this phase decides whether the
+        workflow can advance.
+
+        Independently inspect:
+
+        - ROADMAP.md's complete MVP and Priority 3 requirements;
+        - docs/evidence/self-hosting-mvp.md;
+        - docs/self-hosting.md;
+        - examples/develop-agentflow.agent-workflow.yaml;
+        - commit d4dc5004e1ee5fd34734537f1c91bf732cd5e7e0;
+        - commit 2e8712e11acbc8a4ec1aa00ca96f68b9013284e7
+          and its actual diff;
+        - current engine recovery/run-identity/status behavior;
+        - deterministic self-hosting tests;
+        - current develop-agentflow JSON status;
+        - the retained restart/final-status artifacts under
+          .git/agentflow-mvp-recovery/.
+
+        Do not accept the evidence curator's wording as proof. Compare it with
+        actual Git state and the proof artifacts.
+
+        Verify each Priority 3 exit criterion:
+
+        1. a clean checkout can launch the repository-owned self-development
+           YAML with the normal AgentFlow CLI;
+        2. AgentFlow owns phase advancement, validation/repair, checkpointing,
+           recovery, and completion;
+        3. a real AgentFlow source change was implemented through that workflow;
+        4. accepted work survives restart without replay;
+        5. repair is bounded and cannot advance a failing deterministic gate;
+        6. protected and out-of-scope mutations are rejected;
+        7. the self-host workflow remains a maintained example/conformance
+           fixture;
+        8. repository-visible evidence now records the actual dogfood proof.
+
+        Correct docs/evidence/self-hosting-mvp.md or docs/self-hosting.md if
+        their claims are incomplete, ambiguous, or unsupported.
+
+        Do not fabricate evidence that is absent.
+
+        If and only if the actual evidence supports the MVP gate, append this
+        exact line to docs/evidence/self-hosting-mvp.md:
+
+            Review agent: Passed (Terra/high)
+
+        Then add exactly this one status declaration inside the Priority 3
+        section of ROADMAP.md:
+
+            **MVP status: achieved.** The retained proof is documented in [docs/evidence/self-hosting-mvp.md](docs/evidence/self-hosting-mvp.md).
+
+        Do not otherwise edit ROADMAP.md.
+
+        If the proof is insufficient, do not add either line. Leave a concise
+        supported explanation in docs/evidence/self-hosting-mvp.md instead; the
+        deterministic review gate should then fail, correctly preventing
+        completion.
+
+        Do not modify source code, schemas, workflows, scripts/check.sh, CI,
+        research material, go.mod, or go.sum.
+
+        Do not create Git commits. AgentFlow owns the checkpoint after
+        deterministic review validation.
+
+      after:
+        - validate: review-gate
+        - checkpoint: checkpoint
+        - assertNetRepositoryChangeSincePhaseStart: true
+        - markPhaseComplete:
+            value: head_commit
+        - clearActivePhase: true
+
+  recovery:
+    activePhase:
+      - readActivePhase:
+          fields:
+            - phase_id
+            - phase_start_commit
+      - restorePhaseDefinition: true
+      - assertPhaseStartCommitExists: true
+      - assertPhaseStartIsAncestorOfHead: true
+      - validate_existing_state_first: true
+      - if_invalid:
+          - if_still_incomplete:
+              rerun_same_agent_phase_with_prefix: |
+                Resume only this interrupted MVP-closeout phase. Inspect
+                existing repository changes first and preserve correct partial
+                evidence work. Do not restart the entire closeout.
+      - runPhaseAfterSequence: true
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: >-
+            AgentFlow self-hosting MVP closeout already completed at
+            {{ state.workflow_complete.value }}
+        - stop: success
+
+    - id: recover-interrupted-phase
+      if: "{{ state.active_phase.exists }}"
+      recover: activePhase
+
+    - id: require-clean-after-recovery
+      assert:
+        type: implementation-workspace-clean
+
+    - id: verify-existing-mvp-proof
+      validate: starting-state
+
+    - phase: retain-evidence
+
+    - phase: review-mvp
+
+    - id: final-closeout-validation
+      validate: final-gate
+
+    - complete: self-hosting-mvp-closeout
+
+  # No humanGates block.
+  #
+  # The independent Terra review phase above replaces manual review, while
+  # deterministic validation retains authority for advancement.
+
+  completion:
+    self-hosting-mvp-closeout:
+      assertions:
+        - uses: assert-change-scope
+
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+
+      finalValidation: final-gate
+
+      checkpoint:
+        uses: checkpoint
+        label: self-hosting-mvp-closeout
+
+      afterCheckpointAssertions:
+        - uses: assert-change-scope
+
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+
+        - type: implementation-workspace-clean
+
+      writeMarker:
+        record: "{{ state.workflow_complete }}"
+        value: head_commit
+
+      summary:
+        title: "AgentFlow self-hosting MVP closeout complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - state_directory
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
