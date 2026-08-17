@@ -160,6 +160,7 @@ func (v validator) uniquePhases() {
 }
 func (v validator) uniqueCriteria() {
 	seen := map[string]bool{}
+	texts := map[string]bool{}
 	for i, c := range v.w.Spec.Progress.Criteria {
 		path := fmt.Sprintf("spec.progress.criteria[%d].id", i)
 		if c.ID == "" {
@@ -168,6 +169,12 @@ func (v validator) uniqueCriteria() {
 			v.add(Invalid, path, "duplicate criterion id %q", c.ID)
 		}
 		seen[c.ID] = true
+		if c.Text == "" {
+			v.add(Invalid, fmt.Sprintf("spec.progress.criteria[%d].text", i), "is required")
+		} else if texts[c.Text] {
+			v.add(Invalid, fmt.Sprintf("spec.progress.criteria[%d].text", i), "duplicate criterion text %q is ambiguous", c.Text)
+		}
+		texts[c.Text] = true
 	}
 }
 func (v validator) uniqueGates() {
@@ -228,17 +235,34 @@ func (v validator) references() {
 	}
 	for i, p := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d]", i)
-		if p.Actor == "" {
+		engineBookkeeping := p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0
+		if engineBookkeeping && p.Actor != "" {
+			v.add(Invalid, path+".actor", "engine-owned bookkeeping phases must not declare an actor")
+		} else if !engineBookkeeping && p.Actor == "" {
 			v.add(Invalid, path+".actor", "is required")
-		} else {
+		} else if p.Actor != "" {
 			v.agent(path+".actor", p.Actor)
 		}
 		if p.Kind == "criterion" {
-			if p.Criterion == "" {
-				v.add(Invalid, path+".criterion", "criterion phases require a criterion")
+			if p.Criterion != "" && p.CriterionID != "" {
+				v.add(Invalid, path, "must declare only one of criterion or criterionID")
+			} else if p.CriterionID != "" {
+				if !v.criterionID(p.CriterionID) {
+					v.add(Invalid, path+".criterionID", "unknown criterion id %q", p.CriterionID)
+				}
+			} else if p.Criterion == "" {
+				v.add(Invalid, path+".criterion", "criterion phases require a criterionID (or legacy criterion selector)")
 			} else if len(v.w.Spec.Progress.Criteria) > 0 && !v.criterion(p.Criterion) {
 				v.add(Invalid, path+".criterion", "unknown criterion %q", p.Criterion)
 			}
+		} else if p.CriterionID != "" || p.AdvanceProgress {
+			v.add(Invalid, path, "criterionID and advanceProgress are only valid for criterion phases")
+		}
+		if len(p.Bookkeeping) > 0 && p.Kind != "bookkeeping" {
+			v.add(Invalid, path+".bookkeeping", "is only valid for bookkeeping phases")
+		}
+		for j, transition := range p.Bookkeeping {
+			v.markdownTransition(fmt.Sprintf("%s.bookkeeping[%d]", path, j), transition)
 		}
 		if p.Validation != "" {
 			v.validation(path+".validation", p.Validation)
@@ -556,6 +580,41 @@ func (v validator) criterion(id string) bool {
 		}
 	}
 	return false
+}
+
+func (v validator) criterionID(id string) bool {
+	for _, c := range v.w.Spec.Progress.Criteria {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (v validator) markdownTransition(path string, transition MarkdownTransition) {
+	if transition.Path == "" {
+		v.add(Invalid, path+".path", "is required")
+	}
+	switch transition.Type {
+	case "markdown-checklist", "markdown-index":
+		if transition.Item == "" {
+			v.add(Invalid, path+".item", "is required")
+		}
+		if transition.State != "checked" && transition.State != "unchecked" {
+			v.add(Invalid, path+".state", "must be checked or unchecked")
+		}
+	case "markdown-status":
+		if transition.Label == "" {
+			v.add(Invalid, path+".label", "is required")
+		}
+		if transition.From == "" || transition.To == "" {
+			v.add(Invalid, path, "status transitions require from and to")
+		} else if transition.From == transition.To {
+			v.add(Invalid, path, "status transition from and to must differ")
+		}
+	default:
+		v.add(Invalid, path+".type", "unsupported Markdown transition type %q", transition.Type)
+	}
 }
 
 // expressions parses every expression before a repository is opened. Runtime

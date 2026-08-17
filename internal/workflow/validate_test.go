@@ -72,6 +72,68 @@ func TestValidateRuntimeOwnedLifecyclePolicy(t *testing.T) {
 	t.Fatalf("lifecycle diagnostics = %#v", result.Diagnostics)
 }
 
+func TestValidateEngineOwnedProgressAndBookkeeping(t *testing.T) {
+	valid := `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: engine-owned-transitions
+spec:
+  agents:
+    worker:
+      runner: codex
+  tools:
+    scope:
+      type: workspace-policy
+  validation:
+    gate:
+      steps:
+        - uses: scope
+  lifecycle:
+    policy: safe-resume
+    validation: gate
+  progress:
+    criteria:
+      - id: criterion-one
+        text: One stable criterion
+  phases:
+    - id: one
+      kind: criterion
+      label: one
+      actor: worker
+      criterionID: criterion-one
+      advanceProgress: true
+      prompt: implement one
+    - id: close
+      kind: bookkeeping
+      label: close
+      bookkeeping:
+        - type: markdown-status
+          path: roadmap.md
+          label: Status
+          from: In Progress
+          to: Complete
+  flow:
+    - phase: one
+    - phase: close
+`
+	if result := ValidateFile(writeWorkflow(t, valid)); result.Status != Executable {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+
+	invalid := strings.Replace(valid, "criterionID: criterion-one\n      advanceProgress", "criterionID: missing\n      advanceProgress", 1)
+	result := ValidateFile(writeWorkflow(t, invalid))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Path == "spec.phases[0].criterionID" && strings.Contains(diagnostic.Message, "unknown criterion id") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v", result.Diagnostics)
+}
+
 func TestValidateReportsCrossReferenceAtYAMLPath(t *testing.T) {
 	body := strings.Replace(executableFixture, "actor: worker", "actor: missing", 1)
 	r := ValidateFile(writeWorkflow(t, body))

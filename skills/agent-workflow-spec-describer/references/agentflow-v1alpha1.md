@@ -119,6 +119,12 @@ Important concepts:
 - targeted criterion per phase;
 - invariant that exactly one intended criterion closes.
 
+Prefer a phase `criterionID` that names one `criteria[].id`; `criterion` is a
+legacy selector. When `advanceProgress: true`, deterministic acceptance—not the
+actor—changes exactly the targeted Markdown item. The runtime rejects a changed
+pre-acceptance progress snapshot, duplicate/missing targets, another closed
+criterion, or a delta other than the declared one.
+
 `unchecked_count_delta: -1` means a criterion phase must reduce the unchecked count by exactly one. Combined with `targeted_item_must_be_checked`, it prevents an agent from closing unrelated criteria to manufacture progress.
 
 ## `spec.validation`
@@ -186,10 +192,19 @@ Key fields:
 - `label`: human-readable/log identity.
 - `actor`: named AI capability.
 - `reasoning`: requested effort tier.
-- `criterion`: targeted progress item.
+- `criterionID`: stable targeted progress item (preferred over legacy
+  `criterion`).
+- `advanceProgress`: engine-owned, post-validation progress transition.
+- `bookkeeping`: engine-only transitions on an actor-less bookkeeping phase.
 - `requiresChange`: whether a net repository diff since phase start is mandatory.
 - `validation`: optional deterministic gate override for `spec.lifecycle`.
 - `prompt`: bounded work instructions.
+
+Bookkeeping transitions support `markdown-checklist`, `markdown-index`, and
+`markdown-status`. They name exact structured targets and final state/value;
+the engine preserves every non-target byte, records pending state before the
+write, and resumes only the declared idempotent transition. Missing, duplicate,
+ambiguous, already-final first-attempt, or out-of-boundary targets fail closed.
 
 ## `spec.humanGates`
 

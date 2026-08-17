@@ -76,12 +76,19 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 		fmt.Fprintf(e.Out, "==> Skipping completed phase %s: %s (%s)\n", id, p.Label, sha)
 		return nil
 	}
-	if p.Kind == "criterion" && p.Criterion != "" {
-		checked, err := e.criterionChecked(p.Criterion)
+	if p.Kind == "criterion" && (p.Criterion != "" || p.CriterionID != "") {
+		_, targetText, targetErr := e.phaseCriterion(p)
+		if targetErr != nil {
+			return targetErr
+		}
+		checked, err := e.criterionChecked(targetText)
 		if err != nil {
 			return err
 		}
 		if checked {
+			if p.AdvanceProgress {
+				return fmt.Errorf("criterion phase %s target is already checked without accepted engine-owned progress state", id)
+			}
 			skip := e.Workflow.Spec.PhaseDefaults.Skip.CriterionAlreadyChecked
 			if !skip.ValidateBeforeMarking {
 				return fmt.Errorf("criterion phase %s is already checked but validation before marking is disabled", id)
@@ -126,7 +133,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return fmt.Errorf("phase %s cannot start safely: %w", id, err)
 	}
-	active, err := e.newActivePhase(id)
+	active, err := e.newActivePhase(p.ID)
 	if err != nil {
 		return err
 	}
@@ -142,7 +149,12 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	}
 
 	fmt.Fprintf(e.Out, "==> Phase %s: %s\n", id, p.Label)
-	if err := e.runPhaseActor(ctx, p, p.Prompt, &active); err != nil {
+	if p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0 {
+		active.ActorCompleted = true // engine-only deterministic phase; no actor owns this transition.
+		if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+			return fmt.Errorf("persist engine-owned bookkeeping phase %s: %w", p.ID, err)
+		}
+	} else if err := e.runPhaseActor(ctx, p, p.Prompt, &active); err != nil {
 		return err
 	}
 	return e.finishPhase(ctx, p, active)
@@ -311,6 +323,12 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		metadata["phase"] = p.ID
 		metadata["phase_kind"] = p.Kind
 		metadata["criterion"] = p.Criterion
+		if p.Kind == "criterion" {
+			if criterionID, criterionText, criterionErr := e.phaseCriterion(p); criterionErr == nil {
+				metadata["criterion"] = criterionText
+				metadata["criterion_id"] = criterionID
+			}
+		}
 	}
 	_, err = prov.Run(ctx, provider.Request{Workspace: e.Repo.Root, Model: model, Reasoning: reasoning, Prompt: prompt, Sandbox: a.Sandbox, Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color, Metadata: metadata})
 	if err != nil {

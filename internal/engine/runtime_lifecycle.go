@@ -10,6 +10,14 @@ import (
 )
 
 func (e *Engine) newActivePhase(id string) (ActivePhase, error) {
+	p, err := e.phaseByID(id)
+	if err != nil {
+		return ActivePhase{}, err
+	}
+	return e.newActivePhaseFor(p)
+}
+
+func (e *Engine) newActivePhaseFor(p *workflow.Phase) (ActivePhase, error) {
 	start, err := e.Repo.Head()
 	if err != nil {
 		return ActivePhase{}, err
@@ -18,7 +26,24 @@ func (e *Engine) newActivePhase(id string) (ActivePhase, error) {
 	if err != nil {
 		return ActivePhase{}, err
 	}
-	return ActivePhase{PhaseID: id, StartCommit: start, UncheckedBefore: progress.UncheckedCount, CheckedBefore: progress.CheckedTexts()}, nil
+	active := ActivePhase{PhaseID: p.ID, StartCommit: start, UncheckedBefore: progress.UncheckedCount, CheckedBefore: progress.CheckedTexts()}
+	if p.Kind == "criterion" && p.AdvanceProgress {
+		id, _, err := e.phaseCriterion(p)
+		if err != nil {
+			return ActivePhase{}, err
+		}
+		before, err := e.declaredCriterionStates(progress)
+		if err != nil {
+			return ActivePhase{}, err
+		}
+		if before[id] {
+			return ActivePhase{}, fmt.Errorf("criterion phase %s target %q is already checked before engine-owned advancement", p.ID, id)
+		}
+		active.TargetCriterionID = id
+		active.CriteriaBefore = before
+		active.ProgressItemsBefore = progress.ItemStates()
+	}
+	return active, nil
 }
 
 func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction, error) {
@@ -26,9 +51,20 @@ func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction,
 	if validation == "" {
 		return nil, fmt.Errorf("phase %s has no deterministic validation in its runtime lifecycle policy", p.ID)
 	}
-	actions := []workflow.PhaseAction{{Validate: validation}}
+	actions := []workflow.PhaseAction{}
+	if p.Kind == "criterion" && p.AdvanceProgress {
+		actions = append(actions, workflow.PhaseAction{AssertProgressUnchanged: true})
+	}
+	actions = append(actions, workflow.PhaseAction{Validate: validation})
 	if p.Kind == "criterion" {
-		actions = append(actions, workflow.PhaseAction{AssertProgressIfApplicable: true})
+		if p.AdvanceProgress {
+			actions = append(actions, workflow.PhaseAction{AdvanceProgress: true})
+		} else {
+			actions = append(actions, workflow.PhaseAction{AssertProgressIfApplicable: true})
+		}
+	}
+	if p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0 {
+		actions = append(actions, workflow.PhaseAction{ApplyBookkeeping: true})
 	}
 	if p.RequiresChange {
 		actions = append(actions, workflow.PhaseAction{AssertNetRepositoryChangeSincePhaseStart: true})
@@ -102,6 +138,17 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 			active.ValidationPassed = true
 		}
+		if action.AssertProgressUnchanged {
+			// A pending record is written before the engine mutates Markdown. On
+			// recovery the target may already be changed, so advanceProgress owns
+			// the exact durable-baseline check that distinguishes its own partial
+			// transition from an actor-authored edit.
+			if !active.ProgressAdvancePending && !active.ProgressAdvanced {
+				if err := e.assertProgressUnchanged(phase, *active); err != nil {
+					return err
+				}
+			}
+		}
 		if action.AssertProgress != nil && action.AssertProgress.Enabled {
 			if err := e.assertProgressAction(phase, *active, *action.AssertProgress); err != nil {
 				return err
@@ -109,6 +156,16 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		}
 		if action.AssertProgressIfApplicable && phase.Kind == "criterion" {
 			if err := e.assertProgress(phase, *active); err != nil {
+				return err
+			}
+		}
+		if action.AdvanceProgress {
+			if err := e.advanceProgress(phase, active); err != nil {
+				return err
+			}
+		}
+		if action.ApplyBookkeeping {
+			if err := e.applyBookkeeping(phase, active); err != nil {
 				return err
 			}
 		}
@@ -204,6 +261,11 @@ func (e *Engine) assertNetChange(phase *workflow.Phase, active ActivePhase) erro
 }
 
 func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePhase) error {
+	if phase.Kind == "bookkeeping" && len(phase.Bookkeeping) > 0 {
+		// The runtime itself owns this actor-less deterministic transition and
+		// is therefore authorized to create its checkpoint.
+		return nil
+	}
 	agent, ok := e.Workflow.Spec.Agents[phase.Actor]
 	if !ok {
 		return fmt.Errorf("unknown actor %q", phase.Actor)

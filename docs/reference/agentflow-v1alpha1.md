@@ -164,6 +164,15 @@ Important concepts:
 - targeted criterion per phase;
 - invariant that exactly one intended criterion closes.
 
+New criterion phases should use `criterionID`, which must name exactly one
+`criteria[].id`; `criterion` remains a legacy selector for existing documents.
+With `advanceProgress: true`, the engine verifies that the actor has not changed
+the progress source, runs deterministic validation, then changes exactly the
+one declared checklist item. The active-phase record retains the ordered
+pre-transition snapshot, so a different item, an extra item, a duplicate, or a
+missing target fails closed. A completed target without the corresponding
+durable in-progress record is not accepted as engine-owned advancement.
+
 `unchecked_count_delta: -1` means a criterion phase must reduce the unchecked count by exactly one. Combined with `targeted_item_must_be_checked`, it prevents an agent from closing unrelated criteria to manufacture progress.
 
 With `selection.strategy: first-unchecked`, the runtime reads the declared
@@ -260,12 +269,25 @@ Key fields:
 - `label`: human-readable/log identity.
 - `actor`: named AI capability.
 - `reasoning`: requested effort tier.
-- `criterion`: targeted progress item.
+- `criterionID`: stable targeted progress ID; preferred over legacy `criterion`.
+- `advanceProgress`: after acceptance, let the engine perform the one targeted
+  progress transition rather than asking the actor to edit a checkbox.
+- `bookkeeping`: engine-only Markdown transitions on a `bookkeeping` phase.
+  Such a phase has no actor and must name its deterministic validation gate.
 - `requiresChange`: whether a net repository diff since phase start is mandatory.
 - `validation`: optional deterministic gate override for `spec.lifecycle`.
 - `if`: optional boolean condition. A false condition skips the phase without
   invoking its actor or creating a completion marker.
 - `prompt`: bounded work instructions.
+
+Each `bookkeeping` transition is one of `markdown-checklist`, `markdown-index`,
+or `markdown-status`. Checklist/index transitions name `path`, exact `item`,
+and final `state` (`checked` or `unchecked`). Status transitions name `path`,
+`label`, `from`, and `to`. The engine requires exactly one matching target,
+edits only its marker/value while preserving all other Markdown bytes, records a
+pending transition before writing, and makes recovery replay only that declared
+idempotent transition. Ambiguous, absent, duplicate, already-final (on a first
+attempt), or out-of-boundary mutations fail closed.
 
 ## `spec.humanGates`
 

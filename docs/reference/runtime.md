@@ -70,6 +70,10 @@ after the primary phase provider returns successfully. A green deterministic
 gate is not a substitute for that evidence, so recovery reruns an actor whose
 completion was never durably recorded and resumes acceptance without replaying
 an actor whose completion was recorded.
+For engine-owned progress and bookkeeping transitions it also records the
+pre-transition checklist state plus a pending/applied marker before changing
+Markdown. A restart can therefore finish only the exact declared transition;
+it cannot reinterpret an unrelated checkbox or status edit as accepted work.
 When deterministic validation fails, the same record stores a typed
 `failure_kind` (`validation` or `safety`); repair budgeting applies only to the
 former, while repository-policy safety failures remain terminal.
@@ -97,6 +101,8 @@ For a mutable AI phase, the runtime performs this fixed contract:
    phase before invoking the actor;
 3. persist `actor_completed` immediately after the actor returns successfully;
 4. run deterministic validation and applicable progress/net-change assertions;
+   for `advanceProgress: true`, verify the actor did not edit progress and then
+   let the engine advance exactly the declared criterion;
 5. checkpoint accepted allowed work, requiring a clean tree and rechecking
    lineage, integrity, and scope;
 6. write the completed-phase commit marker; and
@@ -203,6 +209,10 @@ The current runtime supports the following executable core:
 - allowed-path mutation policy;
 - exact/group/normalized integrity hashing;
 - Markdown checklist progress and one-criterion progress invariants;
+- engine-owned criterion advancement by stable `criterionID`, with durable
+  before-state and exact-delta enforcement;
+- actor-less, durable Markdown checklist/status/index bookkeeping transitions
+  that preserve non-bookkeeping content byte-for-byte;
 - first-unchecked progress selection and bounded next-unchecked loops;
 - named AI phases with provider-neutral actors;
 - shell, workspace-policy, Git-checkpoint, file-regex, and Markdown-checklist

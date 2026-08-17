@@ -38,6 +38,13 @@ also pass. Repair is bounded by the validation's declared policy; a failed
 repository-policy or integrity safety check is terminal rather than an
 invitation to let an agent override the boundary.
 
+For a criterion phase declaring `criterionID` and `advanceProgress: true`, the
+actor implements the work but cannot close its own checklist item: the runtime
+records the pre-actor progress snapshot, rejects any actor-authored progress
+change, and advances only the declared target after the deterministic gate.
+Fully declarative Markdown checklist, status, and index transitions use the
+same engine authority on actor-less bookkeeping phases.
+
 After acceptance, checkpointing may preserve an agent-created commit or commit
 allowed dirty files. The checkpoint asserts scope, stages only allowed files,
 requires a clean worktree, and reasserts the policy. The completed-phase marker

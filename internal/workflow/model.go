@@ -322,6 +322,9 @@ type PhaseAction struct {
 	ClearActivePhase                         bool               `yaml:"clearActivePhase"`
 	Return                                   string             `yaml:"return"`
 	AssertProgressIfApplicable               bool               `yaml:"assert_progress_if_applicable"`
+	AssertProgressUnchanged                  bool               `yaml:"-"`
+	AdvanceProgress                          bool               `yaml:"-"`
+	ApplyBookkeeping                         bool               `yaml:"-"`
 	MarkPhaseCompleteFlag                    bool               `yaml:"mark_phase_complete"`
 	RunRepairPolicy                          string             `yaml:"run_repair_policy"`
 	IfStillIncomplete                        IncompleteAction   `yaml:"if_still_incomplete"`
@@ -369,17 +372,40 @@ type Marker struct {
 	Record string `yaml:"record"`
 }
 type Phase struct {
-	ID             string        `yaml:"id"`
-	Kind           string        `yaml:"kind"`
-	Label          string        `yaml:"label"`
-	Actor          string        `yaml:"actor"`
-	Reasoning      string        `yaml:"reasoning"`
-	Criterion      string        `yaml:"criterion"`
-	RequiresChange bool          `yaml:"requiresChange"`
-	Validation     string        `yaml:"validation"`
-	If             string        `yaml:"if"`
-	Prompt         string        `yaml:"prompt"`
-	After          []PhaseAction `yaml:"after"`
+	ID        string `yaml:"id"`
+	Kind      string `yaml:"kind"`
+	Label     string `yaml:"label"`
+	Actor     string `yaml:"actor"`
+	Reasoning string `yaml:"reasoning"`
+	// Criterion is the legacy criterion selector. New documents should use
+	// CriterionID so a phase does not need to repeat mutable display text.
+	Criterion   string `yaml:"criterion"`
+	CriterionID string `yaml:"criterionID"`
+	// AdvanceProgress makes the runtime, after deterministic validation, perform
+	// the one declared checklist transition. The actor is not allowed to edit
+	// declared progress state when this is enabled.
+	AdvanceProgress bool `yaml:"advanceProgress"`
+	// Bookkeeping contains engine-only, fully declarative Markdown transitions.
+	// It is meaningful only on a bookkeeping phase with no actor.
+	Bookkeeping    []MarkdownTransition `yaml:"bookkeeping"`
+	RequiresChange bool                 `yaml:"requiresChange"`
+	Validation     string               `yaml:"validation"`
+	If             string               `yaml:"if"`
+	Prompt         string               `yaml:"prompt"`
+	After          []PhaseAction        `yaml:"after"`
+}
+
+// MarkdownTransition is a constrained, byte-preserving Markdown mutation. It
+// changes exactly one checklist/index item or one labelled status line; the
+// surrounding document is left byte-for-byte intact.
+type MarkdownTransition struct {
+	Type  string `yaml:"type"`
+	Path  string `yaml:"path"`
+	Item  string `yaml:"item"`
+	State string `yaml:"state"`
+	Label string `yaml:"label"`
+	From  string `yaml:"from"`
+	To    string `yaml:"to"`
 }
 
 type HumanGate struct {
