@@ -12,6 +12,79 @@ import (
 
 var markdownChecklistLine = regexp.MustCompile(`^(\s*(?:[-+*]|\d+[.)])\s+\[)( |x|X)(\]\s+)(.*)$`)
 
+func (e *Engine) bookkeepingStateDigests(p *workflow.Phase) (map[string][]string, error) {
+	states := map[string][]string{}
+	contents := map[string][]byte{}
+	for _, transition := range p.Bookkeeping {
+		path, err := e.contextWithoutProgress(p).Expand(transition.Path)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := contents[path]; !ok {
+			abs, err := e.markdownWorkspacePath(path)
+			if err != nil {
+				return nil, err
+			}
+			b, err := os.ReadFile(abs)
+			if err != nil {
+				return nil, err
+			}
+			contents[path] = b
+			states[path] = []string{digestBytes(b)}
+		}
+		updated, changed, err := transitionMarkdownBytes(contents[path], transition)
+		if err != nil {
+			return nil, err
+		}
+		if !changed {
+			return nil, fmt.Errorf("bookkeeping target in %s is already in the declared final state", path)
+		}
+		contents[path] = updated
+		states[path] = append(states[path], digestBytes(updated))
+	}
+	return states, nil
+}
+
+func (e *Engine) assertBookkeepingState(p *workflow.Phase, active ActivePhase) error {
+	if len(p.Bookkeeping) == 0 {
+		return nil
+	}
+	if len(active.BookkeepingStateDigests) == 0 {
+		return fmt.Errorf("bookkeeping phase %s is missing its durable file-state baseline", p.ID)
+	}
+	checked := map[string]bool{}
+	for _, transition := range p.Bookkeeping {
+		path, err := e.contextWithoutProgress(p).Expand(transition.Path)
+		if err != nil {
+			return err
+		}
+		if checked[path] {
+			continue
+		}
+		checked[path] = true
+		abs, err := e.markdownWorkspacePath(path)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(abs)
+		if err != nil {
+			return err
+		}
+		want := digestBytes(b)
+		allowed := false
+		for _, digest := range active.BookkeepingStateDigests[path] {
+			if digest == want {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("bookkeeping file %s changed outside its declared transitions", path)
+		}
+	}
+	return nil
+}
+
 // replaceMarkdownChecklist changes exactly one semantic Markdown checklist
 // item. It does not parse and re-render the document: every byte outside the
 // checkbox marker is retained from the source read immediately before writing.
@@ -150,6 +223,23 @@ func (e *Engine) transitionMarkdownChecklist(path, item, state string) (bool, er
 	if err != nil {
 		return false, err
 	}
+	updated, changed, err := transitionMarkdownChecklistBytes(b, item, state)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := os.WriteFile(abs, updated, 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func transitionMarkdownChecklistBytes(b []byte, item, state string) ([]byte, bool, error) {
+	if state != "checked" && state != "unchecked" {
+		return nil, false, fmt.Errorf("invalid checklist state %q", state)
+	}
 	lines := strings.SplitAfter(string(b), "\n")
 	matches := 0
 	changed := false
@@ -171,15 +261,9 @@ func (e *Engine) transitionMarkdownChecklist(path, item, state string) (bool, er
 		changed = true
 	}
 	if matches != 1 {
-		return false, fmt.Errorf("Markdown checklist target %q in %s matched %d items", item, path, matches)
+		return nil, false, fmt.Errorf("Markdown checklist target %q matched %d items", item, matches)
 	}
-	if !changed {
-		return false, nil
-	}
-	if err := os.WriteFile(abs, []byte(strings.Join(lines, "")), 0o644); err != nil {
-		return false, err
-	}
-	return true, nil
+	return []byte(strings.Join(lines, "")), changed, nil
 }
 
 func (e *Engine) transitionMarkdownStatus(path, label, from, to string) (bool, error) {
@@ -191,6 +275,20 @@ func (e *Engine) transitionMarkdownStatus(path, label, from, to string) (bool, e
 	if err != nil {
 		return false, err
 	}
+	updated, changed, err := transitionMarkdownStatusBytes(b, label, from, to)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := os.WriteFile(abs, updated, 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func transitionMarkdownStatusBytes(b []byte, label, from, to string) ([]byte, bool, error) {
 	lines := strings.SplitAfter(string(b), "\n")
 	matches := 0
 	changed := false
@@ -217,19 +315,24 @@ func (e *Engine) transitionMarkdownStatus(path, label, from, to string) (bool, e
 			lines[i] = body[:valueStart] + to + body[valueEnd:] + ending
 			changed = true
 		default:
-			return false, fmt.Errorf("Markdown status %q in %s is %q, want %q", label, path, value, from)
+			return nil, false, fmt.Errorf("Markdown status %q is %q, want %q", label, value, from)
 		}
 	}
 	if matches != 1 {
-		return false, fmt.Errorf("Markdown status target %q in %s matched %d lines", label, path, matches)
+		return nil, false, fmt.Errorf("Markdown status target %q matched %d lines", label, matches)
 	}
-	if !changed {
-		return false, nil
+	return []byte(strings.Join(lines, "")), changed, nil
+}
+
+func transitionMarkdownBytes(b []byte, transition workflow.MarkdownTransition) ([]byte, bool, error) {
+	switch transition.Type {
+	case "markdown-checklist", "markdown-index":
+		return transitionMarkdownChecklistBytes(b, transition.Item, transition.State)
+	case "markdown-status":
+		return transitionMarkdownStatusBytes(b, transition.Label, transition.From, transition.To)
+	default:
+		return nil, false, fmt.Errorf("unsupported Markdown transition type %q", transition.Type)
 	}
-	if err := os.WriteFile(abs, []byte(strings.Join(lines, "")), 0o644); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (e *Engine) assertBookkeepingSatisfied(p *workflow.Phase) error {

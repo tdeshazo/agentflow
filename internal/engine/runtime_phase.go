@@ -89,6 +89,13 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 			if p.AdvanceProgress {
 				return fmt.Errorf("criterion phase %s target is already checked without accepted engine-owned progress state", id)
 			}
+			// A legacy already-checked shortcut still accepts workspace-derived
+			// progress. Require the same clean mutation boundary as an ordinary
+			// acceptance so an unrelated dirty edit cannot be claimed by the
+			// deterministic gate and phase marker.
+			if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+				return fmt.Errorf("criterion phase %s cannot reuse checked progress safely: %w", id, err)
+			}
 			skip := e.Workflow.Spec.PhaseDefaults.Skip.CriterionAlreadyChecked
 			if !skip.ValidateBeforeMarking {
 				return fmt.Errorf("criterion phase %s is already checked but validation before marking is disabled", id)
@@ -121,6 +128,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 			}
 			if !validated {
 				return fmt.Errorf("criterion phase %s is already checked but has no runnable deterministic validation", id)
+			}
+			if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+				return fmt.Errorf("criterion phase %s failed its checked-progress safety boundary: %w", id, err)
 			}
 			head, _ := e.Repo.Head()
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {

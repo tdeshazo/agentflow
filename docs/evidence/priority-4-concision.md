@@ -2,8 +2,9 @@
 
 Status: Passed
 
-This record compares the pre-migration benchmark definitions at `HEAD` with
-the migrated definitions in the checkout:
+This record compares the pre-migration benchmark definitions at immutable
+commit `84a11ec` (the last pre-migration benchmark revision) with the migrated
+definitions in the checkout:
 
 - `examples/develop-agentflow.agent-workflow.yaml`
 - `examples/finish-priority-05.agent-workflow.yaml`
@@ -11,8 +12,8 @@ the migrated definitions in the checkout:
 ## Measurement method
 
 The comparison uses a source-line count for the authored YAML surface. It
-reads the old version with `git show HEAD:<path>` and the new version from the
-working tree, then counts nonblank, non-comment lines while excluding the
+reads the old version with `git show 84a11ec:<path>` and the new version from
+the working tree, then counts nonblank, non-comment lines while excluding the
 contents of `prompt: |` blocks. This measures orchestration/configuration
 surface without allowing domain prompt length to determine the result. The
 method is intentionally simple and reproducible; no lines were removed or

@@ -32,9 +32,10 @@ Environment-backed parameter defaults continue to work through the workflow.
 `plan --expanded` validates the authored document, normalizes concise defaults,
 and validates the resulting executable representation without opening a
 repository or invoking actors/tools. Its YAML output exposes the resolved
-lifecycle, recovery, safety boundaries, per-gate repair behavior, phase
-acceptance/progress transitions, checkpoint contract, human gates, and
-completion contract.
+lifecycle and executor defaults, recovery, safety boundaries, each gate's
+repair actor and post-repair steps, each phase's resolved actor/reasoning,
+validation, mutation/progress flags, bookkeeping transitions, and acceptance
+ordering, plus the checkpoint contract, human gates, and completion contract.
 
 ## Git-backed state
 
@@ -80,9 +81,10 @@ gate is not a substitute for that evidence, so recovery reruns an actor whose
 completion was never durably recorded and resumes acceptance without replaying
 an actor whose completion was recorded.
 For engine-owned progress and bookkeeping transitions it also records the
-pre-transition checklist state plus a pending/applied marker before changing
-Markdown. A restart can therefore finish only the exact declared transition;
-it cannot reinterpret an unrelated checkbox or status edit as accepted work.
+pre-transition checklist/file-state digests plus a pending/applied marker
+before changing Markdown. A restart can therefore finish only an exact
+declared transition from one of the durable intermediate states; it cannot
+reinterpret an unrelated checkbox, status, or same-file edit as accepted work.
 When deterministic validation fails, the same record stores a typed
 `failure_kind` (`validation` or `safety`); repair budgeting applies only to the
 former, while repository-policy safety failures remain terminal.

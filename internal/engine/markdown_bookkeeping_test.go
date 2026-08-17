@@ -198,6 +198,50 @@ func TestBookkeepingRecoveryFinishesDurablePendingTransition(t *testing.T) {
 	}
 }
 
+func TestBookkeepingRecoveryRejectsSameFileExternalEdit(t *testing.T) {
+	repo := newEngineOwnedRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "roadmap.md"), []byte("Status: In Progress\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "roadmap.md")
+	gitIn(t, repo, "commit", "-qm", "add roadmap")
+	w := engineOwnedWorkflow(repo)
+	w.Spec.Phases = []workflow.Phase{{
+		ID: "close", Kind: "bookkeeping", Label: "close roadmap",
+		Bookkeeping: []workflow.MarkdownTransition{{Type: "markdown-status", Path: "roadmap.md", Label: "Status", From: "In Progress", To: "Complete"}},
+	}}
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"roadmap.md"}
+	w.Spec.Flow = []workflow.FlowStep{{Phase: "close"}}
+	e, err := New(w, map[string]provider.Provider{"test": &engineOwnedProvider{}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	active, err := e.newActivePhase("close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ActorCompleted = true
+	active.BookkeepingPending = true
+	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.transitionMarkdownStatus("roadmap.md", "Status", "In Progress", "Complete"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "roadmap.md"), []byte("Status: Complete\nUnexpected: external edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "changed outside its declared transitions") {
+		t.Fatalf("recovery error = %v, want external bookkeeping edit rejection", err)
+	}
+	if _, ok, markerErr := e.Store.Resolve("phases/close"); markerErr != nil || ok {
+		t.Fatalf("bookkeeping marker after external edit: ok=%v err=%v", ok, markerErr)
+	}
+}
+
 func TestBookkeepingRejectsMutationOutsideItsDeclaredBoundary(t *testing.T) {
 	repo := newEngineOwnedRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, "roadmap.md"), []byte("Status: In Progress\n"), 0o644); err != nil {

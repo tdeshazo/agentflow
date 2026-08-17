@@ -48,23 +48,24 @@ type ActivePhase struct {
 	// ActorCompleted is durable evidence that the phase's primary actor
 	// returned successfully. Until it is true, recovery must not let
 	// deterministic validation substitute for the actor invocation.
-	ActorCompleted         bool                `json:"actor_completed"`
-	CheckpointCommit       string              `json:"checkpoint_commit,omitempty"`
-	CheckpointPending      bool                `json:"checkpoint_pending,omitempty"`
-	UncheckedBefore        int                 `json:"unchecked_count_before"`
-	CheckedBefore          []string            `json:"checked_before"`
-	CriteriaBefore         map[string]bool     `json:"criteria_before,omitempty"`
-	ProgressItemsBefore    []ProgressItemState `json:"progress_items_before,omitempty"`
-	TargetCriterionID      string              `json:"target_criterion_id,omitempty"`
-	ProgressAdvancePending bool                `json:"progress_advance_pending,omitempty"`
-	ProgressAdvanced       bool                `json:"progress_advanced,omitempty"`
-	BookkeepingPending     bool                `json:"bookkeeping_pending,omitempty"`
-	BookkeepingApplied     bool                `json:"bookkeeping_applied,omitempty"`
-	RepairAttempts         map[string]int      `json:"repair_attempts,omitempty"`
-	FailureKind            PhaseFailureKind    `json:"failure_kind,omitempty"`
-	Validation             string              `json:"validation,omitempty"`
-	ValidationError        string              `json:"validation_error,omitempty"`
-	ValidationPassed       bool                `json:"validation_passed,omitempty"`
+	ActorCompleted          bool                `json:"actor_completed"`
+	CheckpointCommit        string              `json:"checkpoint_commit,omitempty"`
+	CheckpointPending       bool                `json:"checkpoint_pending,omitempty"`
+	UncheckedBefore         int                 `json:"unchecked_count_before"`
+	CheckedBefore           []string            `json:"checked_before"`
+	CriteriaBefore          map[string]bool     `json:"criteria_before,omitempty"`
+	ProgressItemsBefore     []ProgressItemState `json:"progress_items_before,omitempty"`
+	TargetCriterionID       string              `json:"target_criterion_id,omitempty"`
+	ProgressAdvancePending  bool                `json:"progress_advance_pending,omitempty"`
+	ProgressAdvanced        bool                `json:"progress_advanced,omitempty"`
+	BookkeepingPending      bool                `json:"bookkeeping_pending,omitempty"`
+	BookkeepingApplied      bool                `json:"bookkeeping_applied,omitempty"`
+	BookkeepingStateDigests map[string][]string `json:"bookkeeping_state_digests,omitempty"`
+	RepairAttempts          map[string]int      `json:"repair_attempts,omitempty"`
+	FailureKind             PhaseFailureKind    `json:"failure_kind,omitempty"`
+	Validation              string              `json:"validation,omitempty"`
+	ValidationError         string              `json:"validation_error,omitempty"`
+	ValidationPassed        bool                `json:"validation_passed,omitempty"`
 }
 
 // ProgressItemState is the durable, ordered Markdown progress baseline used

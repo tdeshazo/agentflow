@@ -43,6 +43,12 @@ func (e *Engine) newActivePhaseFor(p *workflow.Phase) (ActivePhase, error) {
 		active.CriteriaBefore = before
 		active.ProgressItemsBefore = progress.ItemStates()
 	}
+	if len(p.Bookkeeping) > 0 {
+		active.BookkeepingStateDigests, err = e.bookkeepingStateDigests(p)
+		if err != nil {
+			return ActivePhase{}, err
+		}
+	}
 	return active, nil
 }
 
@@ -89,6 +95,11 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				}
 			}
 			return err
+		}
+		if len(phase.Bookkeeping) > 0 {
+			if err := e.assertBookkeepingState(phase, *active); err != nil {
+				return err
+			}
 		}
 		if action.If != "" {
 			ok, err := e.bool(phase, action.If)
@@ -244,6 +255,11 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				}
 			}
 			return err
+		}
+		if len(phase.Bookkeeping) > 0 {
+			if err := e.assertBookkeepingState(phase, *active); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
