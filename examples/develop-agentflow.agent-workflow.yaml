@@ -35,47 +35,11 @@ spec:
     ci_policy: .github/workflows/quality.yml
     self_host_workflow: examples/develop-agentflow.agent-workflow.yaml
 
-  # Git refs are additionally namespaced by metadata.name by the interpreter,
-  # so repeated self-development runs cannot collide with other workflows.
   state:
-    backend: git-dir
-    directory: .git/agentflow/develop-agentflow
-    records:
-      base_commit: base
-      branch: branch
-      active_phase: active-phase
-      completed_phase_pattern: "{{ phase.id }}.done"
-      manual_confirmation: self-host-review
-      workflow_complete: complete
-    initialize:
-      require_clean_implementation_workspace: true
-      require_named_branch: true
-      capture:
-        base_commit: head_commit
-        branch: current_branch
-        integrity_baseline: true
     reset:
       when: "{{ parameters.reset_workflow_state }}"
       require_clean_implementation_workspace: true
       delete_state_directory: true
-    lineage:
-      require_base_commit_exists: true
-      require_base_is_ancestor_of_head: true
-      require_same_named_branch: true
-    resume:
-      enabled: true
-      completed_phase_marker:
-        value: head_commit
-        valid_when_marker_commit_exists: true
-        valid_when_marker_is_ancestor_of_head: true
-      active_phase:
-        fields:
-          - phase_id
-          - phase_start_commit
-        require_phase_start_commit_exists: true
-        require_phase_start_is_ancestor_of_head: true
-        preserve_partial_commits: true
-        preserve_partial_worktree_changes: true
 
   workspace:
     root: "{{ parameters.repo_root }}"
@@ -83,13 +47,8 @@ spec:
     localControlFiles:
       ignoredForDirtyState:
         - "{{ workflow.file | default('') }}"
-      note: >-
-        The interpreter's Git-backed state does not dirty the worktree. The
-        workflow definition remains protected by an integrity baseline and is
-        not in the mutation allowlist.
     cleanliness:
       before_first_run: required
-      before_new_phase: required
       outside_recoverable_active_phase: required
       after_checkpoint: required
     mutationPolicy:
@@ -127,57 +86,54 @@ spec:
           paths: [.github/workflows/quality.yml]
           mode: exact-hash
 
-    checkpointing:
-      agent_commits_allowed: true
-      checkpoint_uncommitted_success: true
-      stage_only_allowed_dirty_files: true
-      commit_if_dirty: true
-      commit_message: "AgentFlow self-development: {{ phase.label }}"
-      require_clean_after: true
-      assert_scope_before_and_after: true
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: gate
+    phases:
+      implementation:
+        actor: luna
+        reasoning: high
+        requiresChange: true
+        validation: implementation-gate
+      audit:
+        actor: terra
+        reasoning: high
+        requiresChange: false
+    repair:
+      actor: terra
+      reasoning: high
+      prompt: |
+        The deterministic AgentFlow quality gate failed while implementing the
+        bounded task below:
+
+        {{ parameters.task }}
+
+        Inspect the actual checkout and repair only the failure necessary for
+        this task. Preserve the declared workspace scope and protected
+        resources. Do not weaken validation or broaden the task.
+
+        --- gate output ---
+        {{ tail(validation.failure.log, 260) }}
 
   agents:
     luna:
-      runner: codex
       model: "{{ parameters.luna_model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      color: never
-      may_commit: true
-      output_last_message: true
     terra:
-      runner: codex
       model: "{{ parameters.terra_model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      color: never
-      may_commit: true
-      output_last_message: true
 
   tools:
-    assert-change-scope:
-      type: workspace-policy
-      policy: spec.workspace.mutationPolicy
-      mutates_workspace: false
     canonical-gate:
       type: shell
       command: "./{{ spec.paths.canonical_gate }}"
-      mutates_workspace: false
-      capture:
-        stdout: true
-        stderr: true
-        log: "{{ temp.directory }}/gate-{{ invocation.id }}.log"
-    checkpoint:
-      type: git-checkpoint
-      stage: allowed-dirty-files
-      commit_if_dirty: true
-      require_clean_after: true
-
-  temp:
-    directory: "{{ mktemp('${TMPDIR:-/tmp}/agentflow-self-host.XXXXXX') }}"
-    cleanup: on-exit
 
   preconditions:
     - id: repository-root
@@ -198,82 +154,29 @@ spec:
       type: file-contains
       path: "{{ spec.paths.ci_policy }}"
       text: scripts/check.sh
-    - id: saved-base-exists
-      when: "{{ state.initialized }}"
-      type: git-object-exists
-      object: "{{ state.base_commit }}^{commit}"
-    - id: saved-base-is-ancestor
-      when: "{{ state.initialized }}"
-      type: git-ancestor
-      ancestor: "{{ state.base_commit }}"
-      descendant: HEAD
-    - id: branch-unchanged
-      when: "{{ state.initialized }}"
-      type: git-current-branch-equals
-      expected: "{{ state.branch }}"
-    - id: protected-boundaries-unchanged
-      when: "{{ state.initialized }}"
-      type: workspace-integrity
-      policy: spec.workspace.mutationPolicy.integrity
 
   validation:
-    starting-state:
-      repair: none
+    gate:
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
+    starting-state:
+      steps:
+        - uses: canonical-gate
     implementation-gate:
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      onFailure:
-        strategy: repair-once
-        maxRepairAttempts: 1
-        repair:
-          actor: terra
-          reasoning: high
-          prompt: |
-            The deterministic AgentFlow quality gate failed while implementing
-            this bounded task:
-
-            {{ parameters.task }}
-
-            Diagnose the actual checkout and repair only the failure necessary
-            for this task. Preserve the mutation allowlist and every protected
-            resource. Do not weaken scripts/check.sh, CI policy, the roadmap,
-            research documents, or this self-hosting workflow.
-
-            --- gate output ---
-            {{ tail(validation.failure.log, 260) }}
-        then:
-          - uses: assert-change-scope
-          - uses: canonical-gate
-        exhausted: fail-workflow
+      repair: once
     audit-gate:
-      repair: none
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
     final-gate:
-      repair: none
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
-
-  lifecycle:
-    policy: safe-resume
 
   phases:
     - id: implement
       kind: implementation
       label: bounded-agentflow-implementation
-      actor: luna
-      reasoning: high
-      requiresChange: true
-      validation: implementation-gate
       prompt: |
         Work on exactly this bounded AgentFlow development task:
 
@@ -290,9 +193,6 @@ spec:
     - id: audit
       kind: audit
       label: independent-agentflow-audit
-      actor: terra
-      reasoning: high
-      requiresChange: false
       validation: audit-gate
       prompt: |
         Independently audit the repository state for this bounded task:
@@ -325,15 +225,11 @@ spec:
     - phase: audit
     - id: post-audit
       validate: audit-gate
-    - id: post-audit-checkpoint
-      checkpoint: checkpoint
-      label: post-audit
     - human: self-host-review
     - complete: self-hosted-development
 
   humanGates:
     - id: self-host-review
-      idempotent_record: "{{ state.manual_confirmation }}"
       requires: [audit]
       after:
         - validation: post-audit
@@ -353,26 +249,19 @@ spec:
         type: exact-text
         value: "yes"
       evidence:
-        record: "{{ state.manual_confirmation }}"
         value: head_commit
 
   completion:
     self-hosted-development:
       assertions:
-        - uses: assert-change-scope
         - type: workspace-integrity
           policy: spec.workspace.mutationPolicy.integrity
       finalValidation: final-gate
-      checkpoint:
-        uses: checkpoint
-        label: self-hosted-development-complete
       afterCheckpointAssertions:
-        - uses: assert-change-scope
         - type: workspace-integrity
           policy: spec.workspace.mutationPolicy.integrity
         - type: implementation-workspace-clean
       writeMarker:
-        record: "{{ state.workflow_complete }}"
         value: head_commit
       summary:
         title: "AgentFlow self-development task complete."
@@ -380,7 +269,6 @@ spec:
           - branch
           - base_commit
           - head_commit
-          - state_directory
           - commits_since_base
           - changed_files_since_base
           - workspace_clean

@@ -65,7 +65,17 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		plan.Validations = append(plan.Validations, PlannedValidation{Name: name, Steps: steps, Repair: repair})
 	}
 	for _, p := range w.Spec.Phases {
-		acceptance := []string{"persist active phase", "run actor", "persist actor_completed", "deterministic validation"}
+		validation := p.Validation
+		if validation == "" {
+			validation = w.Spec.Lifecycle.Validation
+		}
+		acceptance := []string{"persist active phase"}
+		if p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0 {
+			acceptance = append(acceptance, "deterministic bookkeeping")
+		} else {
+			acceptance = append(acceptance, "run actor", "persist actor_completed")
+		}
+		acceptance = append(acceptance, "deterministic validation")
 		if p.Kind == "criterion" {
 			acceptance = append(acceptance, "assert declared progress transition")
 		}
@@ -73,7 +83,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			acceptance = append(acceptance, "assert net repository change")
 		}
 		acceptance = append(acceptance, "checkpoint", "write completed commit marker", "clear active phase")
-		plan.Phases = append(plan.Phases, PlannedPhase{ID: p.ID, Kind: p.Kind, Actor: p.Actor, Validation: p.Validation, Acceptance: acceptance})
+		plan.Phases = append(plan.Phases, PlannedPhase{ID: p.ID, Kind: p.Kind, Actor: p.Actor, Validation: validation, Acceptance: acceptance})
 		if p.Kind == "criterion" && p.AdvanceProgress {
 			plan.ProgressTransitions = append(plan.ProgressTransitions, p.ID+": engine advances only criterionID after validation")
 		}

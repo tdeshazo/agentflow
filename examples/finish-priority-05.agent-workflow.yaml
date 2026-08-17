@@ -38,57 +38,12 @@ spec:
     quality_workflow: .github/workflows/quality.yml
 
   state:
-    backend: git-dir
-    directory: ".git/codex-priority-5-combat"
     records:
-      base_commit: base
-      branch: branch
-      active_phase: active-phase
-      completed_phase_pattern: "{{ phase.id }}.done"
       manual_confirmation: manual-confirmed
-      workflow_complete: complete
-      integrity:
-        agents_hash: agents.hash
-        gate_hash: gate.hash
-        workflow_hash: workflow.hash
-        roadmap_structure_hash: roadmap-structure.hash
-        index_structure_hash: index-structure.hash
-        other_planning_hash: other-planning.hash
-        protected_data_hash: protected-data.hash
-
-    initialize:
-      require_clean_implementation_workspace: true
-      require_named_branch: true
-      capture:
-        base_commit: head_commit
-        branch: current_branch
-        integrity_baseline: true
-
     reset:
       when: "{{ parameters.reset_workflow_state }}"
       require_clean_implementation_workspace: true
       delete_state_directory: true
-
-    lineage:
-      require_base_commit_exists: true
-      require_base_is_ancestor_of_head: true
-      require_same_named_branch: true
-
-    resume:
-      enabled: true
-      completed_phase_marker:
-        value: head_commit
-        valid_when_marker_commit_exists: true
-        valid_when_marker_is_ancestor_of_head: true
-      active_phase:
-        fields:
-          - phase_id
-          - phase_start_commit
-          - unchecked_count_before
-        require_phase_start_commit_exists: true
-        require_phase_start_is_ancestor_of_head: true
-        preserve_partial_commits: true
-        preserve_partial_worktree_changes: true
 
   workspace:
     root: "{{ parameters.repo_root }}"
@@ -104,7 +59,6 @@ spec:
 
     cleanliness:
       before_first_run: required
-      before_new_phase: required
       outside_recoverable_active_phase: required
       after_checkpoint: required
 
@@ -182,69 +136,54 @@ spec:
             - data/mothership/v1.2/tables.yaml
           mode: group-exact-hash
 
-    checkpointing:
-      agent_commits_allowed: true
-      checkpoint_uncommitted_success: true
-      stage_only_allowed_dirty_files: true
-      commit_if_dirty: true
-      commit_message: "Complete combat workflow: {{ phase.label }}"
-      require_clean_after: true
-      assert_scope_before_and_after: true
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: phaseGate
+    phases:
+      criterion:
+        actor: terra
+        reasoning: high
+        requiresChange: true
+      audit:
+        actor: luna
+        reasoning: high
+        requiresChange: false
+    repair:
+      actor: terra
+      reasoning: high
+      prompt: |
+        The workflow-owned deterministic gate failed during Priority 5.
+
+        Current focus:
+        {{ phase.label }}
+
+        Read the local repository instructions and current Priority 5 state,
+        diagnose the failure, and repair only what is necessary for this focus.
+        Do not weaken the gate, change unrelated roadmap work, or advance another
+        acceptance criterion.
+
+        --- gate output ---
+        {{ tail(validation.failure.log, 260) }}
 
   agents:
     terra:
-      runner: codex
       model: "{{ parameters.terra_model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      color: never
-      may_commit: true
-      output_last_message: true
-
     luna:
-      runner: codex
       model: "{{ parameters.luna_model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      color: never
-      may_commit: true
-      output_last_message: true
 
   tools:
-    assert-change-scope:
-      type: workspace-policy
-      policy: spec.workspace.mutationPolicy
-      mutates_workspace: false
-
     canonical-gate:
       type: shell
       command: "sh {{ spec.paths.canonical_gate }}"
-      mutates_workspace: false
-      capture:
-        stdout: true
-        stderr: true
-        log: "{{ temp.directory }}/gate-{{ invocation.id }}.log"
-
-    checkpoint:
-      type: git-checkpoint
-      stage: allowed-dirty-files
-      commit_if_dirty: true
-      require_clean_after: true
-
-    assert-regex:
-      type: file-regex
-      mutates_workspace: false
-
-    assert-progress:
-      type: markdown-checklist-progress
-      mutates_workspace: false
-
-  temp:
-    directory: "{{ mktemp('${TMPDIR:-/tmp}/mothership-p5.XXXXXX') }}"
-    cleanup: on-exit
-
   preconditions:
     - id: repository-root
       type: git-repository
@@ -269,27 +208,6 @@ spec:
       type: file-contains
       path: "{{ spec.paths.quality_workflow }}"
       text: scripts/check.sh
-
-    - id: saved-base-exists
-      when: "{{ state.initialized }}"
-      type: git-object-exists
-      object: "{{ state.base_commit }}^{commit}"
-
-    - id: saved-base-is-ancestor
-      when: "{{ state.initialized }}"
-      type: git-ancestor
-      ancestor: "{{ state.base_commit }}"
-      descendant: HEAD
-
-    - id: branch-unchanged
-      when: "{{ state.initialized }}"
-      type: git-current-branch-equals
-      expected: "{{ state.branch }}"
-
-    - id: protected-boundaries-unchanged
-      when: "{{ state.initialized }}"
-      type: workspace-integrity
-      policy: spec.workspace.mutationPolicy.integrity
 
   progress:
     source:
@@ -321,68 +239,28 @@ spec:
 
   validation:
     startingState:
-      repair: none
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
 
     phaseGate:
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-
-      onFailure:
-        strategy: repair-once
-        maxRepairAttempts: 1
-        repair:
-          actor: terra
-          reasoning: high
-          prompt: |
-            The workflow-owned gate failed during Priority 5.
-
-            Current focus:
-            {{ phase.label }}
-
-            Read the local repository instructions and the current Priority 5 state,
-            diagnose the failure, and repair only what is necessary for this focus.
-
-            Do not weaken the gate, change unrelated roadmap work, or advance another
-            Priority 5 acceptance criterion.
-
-            --- gate output ---
-            {{ tail(validation.failure.log, 260) }}
-        then:
-          - uses: assert-change-scope
-          - uses: canonical-gate
-        exhausted: fail-workflow
+      repair: once
 
     postAuditGate:
-      repair: none
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
 
     finalPriority5Gate:
-      repair: none
       steps:
-        - uses: assert-change-scope
         - uses: canonical-gate
-      failure: fail-workflow
-
-  lifecycle:
-    policy: safe-resume
-    validation: phaseGate
 
   phases:
     - id: "01"
       kind: criterion
       label: complete-attack-path
-      actor: terra
-      reasoning: high
-      criterion: "A catalogued equipped weapon can resolve a complete attack."
-      requiresChange: true
+      criterionID: attack-path
+      advanceProgress: true
       prompt: |
         Read AGENTS.md and the current Priority 5 roadmap, then complete only the
         currently targeted acceptance criterion.
@@ -426,15 +304,12 @@ spec:
         Add focused deterministic tests for the end-to-end happy path and its immediate
         missing/invalid setup errors.
 
-        Mark only this acceptance criterion complete after it is verified.
-
     - id: "02"
       kind: criterion
       label: attack-modifiers-and-log
       actor: luna
-      reasoning: high
-      criterion: "Advantage and disadvantage follow engine rules and are logged."
-      requiresChange: true
+      criterionID: modifiers-and-log
+      advanceProgress: true
       prompt: |
         Read the local instructions and Priority 5 state, then complete only the current
         acceptance criterion.
@@ -464,15 +339,11 @@ spec:
         Do not implement a new modifier abstraction and do not advance the later combat
         criteria.
 
-        Mark only this acceptance criterion complete after verification.
-
     - id: "03"
       kind: criterion
       label: combat-consequences
-      actor: terra
-      reasoning: high
-      criterion: "Armor, wounds, bleeding, and death outcomes match deterministic tests."
-      requiresChange: true
+      criterionID: combat-consequences
+      advanceProgress: true
       prompt: |
         Read the local instructions and current Priority 5 implementation, then close
         the deterministic combat-consequence criterion.
@@ -508,15 +379,11 @@ spec:
         Do not conflate a death-table result with retirement unless the existing domain
         explicitly says to do so.
 
-        Mark only this acceptance criterion complete after verification.
-
     - id: "04"
       kind: criterion
       label: atomic-combat-transaction
-      actor: terra
-      reasoning: high
-      criterion: "The mutation and activity record commit atomically."
-      requiresChange: true
+      criterionID: atomic-transaction
+      advanceProgress: true
       prompt: |
         Read the local instructions and Priority 5 state, then make attack persistence
         transactionally correct.
@@ -555,15 +422,11 @@ spec:
         Do not advance authorization-policy work beyond what is necessary to make this
         transaction structurally sound.
 
-        Mark only this acceptance criterion complete after verification.
-
     - id: "05"
       kind: criterion
       label: combat-authorization
-      actor: terra
-      reasoning: high
-      criterion: "Player/Warden modification boundaries remain enforced."
-      requiresChange: true
+      criterionID: authorization
+      advanceProgress: true
       prompt: |
         Read the local instructions and current Priority 5 code, then close the combat
         authorization criterion.
@@ -596,15 +459,13 @@ spec:
 
         Do not work ahead into Priority 6's general Warden correction system.
 
-        Mark only this acceptance criterion complete after verification.
-
     - id: "06"
       kind: criterion
       label: warden-direct-damage
       actor: luna
       reasoning: medium
-      criterion: "Direct damage remains available as a Warden adjudication tool."
-      requiresChange: true
+      criterionID: warden-direct-damage
+      advanceProgress: true
       prompt: |
         Read the local instructions and completed combat path, then close the final
         Priority 5 acceptance criterion.
@@ -633,14 +494,9 @@ spec:
         Add focused Warden/player tests and preserve existing hazard/internal damage
         callers.
 
-        Mark only this acceptance criterion complete after verification.
-
     - id: "07"
       kind: audit
       label: combat-integration-regressions
-      actor: luna
-      reasoning: high
-      requiresChange: false
       prompt: |
         Read AGENTS.md and Priority 5, then perform a focused integration/regression
         pass over the completed combat implementation.
@@ -684,8 +540,6 @@ spec:
       kind: audit
       label: final-combat-audit
       actor: terra
-      reasoning: high
-      requiresChange: false
       prompt: |
         Audit Priority 5 as one complete subsystem.
 
@@ -717,20 +571,16 @@ spec:
     - id: "09"
       kind: bookkeeping
       label: combat-completion-bookkeeping
-      actor: luna
-      reasoning: low
-      requiresChange: false
-      prompt: |
-        All Priority 5 acceptance criteria, automated gates, final audit, and requested
-        manual confirmation have completed.
-
-        Inspect only Priority 5 completion bookkeeping.
-
-        If every criterion is checked, mark the Priority 5 feature Status complete and
-        mark Priority 5 complete in the ranked roadmap index.
-
-        Do not alter roadmap wording, priority ordering, another feature, code, tests,
-        or rules data.
+      bookkeeping:
+        - type: markdown-status
+          path: "{{ spec.paths.roadmap }}"
+          label: Status
+          from: In Progress
+          to: Complete
+        - type: markdown-index
+          path: "{{ spec.paths.roadmap_index }}"
+          item: "[Complete Combat Workflow]"
+          state: checked
 
   humanGates:
     - id: priority-5-manual-combat-confirmation
@@ -846,10 +696,6 @@ spec:
     - id: post-audit
       validate: postAuditGate
 
-    - id: post-audit-checkpoint
-      checkpoint: checkpoint
-      label: post-audit
-
     - human: priority-5-manual-combat-confirmation
 
     - phase: "09"
@@ -862,35 +708,17 @@ spec:
         - type: progress-empty
           progress: spec.progress
 
-        - uses: assert-regex
-          with:
-            path: "{{ spec.paths.roadmap }}"
-            regex: '^Status:[[:space:]]+Complete[[:space:]]*$'
-
-        - uses: assert-regex
-          with:
-            path: "{{ spec.paths.roadmap_index }}"
-            regex: '^5\. \[[xX]\] \[Complete Combat Workflow\]'
-
-        - uses: assert-change-scope
-
         - type: workspace-integrity
           policy: spec.workspace.mutationPolicy.integrity
 
       finalValidation: finalPriority5Gate
 
-      checkpoint:
-        uses: checkpoint
-        label: priority-5-complete
-
       afterCheckpointAssertions:
-        - uses: assert-change-scope
         - type: workspace-integrity
           policy: spec.workspace.mutationPolicy.integrity
         - type: implementation-workspace-clean
 
       writeMarker:
-        record: "{{ state.workflow_complete }}"
         value: head_commit
 
       summary:
@@ -899,7 +727,6 @@ spec:
           - branch
           - base_commit
           - head_commit
-          - state_directory
           - commits_since_base
           - changed_files_since_base
           - workspace_clean

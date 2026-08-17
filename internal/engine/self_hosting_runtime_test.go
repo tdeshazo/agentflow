@@ -84,10 +84,10 @@ func TestSelfHostingWorkflowRunsWithDeterministicProviders(t *testing.T) {
 	if got, want := strings.Join(p.calls, ","), "luna:implement,terra:audit"; got != want {
 		t.Fatalf("provider executions = %q, want distinct implementation and audit executions %q", got, want)
 	}
-	if _, ok, err := e.Store.Resolve("implement.done"); err != nil || !ok {
+	if _, ok, err := e.Store.Resolve("phases/implement"); err != nil || !ok {
 		t.Fatalf("implementation marker: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := e.Store.Resolve("audit.done"); err != nil || !ok {
+	if _, ok, err := e.Store.Resolve("phases/audit"); err != nil || !ok {
 		t.Fatalf("audit marker: ok=%v err=%v", ok, err)
 	}
 	if !strings.Contains(gitIn(t, repo, "log", "--format=%s"), "fake agent implementation") {
@@ -99,7 +99,7 @@ func TestSelfHostingWorkflowRunsWithDeterministicProviders(t *testing.T) {
 	if got := gitIn(t, repo, "status", "--porcelain"); got != "" {
 		t.Fatalf("completed self-hosting fixture is dirty: %q", got)
 	}
-	if _, ok, err := e.Store.Resolve("self-host-review"); err != nil || !ok {
+	if _, ok, err := e.Store.Resolve("human/self-host-review"); err != nil || !ok {
 		t.Fatalf("human-gate evidence: ok=%v err=%v", ok, err)
 	}
 	if _, ok, err := e.Store.Resolve("complete"); err != nil || !ok {
@@ -143,7 +143,7 @@ func TestSelfHostingResumeInterruptedAuditRerunsActor(t *testing.T) {
 	if got, want := strings.Join(p.calls, ","), "luna:implement,terra:audit"; got != want {
 		t.Fatalf("calls before restart = %q, want %q", got, want)
 	}
-	if _, ok, err := e.Store.Resolve("implement.done"); err != nil || !ok {
+	if _, ok, err := e.Store.Resolve("phases/implement"); err != nil || !ok {
 		t.Fatalf("implementation checkpoint marker: ok=%v err=%v", ok, err)
 	}
 	if got := gitIn(t, repo, "status", "--porcelain"); !strings.Contains(got, "docs/audit.txt") {
@@ -176,7 +176,7 @@ func TestSelfHostingValidationRepairBudgetAndMutationPolicy(t *testing.T) {
 		if got, want := strings.Join(p.calls, ","), "luna:implement,terra:implement"; got != want {
 			t.Fatalf("repair actor calls = %q, want %q", got, want)
 		}
-		if _, ok, _ := e.Store.Resolve("implement.done"); ok {
+		if _, ok, _ := e.Store.Resolve("phases/implement"); ok {
 			t.Fatal("failing validation advanced the implementation phase")
 		}
 		var active ActivePhase
@@ -371,10 +371,11 @@ func selfHostingWorkflow(t *testing.T, repo string) *workflow.Workflow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := workflow.Validate(document); result.Status != workflow.Executable {
+	result := workflow.Validate(document)
+	if result.Status != workflow.Executable {
 		t.Fatalf("shipped self-hosting workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
 	}
-	w := document.Workflow
+	w := result.Normalized.Workflow
 	w.Spec.Parameters["repo_root"] = workflow.Parameter{Type: "path", Default: repo}
 	for i := range w.Spec.Preconditions {
 		if w.Spec.Preconditions[i].Type == "commands-exist" {
@@ -391,8 +392,8 @@ func selfHostingWorkflow(t *testing.T, repo string) *workflow.Workflow {
 func makeSelfHostingImplementationGateFail(w *workflow.Workflow) {
 	w.Spec.Tools["failing-gate"] = workflow.Tool{Type: "shell", Command: "false"}
 	v := w.Spec.Validation["implementation-gate"]
-	v.Steps = []workflow.ToolUse{{Uses: "assert-change-scope"}, {Uses: "failing-gate"}}
-	v.OnFailure.Then = []workflow.ToolUse{{Uses: "assert-change-scope"}, {Uses: "failing-gate"}}
+	v.Steps = []workflow.ToolUse{{Uses: "failing-gate"}}
+	v.OnFailure.Then = []workflow.ToolUse{{Uses: "failing-gate"}}
 	w.Spec.Validation["implementation-gate"] = v
 }
 

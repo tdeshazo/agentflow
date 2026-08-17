@@ -32,41 +32,6 @@ func (p *priority5FixtureProvider) Run(ctx context.Context, request provider.Req
 	if p.protectFiles {
 		return provider.Result{}, os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("tampered\n"), 0o644)
 	}
-	if request.Metadata["phase_kind"] == "criterion" {
-		path := filepath.Join(repo, "docs/planning/roadmap-04-combat-workflow.md")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return provider.Result{}, err
-		}
-		criterion := request.Metadata["criterion"]
-		old := "- [ ] " + criterion
-		updated := strings.Replace(string(b), old, "- [x] "+criterion, 1)
-		if updated != string(b) {
-			if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-				return provider.Result{}, err
-			}
-		}
-	}
-	if phase == "09" {
-		path := filepath.Join(repo, "docs/planning/roadmap-04-combat-workflow.md")
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return provider.Result{}, err
-		}
-		updated := strings.Replace(string(b), "Status: In Progress", "Status: Complete", 1)
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-			return provider.Result{}, err
-		}
-		path = filepath.Join(repo, "docs/planning/README.md")
-		b, err = os.ReadFile(path)
-		if err != nil {
-			return provider.Result{}, err
-		}
-		updated = strings.Replace(string(b), "5. [ ] [Complete Combat Workflow]", "5. [x] [Complete Combat Workflow]", 1)
-		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-			return provider.Result{}, err
-		}
-	}
 	if phase == p.interruptPhase && !p.interrupted {
 		p.interrupted = true
 		return provider.Result{}, context.Canceled
@@ -82,7 +47,7 @@ func TestPriority5WorkflowRunsWithDeterministicProviderAndResumes(t *testing.T) 
 	if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("interrupted run error = %v, want cancellation", err)
 	}
-	if ok, err := e.Store.GetJSON("active-phase", &ActivePhase{}); err != nil || !ok {
+	if ok, err := e.Store.GetJSON("active", &ActivePhase{}); err != nil || !ok {
 		t.Fatalf("active phase after interruption: ok=%v err=%v", ok, err)
 	}
 	if p.calls != 1 {
@@ -92,8 +57,8 @@ func TestPriority5WorkflowRunsWithDeterministicProviderAndResumes(t *testing.T) 
 	if err := newPriority5FixtureEngine(t, w, p).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p.calls != 10 { // 01 is resumed, then 02..09 complete normally.
-		t.Fatalf("provider calls after resume = %d, want 10", p.calls)
+	if p.calls != 9 { // 01 is resumed, then 02..08 complete; 09 is engine-owned.
+		t.Fatalf("provider calls after resume = %d, want 9", p.calls)
 	}
 	if _, ok, err := e.Store.Resolve("complete"); err != nil || !ok {
 		t.Fatalf("completion marker: ok=%v err=%v", ok, err)
@@ -101,7 +66,7 @@ func TestPriority5WorkflowRunsWithDeterministicProviderAndResumes(t *testing.T) 
 	if _, ok, err := e.Store.Resolve("manual-confirmed"); err != nil || !ok {
 		t.Fatalf("human skip evidence: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := e.Store.Resolve("01.done"); err != nil || !ok {
+	if _, ok, err := e.Store.Resolve("phases/01"); err != nil || !ok {
 		t.Fatalf("configured phase marker: ok=%v err=%v", ok, err)
 	}
 	if got := gitIn(t, repo, "status", "--porcelain"); got != "" {
@@ -135,10 +100,11 @@ func loadPriority5Fixture(t *testing.T, repo string) *workflow.Workflow {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := workflow.Validate(document); result.Status != workflow.Executable {
+	result := workflow.Validate(document)
+	if result.Status != workflow.Executable {
 		t.Fatalf("priority5 fixture status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
 	}
-	w := document.Workflow
+	w := result.Normalized.Workflow
 	w.Spec.Parameters["repo_root"] = workflow.Parameter{Type: "path", Default: repo}
 	w.Spec.Parameters["require_visual_confirm"] = workflow.Parameter{Type: "boolean", Default: false}
 	for i := range w.Spec.Preconditions {

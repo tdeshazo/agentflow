@@ -99,6 +99,11 @@ func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
 		t.Fatalf("self-hosting workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
 	}
 	w := document.Workflow
+	normalized, err := NormalizeWorkflow(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := normalized.Workflow
 	if w.Metadata.Name != "develop-agentflow" {
 		t.Fatalf("metadata.name = %q", w.Metadata.Name)
 	}
@@ -114,21 +119,17 @@ func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
 	if !boundedTaskCheck {
 		t.Fatal("self-hosting workflow must block empty tasks before provider execution")
 	}
-	byID := map[string]Phase{}
-	for _, phase := range w.Spec.Phases {
-		byID[phase.ID] = phase
-	}
-	if phase := byID["implement"]; phase.Actor != "luna" || phase.Reasoning != "high" || !phase.RequiresChange || !strings.Contains(phase.Prompt, "parameters.task") {
+	if phase := n.Spec.Phases[0]; phase.Actor != "luna" || phase.Reasoning != "high" || !phase.RequiresChange || phase.Validation != "implementation-gate" || !strings.Contains(phase.Prompt, "parameters.task") {
 		t.Fatalf("implement phase = %#v", phase)
 	}
-	if phase := byID["audit"]; phase.Actor != "terra" || phase.Reasoning != "high" || !strings.Contains(phase.Prompt, "actual current checkout") {
+	if phase := n.Spec.Phases[1]; phase.Actor != "terra" || phase.Reasoning != "high" || phase.Validation != "audit-gate" || !strings.Contains(phase.Prompt, "actual current checkout") {
 		t.Fatalf("audit phase = %#v", phase)
 	}
-	gate := w.Spec.Validation["implementation-gate"].OnFailure
+	gate := n.Spec.Validation["implementation-gate"].OnFailure
 	if gate.Strategy != "repair-once" || gate.MaxRepairAttempts != 1 || gate.Repair.Actor != "terra" || gate.Repair.Reasoning != "high" {
 		t.Fatalf("implementation repair policy = %#v", gate)
 	}
-	if audit := w.Spec.Validation["audit-gate"]; audit.OnFailure.MaxRepairAttempts != 0 || audit.Repair != "none" {
+	if audit := n.Spec.Validation["audit-gate"]; audit.OnFailure.MaxRepairAttempts != 0 || audit.Repair != "" {
 		t.Fatalf("audit gate must not add a repair attempt: %#v", audit)
 	}
 	var review *HumanGate
@@ -150,6 +151,81 @@ func TestDevelopAgentFlowWorkflowContract(t *testing.T) {
 		if !protected[path] {
 			t.Errorf("protected integrity path %q is missing", path)
 		}
+	}
+}
+
+func TestPriority4BenchmarkWorkflowsPreserveConciseSafetyContracts(t *testing.T) {
+	paths := []string{
+		filepath.Join("..", "..", "examples", "develop-agentflow.agent-workflow.yaml"),
+		filepath.Join("..", "..", "examples", "finish-priority-05.agent-workflow.yaml"),
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			document, err := Decode(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := Validate(document)
+			if result.Status != Executable || result.Normalized == nil {
+				t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+			}
+			w := document.Workflow
+			n := result.Normalized.Workflow
+			if len(w.Spec.Defaults.Phases) == 0 || w.Spec.Defaults.Agent.Runner != "codex" {
+				t.Fatalf("workflow does not use authoring defaults: %#v", w.Spec.Defaults)
+			}
+			if len(w.Spec.Recovery.ActivePhase) != 0 || w.Spec.Temp.Directory != "" {
+				t.Fatalf("workflow retains procedural/runtime plumbing: recovery=%#v temp=%#v", w.Spec.Recovery, w.Spec.Temp)
+			}
+			if w.Spec.Tools["canonical-gate"].Capture.Log != "" {
+				t.Fatal("canonical gate still authors interpreter log plumbing")
+			}
+			if _, ok := w.Spec.Tools["assert-change-scope"]; ok {
+				t.Fatal("scope assertion is duplicated as authored validation plumbing")
+			}
+			if n.Spec.Lifecycle.Policy != "safe-resume" {
+				t.Fatalf("normalized lifecycle = %#v", n.Spec.Lifecycle)
+			}
+			for name, agent := range n.Spec.Agents {
+				if agent.Runner != "codex" || agent.Sandbox != "workspace-write" || agent.Approval != "never" || !agent.Ephemeral || agent.Color != "never" || !agent.MayCommit || !agent.OutputLastMessage {
+					t.Fatalf("agent %q lost inherited execution authority: %#v", name, agent)
+				}
+			}
+			if len(n.Spec.Workspace.MutationPolicy.Allowed) == 0 || len(n.Spec.Workspace.MutationPolicy.Integrity) == 0 || n.Spec.Workspace.Cleanliness.BeforeFirstRun != "required" {
+				t.Fatal("normalized safety policy lost scope, integrity, or cleanliness")
+			}
+			for _, phase := range w.Spec.Phases {
+				if phase.Kind == "criterion" {
+					prompt := strings.ToLower(phase.Prompt)
+					if phase.CriterionID == "" || phase.Criterion != "" || !phase.AdvanceProgress || (strings.Contains(prompt, "mark") && strings.Contains(prompt, "acceptance")) {
+						t.Fatalf("criterion phase is not engine-accepted: %#v", phase)
+					}
+				}
+			}
+			plan, err := BuildExpandedPlan(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.SafetyEnforcementPoints) < 4 || len(plan.RecoveryBehavior) < 4 || len(plan.Validations) == 0 || len(plan.CompletionContract) == 0 {
+				t.Fatalf("expanded plan hides runtime contract: %#v", plan)
+			}
+			if filepath.Base(path) == "finish-priority-05.agent-workflow.yaml" {
+				bookkeeping := n.Spec.Phases[len(n.Spec.Phases)-1]
+				if bookkeeping.Kind != "bookkeeping" || bookkeeping.Actor != "" || len(bookkeeping.Bookkeeping) != 2 {
+					t.Fatalf("bookkeeping phase = %#v", bookkeeping)
+				}
+				if bookkeeping.Bookkeeping[0].Type != "markdown-status" || bookkeeping.Bookkeeping[1].Type != "markdown-index" || bookkeeping.Bookkeeping[1].State != "checked" {
+					t.Fatalf("bookkeeping transitions = %#v", bookkeeping.Bookkeeping)
+				}
+				if len(plan.ProgressTransitions) != 6 || plan.Phases[len(plan.Phases)-1].Validation != "phaseGate" {
+					t.Fatalf("priority 5 progress/phase plan = %#v", plan)
+				}
+				acceptance := plan.Phases[len(plan.Phases)-1].Acceptance
+				if strings.Contains(strings.Join(acceptance, " "), "run actor") || !strings.Contains(strings.Join(acceptance, " "), "deterministic bookkeeping") {
+					t.Fatalf("expanded bookkeeping authority = %#v", acceptance)
+				}
+			}
+		})
 	}
 }
 
