@@ -120,5 +120,6 @@ Alternatively, request a reset as part of the next run with
 `--set reset_workflow_state=true`. Use reset only when intentionally abandoning
 that run's recovery history.
 
-This document describes the vehicle and its checks. It does not claim that a
-subsequent AgentFlow change has already been completed through the workflow.
+This document describes the vehicle and its checks. See the [self-hosting MVP
+evidence](evidence/self-hosting-mvp.md) for the retained proof of a completed
+run.
