@@ -122,6 +122,8 @@ The current runtime intentionally implements a conservative subset of the broade
 
 This is the MVP gate for the project. Priorities after this point are improvements to a system that has already demonstrated that it can safely develop itself.
 
+**MVP status: achieved.** The retained proof is documented in [docs/evidence/self-hosting-mvp.md](docs/evidence/self-hosting-mvp.md).
+
 ### Scope
 
 - Add a repository-owned AgentFlow workflow for development of `agentflow-spec`, for example `examples/develop-agentflow.agent-workflow.yaml`.

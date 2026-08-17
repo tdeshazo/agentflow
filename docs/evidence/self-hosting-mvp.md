@@ -52,3 +52,5 @@ definition, `agentflow status --json`, and these retained local artifacts:
 
 No prompts, model reasoning, environment values, secrets, or complete agent
 logs are reproduced here.
+
+Review agent: Passed (Terra/high)
