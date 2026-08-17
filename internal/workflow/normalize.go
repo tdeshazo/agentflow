@@ -39,6 +39,26 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 			}
 		}
 	}
+	w.Spec.Flow = append([]FlowStep(nil), d.Workflow.Spec.Flow...)
+	for i := range w.Spec.Flow {
+		loop := w.Spec.Flow[i].Loop
+		if loop == nil || len(loop.DispatchByCriterion) == 0 {
+			continue
+		}
+		byID := make(map[string]string, len(loop.DispatchByCriterion))
+		for _, key := range sortedKeys(loop.DispatchByCriterion) {
+			phase := loop.DispatchByCriterion[key]
+			id, err := criterionIDForDispatchKey(d.Workflow, key)
+			if err != nil {
+				return nil, fmt.Errorf("flow[%d] dispatch criterion %q: %w", i, key, err)
+			}
+			if previous, exists := byID[id]; exists && previous != phase {
+				return nil, fmt.Errorf("flow[%d] dispatches criterion %q to both phase %q and %q", i, id, previous, phase)
+			}
+			byID[id] = phase
+		}
+		loop.DispatchByCriterion = byID
+	}
 	w.Spec.Validation = make(map[string]Validation, len(d.Workflow.Spec.Validation))
 	for id, v := range d.Workflow.Spec.Validation {
 		if v.Repair == "once" {
@@ -55,6 +75,28 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 		w.Spec.Validation[id] = v
 	}
 	return &Document{Workflow: &w, Locations: d.Locations}, nil
+}
+
+// criterionIDForDispatchKey compiles the legacy display-text loop selector to
+// the immutable ID used by the runtime. IDs take precedence so a v1alpha1
+// document remains deterministic even when an ID happens to equal another
+// criterion's display text.
+func criterionIDForDispatchKey(w *Workflow, key string) (string, error) {
+	for _, criterion := range w.Spec.Progress.Criteria {
+		if criterion.ID == key {
+			return criterion.ID, nil
+		}
+	}
+	var matches []Criterion
+	for _, criterion := range w.Spec.Progress.Criteria {
+		if criterion.Text == key {
+			matches = append(matches, criterion)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("must name exactly one declared criterion ID or text")
+	}
+	return matches[0].ID, nil
 }
 
 func mergeAgent(base, local Agent) Agent {

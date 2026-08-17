@@ -102,6 +102,35 @@ func TestConditionTypeFailurePreventsActorExecution(t *testing.T) {
 	}
 }
 
+func TestLoopDispatchUsesStableCriterionIDs(t *testing.T) {
+	repo := newControlFlowRepo(t)
+	w := controlFlowWorkflow(t, repo, 3)
+	for i := range w.Spec.Phases {
+		phase := &w.Spec.Phases[i]
+		if phase.Kind != "criterion" {
+			continue
+		}
+		phase.CriterionID = phase.Criterion
+		phase.Criterion = ""
+	}
+	for i := range w.Spec.Flow {
+		if w.Spec.Flow[i].Loop != nil {
+			w.Spec.Flow[i].Loop.DispatchByCriterion = map[string]string{"one": "one", "two": "two"}
+		}
+	}
+	p := &checklistProvider{}
+	e, err := New(w, map[string]provider.Provider{"test": p}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want 2", p.calls)
+	}
+}
+
 func newControlFlowRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()

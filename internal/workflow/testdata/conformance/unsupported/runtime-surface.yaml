@@ -9,9 +9,14 @@ spec:
   tools:
     gate:
       type: file-regex
+  validation:
+    gate:
+      steps:
+        - uses: gate
   phases:
     - id: build
       kind: implementation
       actor: worker
+      validation: gate
   flow:
     - phase: build

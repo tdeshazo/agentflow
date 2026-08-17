@@ -260,7 +260,9 @@ and progress capture, durable active-phase and actor-completion state,
 deterministic acceptance, checkpointing of accepted work, the commit-valued
 completed-phase marker, and active-state cleanup. A named `checkpoint` is an
 optional existing tool override; omitting it uses the runtime Git checkpoint.
-The safety properties cannot be disabled by lifecycle fields.
+An implicitly runtime-owned phase must name a deterministic validation gate
+before the document is executable. The safety properties cannot be disabled by
+lifecycle fields.
 
 `phase.validation` overrides the lifecycle's default validation for one phase.
 The actor's successful return is never acceptance evidence: a phase must still
@@ -405,16 +407,17 @@ Typical flow:
     maxIterations: "{{ parameters.max_dynamic_steps }}"
     select: "{{ progress.next_unchecked }}"
     dispatchByCriterion:
-      "First acceptance criterion": "01"
-      "Second acceptance criterion": "02"
+      first-acceptance-criterion: "01"
+      second-acceptance-criterion: "02"
     requireUncheckedCountDelta: -1
 ```
 
 This is the sole dynamic loop form in `v1alpha1`. `maxIterations` must be a
-positive integer and the required delta must be negative. Each selected text
-must map to a declared criterion phase targeting that same text. The engine
-checks the progress delta after every iteration and fails at the bound rather
-than continuing indefinitely. Flow steps, validation tool uses, phase
+positive integer and the required delta must be negative. Dispatch keys are
+stable criterion IDs; legacy display-text keys are normalized to their unique
+declared IDs. Each selected item must map to a declared criterion phase
+targeting that same ID. The engine checks the progress delta after every
+iteration and fails at the bound rather than continuing indefinitely. Flow steps, validation tool uses, phase
 lifecycle actions, phases, and gates can all carry a boolean condition.
 
 ## `spec.completion`

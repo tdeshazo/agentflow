@@ -147,6 +147,10 @@ actor—changes exactly the targeted Markdown item. The runtime rejects a change
 pre-acceptance progress snapshot, duplicate/missing targets, another closed
 criterion, or a delta other than the declared one.
 
+Dynamic `dispatchByCriterion` loop keys should also use those stable IDs.
+Legacy display-text keys are normalized to their unique declared ID before the
+runtime selects a phase.
+
 `unchecked_count_delta: -1` means a criterion phase must reduce the unchecked count by exactly one. Combined with `targeted_item_must_be_checked`, it prevents an agent from closing unrelated criteria to manufacture progress.
 
 ## `spec.validation`

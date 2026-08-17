@@ -26,6 +26,7 @@ spec:
     - id: build
       kind: implementation
       actor: worker
+      validation: gate
       prompt: build the bounded change
   flow:
     - phase: build

@@ -298,6 +298,7 @@ func (v validator) references() {
 		v.validationFailurePolicy(path, validation)
 	}
 	v.lifecycle()
+	v.runtimeLifecycleValidation()
 	for i, check := range v.w.Spec.Preconditions {
 		v.check(fmt.Sprintf("spec.preconditions[%d]", i), check)
 		v.condition(fmt.Sprintf("spec.preconditions[%d].when", i), check.When)
@@ -451,6 +452,41 @@ func (v validator) lifecycle() {
 		if len(phase.After) != 0 {
 			v.add(Invalid, fmt.Sprintf("spec.phases[%d].after", i), "cannot be combined with spec.lifecycle; use the runtime-owned lifecycle contract")
 		}
+	}
+}
+
+// runtimeOwnsPhaseLifecycle mirrors the engine's compact-lifecycle selection
+// without importing the runtime package. A document that selects this path
+// must name deterministic validation before it is executable; otherwise an
+// actor could run but could never safely become accepted.
+func (v validator) runtimeOwnsPhaseLifecycle(p Phase) bool {
+	lifecycle := v.effectiveLifecycle()
+	if lifecycle.Policy != "" || lifecycle.Validation != "" || lifecycle.Checkpoint != "" {
+		return true
+	}
+	if p.AdvanceProgress || len(p.Bookkeeping) > 0 {
+		return true
+	}
+	return len(v.w.Spec.PhaseDefaults.Before) == 0 &&
+		len(v.w.Spec.PhaseDefaults.After) == 0 &&
+		len(p.After) == 0
+}
+
+func (v validator) runtimeLifecycleValidation() {
+	lifecycle := v.effectiveLifecycle()
+	if lifecycle.Policy != "" || lifecycle.Validation != "" || lifecycle.Checkpoint != "" {
+		// lifecycle already validates the selected shared policy and reports a
+		// missing phase gate with its more specific diagnostic.
+		return
+	}
+	for i, phase := range v.w.Spec.Phases {
+		if !v.runtimeOwnsPhaseLifecycle(phase) {
+			continue
+		}
+		if phase.Validation != "" || v.phaseTemplate(phase).Validation != "" || v.effectiveLifecycle().Validation != "" {
+			continue
+		}
+		v.add(Invalid, fmt.Sprintf("spec.phases[%d].validation", i), "is required for the runtime-owned lifecycle")
 	}
 }
 

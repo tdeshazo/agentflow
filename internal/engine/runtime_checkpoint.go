@@ -61,7 +61,10 @@ func (e *Engine) assertProgress(p *workflow.Phase, active ActivePhase) error {
 func (e *Engine) assertProgressAction(p *workflow.Phase, active ActivePhase, assertion workflow.ProgressAssertion) error {
 	criterion := assertion.Criterion
 	if criterion == "" {
-		criterion = p.Criterion
+		criterion = p.CriterionID
+		if criterion == "" {
+			criterion = p.Criterion
+		}
 	}
 	criterion, err := e.context(p).Expand(criterion)
 	if err != nil {
@@ -224,6 +227,19 @@ func (e *Engine) criterionText(value string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+func (e *Engine) criterionIDForText(text string) (string, error) {
+	var matches []string
+	for _, criterion := range e.Workflow.Spec.Progress.Criteria {
+		if criterion.Text == text {
+			matches = append(matches, criterion.ID)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("next unchecked progress item %q does not resolve to exactly one declared criterion", text)
+	}
+	return matches[0], nil
 }
 
 // phaseCriterion resolves a phase target to its immutable criterion ID and

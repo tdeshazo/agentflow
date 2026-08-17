@@ -29,6 +29,7 @@ spec:
       kind: implementation
       label: build
       actor: worker
+      validation: phaseGate
       prompt: make the bounded change
   flow:
     - phase: build
@@ -70,6 +71,20 @@ func TestValidateRuntimeOwnedLifecyclePolicy(t *testing.T) {
 		}
 	}
 	t.Fatalf("lifecycle diagnostics = %#v", result.Diagnostics)
+}
+
+func TestValidateRejectsDefaultRuntimeLifecycleWithoutValidation(t *testing.T) {
+	body := strings.Replace(executableFixture, "      validation: phaseGate\n", "", 1)
+	result := ValidateFile(writeWorkflow(t, body))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Path == "spec.phases[0].validation" && strings.Contains(diagnostic.Message, "runtime-owned lifecycle") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v", result.Diagnostics)
 }
 
 func TestValidateEngineOwnedProgressAndBookkeeping(t *testing.T) {

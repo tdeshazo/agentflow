@@ -30,24 +30,28 @@ func (e *Engine) runLoop(ctx context.Context, loop workflow.Loop) error {
 		if err != nil {
 			return err
 		}
-		criterion := progress.NextUnchecked()
-		if criterion == "" {
+		criterionText := progress.NextUnchecked()
+		if criterionText == "" {
 			return fmt.Errorf("loop selected next unchecked criterion but none is available")
 		}
-		phaseID, ok := loop.DispatchByCriterion[criterion]
+		criterionID, err := e.criterionIDForText(criterionText)
+		if err != nil {
+			return err
+		}
+		phaseID, ok := loop.DispatchByCriterion[criterionID]
 		if !ok {
-			return fmt.Errorf("loop has no phase for next unchecked criterion %q", criterion)
+			return fmt.Errorf("loop has no phase for next unchecked criterion %q (%s)", criterionID, criterionText)
 		}
 		phase, err := e.phaseByID(phaseID)
 		if err != nil {
 			return err
 		}
-		phaseCriterion, err := e.criterionText(phase.Criterion)
+		phaseCriterionID, _, err := e.phaseCriterion(phase)
 		if err != nil {
 			return err
 		}
-		if phase.Kind != "criterion" || phaseCriterion != criterion {
-			return fmt.Errorf("loop dispatch for %q points to phase %q, which does not target that criterion", criterion, phaseID)
+		if phase.Kind != "criterion" || phaseCriterionID != criterionID {
+			return fmt.Errorf("loop dispatch for %q points to phase %q, which does not target that criterion", criterionID, phaseID)
 		}
 		before := progress.UncheckedCount
 		if err := e.runPhase(ctx, phaseID); err != nil {
@@ -59,7 +63,7 @@ func (e *Engine) runLoop(ctx context.Context, loop workflow.Loop) error {
 		}
 		delta := loop.RequireUncheckedCountDelta
 		if after != before+delta {
-			return fmt.Errorf("loop progress violation for %q: before=%d after=%d expected=%d", criterion, before, after, before+delta)
+			return fmt.Errorf("loop progress violation for %q: before=%d after=%d expected=%d", criterionID, before, after, before+delta)
 		}
 	}
 }

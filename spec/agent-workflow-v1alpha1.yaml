@@ -372,8 +372,10 @@ spec:
     #     maxIterations: "{{ parameters.max_dynamic_steps }}"
     #     select: "{{ progress.next_unchecked }}"
     #     dispatchByCriterion:
-    #       "First acceptance criterion text": "01"
-    #       "Second acceptance criterion text": "02"
+    #       first-acceptance-criterion: "01"
+    #       second-acceptance-criterion: "02"
+    # IDs are the executable keys. Legacy display-text keys are normalized to
+    # their unique declared criterion IDs before execution.
     #     requireUncheckedCountDelta: -1
 
     - phase: "07"

@@ -1,6 +1,9 @@
 package workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const conciseFixture = `
 apiVersion: agentflow.dev/v1alpha1
@@ -78,6 +81,78 @@ func TestNormalizeWorkflowResolvesConciseDefaults(t *testing.T) {
 	if v.OnFailure.Strategy != "repair-once" || v.OnFailure.MaxRepairAttempts != 1 || v.OnFailure.Repair.Actor != "worker" || len(v.OnFailure.Then) != 0 {
 		t.Fatalf("repair = %#v", v.OnFailure)
 	}
+}
+
+func TestNormalizeWorkflowCompilesLegacyLoopDispatchTextToStableIDs(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: stable-loop-dispatch}
+spec:
+  agents: {worker: {runner: codex}}
+  tools: {gate: {type: shell, command: "true"}}
+  validation: {gate: {steps: [{uses: gate}]}}
+  progress:
+    selection: {strategy: first-unchecked}
+    criteria:
+      - {id: one, text: First criterion}
+  phases:
+    - {id: one, kind: criterion, actor: worker, criterionID: one, validation: gate, prompt: implement}
+  flow:
+    - loop:
+        while: "{{ progress.unchecked_count > 0 }}"
+        maxIterations: "1"
+        select: "{{ progress.next_unchecked }}"
+        dispatchByCriterion: {"First criterion": one}
+        requireUncheckedCountDelta: -1
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := NormalizeWorkflow(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := n.Workflow.Spec.Flow[0].Loop.DispatchByCriterion
+	if got["one"] != "one" || len(got) != 1 {
+		t.Fatalf("normalized loop dispatch = %#v", got)
+	}
+}
+
+func TestValidateRejectsConflictingNormalizedLoopDispatch(t *testing.T) {
+	result := ValidateFile(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: conflicting-loop-dispatch}
+spec:
+  agents: {worker: {runner: codex}}
+  tools: {gate: {type: shell, command: "true"}}
+  validation: {gate: {steps: [{uses: gate}]}}
+  progress:
+    selection: {strategy: first-unchecked}
+    criteria:
+      - {id: one, text: First criterion}
+      - {id: two, text: Second criterion}
+  phases:
+    - {id: one, kind: criterion, actor: worker, criterionID: one, validation: gate, prompt: implement one}
+    - {id: two, kind: criterion, actor: worker, criterionID: two, validation: gate, prompt: implement two}
+  flow:
+    - loop:
+        while: "{{ progress.unchecked_count > 0 }}"
+        maxIterations: "2"
+        select: "{{ progress.next_unchecked }}"
+        dispatchByCriterion: {one: one, "First criterion": two}
+        requireUncheckedCountDelta: -1
+`))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "normalize workflow") && strings.Contains(diagnostic.Message, "dispatches criterion") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v", result.Diagnostics)
 }
 
 func TestBuildExpandedPlanExposesRuntimeContract(t *testing.T) {
