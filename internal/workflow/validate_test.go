@@ -50,6 +50,28 @@ func TestValidateExecutableWithoutRepository(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimeOwnedLifecyclePolicy(t *testing.T) {
+	valid := strings.Replace(executableFixture, "  phases:", `  lifecycle:
+    policy: safe-resume
+    validation: phaseGate
+  phases:`, 1)
+	if result := ValidateFile(writeWorkflow(t, valid)); result.Status != Executable {
+		t.Fatalf("compact lifecycle status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+
+	invalid := strings.Replace(valid, "policy: safe-resume", "policy: unsafe", 1)
+	result := ValidateFile(writeWorkflow(t, invalid))
+	if result.Status != Invalid {
+		t.Fatalf("invalid lifecycle status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Path == "spec.lifecycle.policy" && strings.Contains(diagnostic.Message, "unsupported lifecycle policy") {
+			return
+		}
+	}
+	t.Fatalf("lifecycle diagnostics = %#v", result.Diagnostics)
+}
+
 func TestValidateReportsCrossReferenceAtYAMLPath(t *testing.T) {
 	body := strings.Replace(executableFixture, "actor: worker", "actor: missing", 1)
 	r := ValidateFile(writeWorkflow(t, body))

@@ -182,6 +182,9 @@ func (e *Engine) runCompletion(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown completion %q", name)
 	}
+	if err := e.assertMutationBoundary(false, e.lifecycleConfigured()); err != nil {
+		return fmt.Errorf("completion %s failed its safety boundary: %w", name, err)
+	}
 	for _, a := range c.Assertions {
 		if err := e.runAssertion(a); err != nil {
 			return err
@@ -201,6 +204,9 @@ func (e *Engine) runCompletion(ctx context.Context, name string) error {
 		if err := e.runAssertion(a); err != nil {
 			return err
 		}
+	}
+	if err := e.assertMutationBoundary(true, e.lifecycleConfigured()); err != nil {
+		return fmt.Errorf("completion %s failed its final safety boundary: %w", name, err)
 	}
 	head, err := e.Repo.Head()
 	if err != nil {

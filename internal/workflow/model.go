@@ -46,12 +46,24 @@ type Spec struct {
 	Preconditions []Check               `yaml:"preconditions"`
 	Progress      ProgressSpec          `yaml:"progress"`
 	Validation    map[string]Validation `yaml:"validation"`
+	Lifecycle     LifecyclePolicy       `yaml:"lifecycle"`
 	PhaseDefaults PhaseDefaults         `yaml:"phaseDefaults"`
 	Phases        []Phase               `yaml:"phases"`
 	HumanGates    []HumanGate           `yaml:"humanGates"`
 	Recovery      Recovery              `yaml:"recovery"`
 	Flow          []FlowStep            `yaml:"flow"`
 	Completion    map[string]Completion `yaml:"completion"`
+}
+
+// LifecyclePolicy describes the runtime-owned lifecycle for mutable AI
+// phases. It is intentionally small: validation remains a named deterministic
+// workflow concern, while the runtime owns the safe phase boundaries around
+// it. An omitted policy uses the runtime's safe-resume defaults when a phase
+// has no legacy procedural lifecycle actions.
+type LifecyclePolicy struct {
+	Policy     string `yaml:"policy"`
+	Validation string `yaml:"validation"`
+	Checkpoint string `yaml:"checkpoint"`
 }
 
 type Parameter struct {
@@ -364,6 +376,7 @@ type Phase struct {
 	Reasoning      string        `yaml:"reasoning"`
 	Criterion      string        `yaml:"criterion"`
 	RequiresChange bool          `yaml:"requiresChange"`
+	Validation     string        `yaml:"validation"`
 	If             string        `yaml:"if"`
 	Prompt         string        `yaml:"prompt"`
 	After          []PhaseAction `yaml:"after"`

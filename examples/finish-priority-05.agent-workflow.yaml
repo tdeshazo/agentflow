@@ -371,33 +371,9 @@ spec:
         - uses: canonical-gate
       failure: fail-workflow
 
-  phaseDefaults:
-    before:
-      - require_clean_implementation_workspace: true
-      - capture_phase_start_commit: true
-      - capture_unchecked_count_before: true
-      - persist_active_phase:
-          fields:
-            - phase_id
-            - phase_start_commit
-            - unchecked_count_before
-    after:
-      - validate: phaseGate
-      - if: "{{ phase.kind == 'criterion' }}"
-        assertProgress:
-          criterion: "{{ phase.criterion }}"
-          uncheckedCountDelta: -1
-      - checkpoint: checkpoint
-      - if: "{{ phase.requiresChange }}"
-        assertNetRepositoryChangeSincePhaseStart: true
-      - markPhaseComplete:
-          value: head_commit
-      - clearActivePhase: true
-    skip:
-      completedMarker: skip
-      criterionAlreadyChecked:
-        action: mark-phase-complete-with-current-head
-        validate_before_marking: false
+  lifecycle:
+    policy: safe-resume
+    validation: phaseGate
 
   phases:
     - id: "01"
@@ -842,55 +818,12 @@ spec:
           record: "{{ state.manual_confirmation }}"
           value: "skipped {{ head_commit }}"
 
-  recovery:
-    activePhase:
-      - readActivePhase:
-          fields:
-            - phase_id
-            - phase_start_commit
-            - unchecked_count_before
-      - restorePhaseDefinition: true
-      - assertPhaseStartCommitExists: true
-      - assertPhaseStartIsAncestorOfHead: true
-
-      - if: "{{ phase.kind == 'criterion' and progress.is_checked(phase.criterion) }}"
-        then:
-          - validate: phaseGate
-          - assertProgress:
-              criterion: "{{ phase.criterion }}"
-              uncheckedCountBefore: "{{ state.active_phase.unchecked_count_before }}"
-              uncheckedCountDelta: -1
-          - checkpoint: checkpoint
-          - markPhaseComplete:
-              value: head_commit
-          - clearActivePhase: true
-          - return: recovered
-
-      - runAgent:
-          phase: "{{ state.active_phase.phase_id }}"
-          promptPrefix: |
-            Resume this phase from the repository state already present.
-
-            The prior run may have made partial commits or left partial working-tree
-            changes. Inspect them first; preserve correct work and finish only this phase's
-            objective.
-
-      - runPhaseAfterSequence: true
-
   flow:
     - id: already-complete
       if: "{{ state.workflow_complete.exists }}"
       then:
         - report: "Priority 5 workflow already completed at {{ state.workflow_complete.value }}"
         - stop: success
-
-    - id: recover-interrupted-phase
-      if: "{{ state.active_phase.exists }}"
-      recover: activePhase
-
-    - id: require-clean-after-recovery
-      assert:
-        type: implementation-workspace-clean
 
     - id: starting-state
       validate: startingState

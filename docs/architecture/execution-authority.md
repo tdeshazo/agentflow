@@ -44,6 +44,13 @@ requires a clean worktree, and reasserts the policy. The completed-phase marker
 is written at the accepted `HEAD`; completion bookkeeping is a separate
 validated transition after all phases and required gates pass.
 
+For concise workflows, `spec.lifecycle.policy: safe-resume` makes these phase
+boundaries runtime-owned. The runtime also rechecks lineage, protected
+integrity, and allowed scope before and after actor/tool work, at checkpoint and
+acceptance, and before reusing a completed marker. A lifecycle or legacy
+recovery override may change procedural detail only; it cannot bypass the
+deterministic acceptance boundary.
+
 ## Durable execution and recovery
 
 The interpreter stores workflow evidence in Git objects and namespaced refs,

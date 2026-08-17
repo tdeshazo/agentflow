@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 	"github.com/tdeshazo/agentflow-spec/provider"
@@ -71,6 +70,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	if ok, sha, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if ok {
+		if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+			return fmt.Errorf("completed phase %s is no longer safe to skip: %w", id, err)
+		}
 		fmt.Fprintf(e.Out, "==> Skipping completed phase %s: %s (%s)\n", id, p.Label, sha)
 		return nil
 	}
@@ -121,12 +123,8 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 			return nil
 		}
 	}
-	dirty, err := e.implementationDirtyFiles()
-	if err != nil {
-		return err
-	}
-	if len(dirty) > 0 {
-		return fmt.Errorf("phase %s cannot start with unexplained dirty files: %s", id, strings.Join(dirty, ", "))
+	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+		return fmt.Errorf("phase %s cannot start safely: %w", id, err)
 	}
 	active, err := e.newActivePhase(id)
 	if err != nil {
@@ -150,6 +148,20 @@ func (e *Engine) runPhase(ctx context.Context, id string) error {
 	return e.finishPhase(ctx, p, active)
 }
 func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active ActivePhase) error {
+	if e.runtimeOwnsPhaseLifecycle(p) {
+		actions, err := e.runtimePhaseActions(p)
+		if err != nil {
+			return err
+		}
+		active.ValidationPassed = false
+		if err := e.runPhaseActions(ctx, p, &active, actions); err != nil {
+			return err
+		}
+		if !active.ValidationPassed {
+			return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
+		}
+		return e.requirePhaseCompletion(p)
+	}
 	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
 	actions = append(actions, p.After...)
 	if len(actions) == 0 {
@@ -195,6 +207,9 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+		return fmt.Errorf("cannot recover phase %s safely: %w", p.ID, err)
+	}
 	if !e.Repo.ObjectExists(a.StartCommit + "^{commit}") {
 		return fmt.Errorf("saved phase start missing: %s", a.StartCommit)
 	}
@@ -216,11 +231,38 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 		// actor completed, but it may complete a pending acceptance sequence.
 		return e.finishPhase(ctx, p, a)
 	}
+	// A provider may have returned an error after leaving useful partial work or
+	// a partial commit. Inspect that state with the deterministic phase gate
+	// before asking the actor to continue. A passing gate still cannot authorize
+	// acceptance because actor_completed is intentionally false; it only tells
+	// the resumed actor that the retained state is internally coherent.
+	if validation := e.phaseValidation(p); validation != "" {
+		if err := e.validateExistingPhaseState(ctx, validation, p); err != nil {
+			var safetyErr *safetyViolation
+			if errors.As(err, &safetyErr) {
+				if persistErr := e.persistSafetyFailure(p, err); persistErr != nil {
+					return persistErr
+				}
+				return err
+			}
+			fmt.Fprintf(e.Out, "==> Retained phase work is not yet acceptable; resuming actor %s\n", p.Actor)
+		} else {
+			fmt.Fprintln(e.Out, "==> Retained phase work passed a preflight gate; actor completion evidence is still required")
+		}
+	}
 	prompt := "Resume this phase from the repository state already present.\nInspect partial commits and working-tree changes first; preserve correct work and finish only this phase's objective.\n\n" + p.Prompt
 	if err := e.runPhaseActor(ctx, p, prompt, &a); err != nil {
 		return err
 	}
 	return e.finishPhase(ctx, p, a)
+}
+
+func (e *Engine) validateExistingPhaseState(ctx context.Context, name string, p *workflow.Phase) error {
+	v, ok := e.Workflow.Spec.Validation[name]
+	if !ok {
+		return fmt.Errorf("unknown validation %q", name)
+	}
+	return e.runToolUses(ctx, v.Steps, p)
 }
 
 // runPhaseActor records the only evidence that authorizes deterministic phase
@@ -229,6 +271,15 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 // validation policy, while this record answers whether the phase itself ran.
 func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt string, active *ActivePhase) error {
 	if err := e.runAgent(ctx, p.Actor, p.Reasoning, prompt, p); err != nil {
+		if policyErr := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); policyErr != nil {
+			var safetyErr *safetyViolation
+			if errors.As(policyErr, &safetyErr) {
+				if persistErr := e.persistSafetyFailure(p, policyErr); persistErr != nil {
+					return persistErr
+				}
+			}
+			return policyErr
+		}
 		return err
 	}
 	active.ActorCompleted = true
@@ -346,6 +397,26 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	return e.Store.SetJSON(e.activeRecord(), active)
 }
 
+func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
+	if p == nil {
+		return nil
+	}
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil {
+		return err
+	}
+	if !ok || active.PhaseID != p.ID {
+		return nil
+	}
+	active.FailureKind = PhaseFailureSafety
+	if active.Validation == "" {
+		active.Validation = "workspace-policy"
+	}
+	active.ValidationError = errorOutput(failure)
+	return e.Store.SetJSON(e.activeRecord(), active)
+}
+
 func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 	if p != nil {
 		var active ActivePhase
@@ -424,6 +495,9 @@ func (e *Engine) clearStandaloneRepairState(validation string) error {
 }
 func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *workflow.Phase) error {
 	for _, use := range steps {
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+			return err
+		}
 		if use.If != "" {
 			ok, err := e.bool(p, use.If)
 			if err != nil {
@@ -434,6 +508,12 @@ func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *w
 			}
 		}
 		if err := e.runToolUse(ctx, use, p); err != nil {
+			if policyErr := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); policyErr != nil {
+				return policyErr
+			}
+			return err
+		}
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 			return err
 		}
 	}

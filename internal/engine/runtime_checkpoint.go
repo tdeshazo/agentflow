@@ -11,7 +11,7 @@ import (
 )
 
 func (e *Engine) checkpoint(label string, p *workflow.Phase) error {
-	if err := e.assertScope(); err != nil {
+	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return err
 	}
 	dirty, err := e.implementationDirtyFiles()
@@ -48,7 +48,7 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) error {
 	if len(dirty) > 0 {
 		return fmt.Errorf("workspace remains dirty after checkpoint: %s", strings.Join(dirty, ", "))
 	}
-	return e.assertScope()
+	return e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p))
 }
 func (e *Engine) assertProgress(p *workflow.Phase, active ActivePhase) error {
 	return e.assertProgressAction(p, active, workflow.ProgressAssertion{Criterion: p.Criterion})

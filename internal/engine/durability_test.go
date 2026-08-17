@@ -489,6 +489,159 @@ func TestResumeAfterSuccessfulActorReturnBeforeAcceptanceDoesNotReplayActor(t *t
 	assertDurableCompletion(t, e, repo)
 }
 
+func TestRuntimeOwnedLifecycleUsesDurableSafetyContract(t *testing.T) {
+	t.Run("clean start and resumed acceptance do not replay the actor", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := compactLifecycleWorkflow(repo, "compact-clean-start")
+		p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+			return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+		}}
+		e := newDurableEngine(t, w, p)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := e.Run(ctx); err == nil || !strings.Contains(err.Error(), "validation phaseGate failed") {
+			t.Fatalf("interrupted acceptance error = %v", err)
+		}
+		var active ActivePhase
+		if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || !active.ActorCompleted {
+			t.Fatalf("durable compact active state = %+v ok=%v err=%v", active, ok, err)
+		}
+		if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if p.calls != 1 {
+			t.Fatalf("resumed acceptance replayed actor: calls=%d", p.calls)
+		}
+		assertDurableCompletion(t, e, repo)
+	})
+
+	t.Run("dirty partial work is preflighted and preserved before actor resume", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := compactLifecycleWorkflow(repo, "compact-dirty-resume")
+		p := &durableProvider{}
+		p.action = func(_ context.Context, request provider.Request) error {
+			if p.calls == 1 {
+				if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("partial\n"), 0o644); err != nil {
+					return err
+				}
+				return context.Canceled
+			}
+			return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+		}
+		e := newDurableEngine(t, w, p)
+		if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
+			t.Fatalf("interrupted actor error = %v", err)
+		}
+		if got := gitIn(t, repo, "status", "--porcelain"); !strings.Contains(got, "work.txt") {
+			t.Fatalf("partial work was discarded: %q", got)
+		}
+		if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if p.calls != 2 {
+			t.Fatalf("actor resume calls=%d, want 2", p.calls)
+		}
+		assertDurableCompletion(t, e, repo)
+	})
+
+	t.Run("checkpoint interruption resumes acceptance without actor work", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := compactLifecycleWorkflow(repo, "compact-checkpoint-resume")
+		p := &durableProvider{}
+		e := newDurableEngine(t, w, p)
+		if err := e.initializeOrResumeState(); err != nil {
+			t.Fatal(err)
+		}
+		start, err := e.Repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, repo, "add", "work.txt")
+		gitIn(t, repo, "commit", "-qm", "partial accepted work")
+		if err := e.Store.SetJSON(e.activeRecord(), ActivePhase{
+			PhaseID:           "change",
+			StartCommit:       start,
+			ActorCompleted:    true,
+			CheckpointPending: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if p.calls != 0 {
+			t.Fatalf("checkpoint recovery replayed actor: calls=%d", p.calls)
+		}
+		assertDurableCompletion(t, e, repo)
+	})
+
+	t.Run("scope and protected integrity fail before acceptance", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			path string
+			want string
+		}{
+			{name: "scope", path: "not-allowed.txt", want: "out-of-scope file changed"},
+			{name: "protected", path: "README.md", want: "protected integrity rule readme changed"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				repo := newDurableRepo(t)
+				w := compactLifecycleWorkflow(repo, "compact-"+tc.name)
+				if tc.name == "protected" {
+					w.Spec.Workspace.MutationPolicy.Integrity = []workflow.IntegrityRule{{ID: "readme", Paths: []string{"README.md"}, Mode: "exact-hash"}}
+				}
+				p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+					return os.WriteFile(filepath.Join(request.Workspace, tc.path), []byte("unsafe\n"), 0o644)
+				}}
+				e := newDurableEngine(t, w, p)
+				err := e.Run(context.Background())
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("safety error = %v, want %q", err, tc.want)
+				}
+				var active ActivePhase
+				if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || active.FailureKind != PhaseFailureSafety {
+					t.Fatalf("safety evidence = %+v ok=%v err=%v", active, ok, err)
+				}
+			})
+		}
+	})
+
+	t.Run("lineage and invalid completed markers cannot advance work", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := compactLifecycleWorkflow(repo, "compact-lineage")
+		e := newDurableEngine(t, w, &durableProvider{})
+		if err := e.initializeOrResumeState(); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, repo, "checkout", "-qb", "other")
+		if err := newDurableEngine(t, w, &durableProvider{}).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "differs from workflow branch") {
+			t.Fatalf("lineage error = %v", err)
+		}
+
+		repo = newDurableRepo(t)
+		w = compactLifecycleWorkflow(repo, "compact-marker")
+		p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+			return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+		}}
+		e = newDurableEngine(t, w, p)
+		if err := e.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo, "not-allowed.txt"), []byte("tampered\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "completed workflow is no longer safe") {
+			t.Fatalf("invalid completed marker was accepted: %v", err)
+		}
+		if p.calls != 1 {
+			t.Fatalf("invalid completed marker replayed actor: calls=%d", p.calls)
+		}
+	})
+}
+
 func TestValidationRepairsOnceAndExhaustionSurvivesRestart(t *testing.T) {
 	t.Run("repair can make the same phase acceptable", func(t *testing.T) {
 		repo := newDurableRepo(t)
@@ -990,6 +1143,14 @@ func durableWorkflow(repo, name string) *workflow.Workflow {
 			}},
 		},
 	}
+}
+
+func compactLifecycleWorkflow(repo, name string) *workflow.Workflow {
+	w := durableWorkflow(repo, name)
+	w.Spec.Lifecycle = workflow.LifecyclePolicy{Policy: "safe-resume", Validation: "phaseGate"}
+	w.Spec.PhaseDefaults = workflow.PhaseDefaults{}
+	w.Spec.Phases[0].Validation = ""
+	return w
 }
 
 func boolPtr(v bool) *bool { return &v }

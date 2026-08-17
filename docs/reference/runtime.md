@@ -81,6 +81,50 @@ history is not rewritten.
 These refs are local workflow state unless a user deliberately configures Git to
 push them. AgentFlow does not push orchestration refs by default.
 
+## Runtime-owned phase lifecycle
+
+The concise lifecycle contract is `spec.lifecycle.policy: safe-resume`. A phase
+may select its deterministic gate with `phase.validation`; otherwise the
+lifecycle's `validation` is used. If a document has neither lifecycle policy
+nor legacy phase actions, the runtime still applies the same safe defaults and
+requires a deterministic phase validation before acceptance.
+
+For a mutable AI phase, the runtime performs this fixed contract:
+
+1. require a clean implementation boundary and validate branch/base lineage,
+   protected integrity, and mutation scope;
+2. capture the phase-start commit and progress snapshot, then persist the active
+   phase before invoking the actor;
+3. persist `actor_completed` immediately after the actor returns successfully;
+4. run deterministic validation and applicable progress/net-change assertions;
+5. checkpoint accepted allowed work, requiring a clean tree and rechecking
+   lineage, integrity, and scope;
+6. write the completed-phase commit marker; and
+7. clear active state only after the marker is valid.
+
+The optional lifecycle `checkpoint` names an existing checkpoint tool for
+workflow-specific semantics. Omitting it uses the runtime Git checkpoint.
+Lifecycle safety properties are fixed: an override cannot disable deterministic
+acceptance, protected-resource checks, scope checks, lineage checks, or the
+clean checkpoint boundary. Legacy `phaseDefaults`, phase `after` actions, and
+`recovery.activePhase` remain supported for v1alpha1 compatibility and are
+treated as explicit procedural escape hatches; their markers are still subject
+to the runtime acceptance contract.
+
+Interrupted recovery is derived from the active record. A valid completed
+marker wins over stale active state. If `actor_completed` is true, recovery
+repeats deterministic acceptance without replaying the actor. Otherwise the
+runtime checks retained partial commits and dirty worktree changes with the
+phase gate before rerunning the actor. A passing preflight does not substitute
+for actor-completion evidence, and a safety failure is terminal. Recovery never
+deletes partial commits or working-tree changes.
+
+The runtime applies the same policy boundary before and after actor/tool work,
+at checkpoint and acceptance, and before reusing a completed marker. This keeps
+workspace allowlists, protected integrity baselines, Git lineage, and required
+cleanliness as runtime invariants rather than repeated assertions an author can
+accidentally omit.
+
 This gives the runtime several useful Git properties for free:
 
 - phase evidence is tied to concrete commits;

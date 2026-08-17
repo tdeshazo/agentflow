@@ -221,6 +221,7 @@ func (v validator) references() {
 		v.toolUses(path+".onFailure.then", validation.OnFailure.Then)
 		v.validationFailurePolicy(path, validation)
 	}
+	v.lifecycle()
 	for i, check := range v.w.Spec.Preconditions {
 		v.check(fmt.Sprintf("spec.preconditions[%d]", i), check)
 		v.condition(fmt.Sprintf("spec.preconditions[%d].when", i), check.When)
@@ -238,6 +239,9 @@ func (v validator) references() {
 			} else if len(v.w.Spec.Progress.Criteria) > 0 && !v.criterion(p.Criterion) {
 				v.add(Invalid, path+".criterion", "unknown criterion %q", p.Criterion)
 			}
+		}
+		if p.Validation != "" {
+			v.validation(path+".validation", p.Validation)
 		}
 		v.actions(path+".after", p.After)
 		v.condition(path+".if", p.If)
@@ -313,6 +317,38 @@ func (v validator) references() {
 		}
 		v.assertions(p+".assertions", c.Assertions)
 		v.assertions(p+".afterCheckpointAssertions", c.AfterCheckpointAssertions)
+	}
+}
+
+func (v validator) lifecycle() {
+	lifecycle := v.w.Spec.Lifecycle
+	configured := lifecycle.Policy != "" || lifecycle.Validation != "" || lifecycle.Checkpoint != ""
+	if !configured {
+		return
+	}
+	if lifecycle.Policy != "" && lifecycle.Policy != "safe-resume" {
+		v.add(Invalid, "spec.lifecycle.policy", "unsupported lifecycle policy %q", lifecycle.Policy)
+	}
+	if lifecycle.Validation != "" {
+		v.validation("spec.lifecycle.validation", lifecycle.Validation)
+	}
+	if lifecycle.Checkpoint != "" {
+		v.tool("spec.lifecycle.checkpoint", lifecycle.Checkpoint)
+	}
+	if lifecycle.Validation == "" {
+		for i, phase := range v.w.Spec.Phases {
+			if phase.Validation == "" {
+				v.add(Invalid, fmt.Sprintf("spec.phases[%d].validation", i), "is required when spec.lifecycle.validation is not set")
+			}
+		}
+	}
+	if len(v.w.Spec.PhaseDefaults.Before) != 0 || len(v.w.Spec.PhaseDefaults.After) != 0 {
+		v.add(Invalid, "spec.phaseDefaults", "cannot be combined with spec.lifecycle; use legacy lifecycle actions or the runtime-owned policy")
+	}
+	for i, phase := range v.w.Spec.Phases {
+		if len(phase.After) != 0 {
+			v.add(Invalid, fmt.Sprintf("spec.phases[%d].after", i), "cannot be combined with spec.lifecycle; use the runtime-owned lifecycle contract")
+		}
 	}
 }
 

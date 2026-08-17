@@ -21,8 +21,39 @@ func (e *Engine) newActivePhase(id string) (ActivePhase, error) {
 	return ActivePhase{PhaseID: id, StartCommit: start, UncheckedBefore: progress.UncheckedCount, CheckedBefore: progress.CheckedTexts()}, nil
 }
 
+func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction, error) {
+	validation := e.phaseValidation(p)
+	if validation == "" {
+		return nil, fmt.Errorf("phase %s has no deterministic validation in its runtime lifecycle policy", p.ID)
+	}
+	actions := []workflow.PhaseAction{{Validate: validation}}
+	if p.Kind == "criterion" {
+		actions = append(actions, workflow.PhaseAction{AssertProgressIfApplicable: true})
+	}
+	if p.RequiresChange {
+		actions = append(actions, workflow.PhaseAction{AssertNetRepositoryChangeSincePhaseStart: true})
+	}
+	if checkpoint := e.phaseCheckpoint(p); checkpoint != "" {
+		actions = append(actions, workflow.PhaseAction{Checkpoint: checkpoint})
+	}
+	actions = append(actions,
+		workflow.PhaseAction{MarkPhaseComplete: &workflow.Marker{Value: "head_commit"}},
+		workflow.PhaseAction{ClearActivePhase: true},
+	)
+	return actions, nil
+}
+
 func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, active *ActivePhase, actions []workflow.PhaseAction) error {
 	for _, action := range actions {
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(phase)); err != nil {
+			var safetyErr *safetyViolation
+			if errors.As(err, &safetyErr) {
+				if persistErr := e.persistSafetyFailure(phase, err); persistErr != nil {
+					return persistErr
+				}
+			}
+			return err
+		}
 		if action.If != "" {
 			ok, err := e.bool(phase, action.If)
 			if err != nil {
@@ -148,6 +179,15 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		if action.Return != "" {
 			return nil
 		}
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(phase)); err != nil {
+			var safetyErr *safetyViolation
+			if errors.As(err, &safetyErr) {
+				if persistErr := e.persistSafetyFailure(phase, err); persistErr != nil {
+					return persistErr
+				}
+			}
+			return err
+		}
 	}
 	return nil
 }
@@ -202,6 +242,9 @@ func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
 }
 
 func (e *Engine) requirePhaseCompletion(phase *workflow.Phase) error {
+	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(phase)); err != nil {
+		return fmt.Errorf("phase %s failed its final safety boundary: %w", phase.ID, err)
+	}
 	ok, head, err := e.validCommitMarker(e.phaseMarkerName(phase))
 	if err != nil {
 		return err

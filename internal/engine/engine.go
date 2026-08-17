@@ -310,6 +310,9 @@ func (e *Engine) Run(ctx context.Context) error {
 		return err
 	}
 	if complete {
+		if err := e.assertMutationBoundary(true, e.lifecycleConfigured()); err != nil {
+			return fmt.Errorf("completed workflow is no longer safe to reuse: %w", err)
+		}
 		fmt.Fprintf(e.Out, "Workflow %s already complete at %s\n", e.Workflow.Metadata.Name, completeSHA)
 		return nil
 	}

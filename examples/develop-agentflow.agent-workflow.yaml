@@ -263,14 +263,8 @@ spec:
         - uses: canonical-gate
       failure: fail-workflow
 
-  phaseDefaults:
-    before:
-      - require_clean_implementation_workspace: true
-      - capture_phase_start_commit: true
-      - persist_active_phase:
-          fields:
-            - phase_id
-            - phase_start_commit
+  lifecycle:
+    policy: safe-resume
 
   phases:
     - id: implement
@@ -279,6 +273,7 @@ spec:
       actor: luna
       reasoning: high
       requiresChange: true
+      validation: implementation-gate
       prompt: |
         Work on exactly this bounded AgentFlow development task:
 
@@ -292,20 +287,13 @@ spec:
 
         If the task is empty, make no changes and report that the caller must
         supply --set task='...'.
-      after:
-        - validate: implementation-gate
-        - checkpoint: checkpoint
-        - assertNetRepositoryChangeSincePhaseStart: true
-        - markPhaseComplete:
-            value: head_commit
-        - clearActivePhase: true
-
     - id: audit
       kind: audit
       label: independent-agentflow-audit
       actor: terra
       reasoning: high
       requiresChange: false
+      validation: audit-gate
       prompt: |
         Independently audit the repository state for this bounded task:
 
@@ -318,32 +306,6 @@ spec:
         covered, and no unrelated or protected resource was changed. Repair a
         genuine in-scope defect if needed; otherwise leave the checkout alone.
         Do not add features beyond the stated task or weaken validation.
-      after:
-        - validate: audit-gate
-        - checkpoint: checkpoint
-        - markPhaseComplete:
-            value: head_commit
-        - clearActivePhase: true
-
-  recovery:
-    activePhase:
-      - readActivePhase:
-          fields:
-            - phase_id
-            - phase_start_commit
-      - restorePhaseDefinition: true
-      - assertPhaseStartCommitExists: true
-      - assertPhaseStartIsAncestorOfHead: true
-      - validate_existing_state_first: true
-      - if_invalid:
-          - run_repair_policy: implementation-gate
-          - if_still_incomplete:
-              rerun_same_agent_phase_with_prefix: |
-                Resume only this interrupted phase. Inspect existing commits
-                and working-tree changes first; preserve valid work rather
-                than restarting the bounded task.
-      - runPhaseAfterSequence: true
-
   flow:
     - id: already-complete
       if: "{{ state.workflow_complete.exists }}"
@@ -357,12 +319,6 @@ spec:
       if: "{{ parameters.task == '' }}"
       then:
         - stop: "task parameter is required; pass --set task='<bounded AgentFlow change>'"
-    - id: recover-interrupted-phase
-      if: "{{ state.active_phase.exists }}"
-      recover: activePhase
-    - id: require-clean-after-recovery
-      assert:
-        type: implementation-workspace-clean
     - id: starting-state
       validate: starting-state
     - phase: implement

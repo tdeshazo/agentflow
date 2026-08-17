@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
@@ -46,6 +47,93 @@ func (e *Engine) validCommitMarker(name string) (bool, string, error) {
 		return false, sha, nil
 	}
 	return true, sha, nil
+}
+
+func (e *Engine) lifecycleConfigured() bool {
+	l := e.Workflow.Spec.Lifecycle
+	return l.Policy != "" || l.Validation != "" || l.Checkpoint != ""
+}
+
+// runtimeOwnsPhaseLifecycle selects the compact lifecycle contract. An
+// entirely procedural v1alpha1 phase remains on the legacy action path so old
+// documents keep their meaning; phases without those actions receive the safe
+// runtime defaults even when spec.lifecycle is omitted.
+func (e *Engine) runtimeOwnsPhaseLifecycle(p *workflow.Phase) bool {
+	if e.lifecycleConfigured() {
+		return true
+	}
+	if p == nil {
+		return false
+	}
+	return len(e.Workflow.Spec.PhaseDefaults.Before) == 0 &&
+		len(e.Workflow.Spec.PhaseDefaults.After) == 0 &&
+		len(p.After) == 0
+}
+
+func (e *Engine) phaseValidation(p *workflow.Phase) string {
+	if p != nil && p.Validation != "" {
+		return p.Validation
+	}
+	return e.Workflow.Spec.Lifecycle.Validation
+}
+
+func (e *Engine) phaseCheckpoint(p *workflow.Phase) string {
+	if p != nil && len(p.After) == 0 {
+		return e.Workflow.Spec.Lifecycle.Checkpoint
+	}
+	return ""
+}
+
+// assertLineage is shared by actor, tool, checkpoint, recovery, and
+// acceptance boundaries. strict is used by the safe runtime lifecycle even
+// when a legacy document did not repeat every lineage flag.
+func (e *Engine) assertLineage(strict bool) error {
+	base, ok, err := e.Store.Resolve(e.baseRecord())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if strict {
+			return fmt.Errorf("workflow base state is missing")
+		}
+		return nil
+	}
+	requireBase := strict || e.Workflow.Spec.State.Lineage.RequireBaseCommitExists ||
+		e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireBaseIsAncestorOfHead
+	if requireBase && !e.Repo.ObjectExists(base+"^{commit}") {
+		return fmt.Errorf("saved base no longer exists: %s", base)
+	}
+	if strict || e.Workflow.Spec.State.Resume.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.State.Lineage.RequireBaseIsAncestorOfHead ||
+		e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireBaseIsAncestorOfHead {
+		if !e.Repo.IsAncestor(base, "HEAD") {
+			return fmt.Errorf("HEAD no longer descends from workflow base %s", base)
+		}
+	}
+	requireBranch := strict || e.Workflow.Spec.State.Lineage.RequireSameNamedBranch ||
+		e.Workflow.Spec.State.Resume.RequireSameBranch ||
+		e.Workflow.Spec.Workspace.MutationPolicy.Lineage.RequireSameBranchAsState
+	if !requireBranch {
+		return nil
+	}
+	var savedBranch string
+	branchOK, err := e.Store.GetJSON(e.branchRecord(), &savedBranch)
+	if err != nil {
+		return err
+	}
+	if !branchOK || savedBranch == "" {
+		return fmt.Errorf("workflow branch state is missing")
+	}
+	current, err := e.Repo.Branch()
+	if err != nil {
+		return fmt.Errorf("workflow requires its initialized named branch; detached HEAD is not supported")
+	}
+	if current != savedBranch {
+		return fmt.Errorf("current branch %q differs from workflow branch %q", current, savedBranch)
+	}
+	return nil
 }
 
 func (e *Engine) implementationDirtyFiles() ([]string, error) {
@@ -99,6 +187,16 @@ func (e *Engine) ignoredPatterns() []string {
 }
 
 func (e *Engine) assertScope() error {
+	if err := e.assertLineage(false); err != nil {
+		return err
+	}
+	if err := e.assertIntegrity(); err != nil {
+		return err
+	}
+	return e.assertAllowedScope()
+}
+
+func (e *Engine) assertAllowedScope() error {
 	files, err := e.changedImplementationFiles()
 	if err != nil {
 		return err
@@ -106,14 +204,37 @@ func (e *Engine) assertScope() error {
 	// Check immutable project boundaries first. A protected file is rejected as
 	// a protected-file violation even though it is also outside the ordinary
 	// mutation allowlist; this keeps the policy's reason durable and explicit.
-	if err := e.assertIntegrity(); err != nil {
-		return err
-	}
 	allowed := e.Workflow.Spec.Workspace.MutationPolicy.Allowed
 	for _, f := range files {
 		if !matchesAny(allowed, f) {
 			return &safetyViolation{err: fmt.Errorf("out-of-scope file changed: %s", f)}
 		}
+	}
+	return nil
+}
+
+// assertMutationBoundary centralizes the invariants that must hold whenever
+// the runtime is about to trust or persist workspace-derived acceptance
+// evidence. It never removes or resets user changes.
+func (e *Engine) assertMutationBoundary(requireClean, strictLineage bool) error {
+	if err := e.assertLineage(strictLineage); err != nil {
+		return err
+	}
+	if err := e.assertIntegrity(); err != nil {
+		return err
+	}
+	if err := e.assertAllowedScope(); err != nil {
+		return err
+	}
+	if !requireClean {
+		return nil
+	}
+	dirty, err := e.implementationDirtyFiles()
+	if err != nil {
+		return err
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("implementation workspace is dirty: %s", strings.Join(dirty, ", "))
 	}
 	return nil
 }

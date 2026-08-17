@@ -135,9 +135,19 @@ Common policies:
 
 Do not assume every named gate shares the same repair policy.
 
+## `spec.lifecycle`
+
+`policy: safe-resume` is the concise lifecycle for mutable AI phases. The
+runtime owns clean phase boundaries, phase-start capture, durable active and
+actor-completion state, deterministic acceptance, accepted-work checkpointing,
+completed-phase evidence, and active-state cleanup. `validation` supplies the
+default deterministic gate; `phase.validation` selects a phase-specific gate.
+Safety properties cannot be disabled by lifecycle fields.
+
 ## `spec.phaseDefaults`
 
-Lifecycle inherited by phases.
+Legacy procedural lifecycle inherited by phases. It remains valid for existing
+v1alpha1 documents; new concise workflows should use `spec.lifecycle`.
 
 Typical `before` operations:
 
@@ -178,6 +188,7 @@ Key fields:
 - `reasoning`: requested effort tier.
 - `criterion`: targeted progress item.
 - `requiresChange`: whether a net repository diff since phase start is mandatory.
+- `validation`: optional deterministic gate override for `spec.lifecycle`.
 - `prompt`: bounded work instructions.
 
 ## `spec.humanGates`
@@ -198,13 +209,14 @@ Important fields:
 
 Recovery of an interrupted active phase.
 
-A strong recovery contract:
+A strong recovery contract (also derived automatically by safe-resume) should:
 
 1. reads durable active-phase state;
 2. restores the same phase definition;
 3. validates saved phase-start lineage;
 4. checks whether criterion progress may already have completed;
-5. validates existing repository state before throwing away partial work;
+5. preflights retained partial commits and worktree changes before rerunning an
+   actor;
 6. preserves useful commits/working-tree changes;
 7. reruns or repairs only the same phase when needed;
 8. applies the normal after-phase validation/checkpoint/marker path.

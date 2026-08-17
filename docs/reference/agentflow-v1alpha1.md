@@ -188,9 +188,30 @@ Common policies:
 
 Do not assume every named gate shares the same repair policy.
 
+## `spec.lifecycle`
+
+`lifecycle` is the concise contract for mutable AI phases. The safe policy is
+selected with `policy: safe-resume`; it is also the runtime default for a phase
+that has no legacy procedural lifecycle actions. `validation` names the
+deterministic gate used for phases that do not set `phase.validation`.
+
+Under safe resume, the runtime owns the clean phase boundary, phase-start commit
+and progress capture, durable active-phase and actor-completion state,
+deterministic acceptance, checkpointing of accepted work, the commit-valued
+completed-phase marker, and active-state cleanup. A named `checkpoint` is an
+optional existing tool override; omitting it uses the runtime Git checkpoint.
+The safety properties cannot be disabled by lifecycle fields.
+
+`phase.validation` overrides the lifecycle's default validation for one phase.
+The actor's successful return is never acceptance evidence: a phase must still
+pass its deterministic gate, progress/net-change rules where applicable, scope,
+integrity, lineage, and checkpoint postconditions.
+
 ## `spec.phaseDefaults`
 
-Lifecycle inherited by phases.
+Legacy procedural lifecycle actions inherited by phases. New workflows should
+prefer `spec.lifecycle`; this section remains executable so existing v1alpha1
+documents, including the bootstrap workflow, retain their original meaning.
 
 Typical `before` operations:
 
@@ -241,6 +262,7 @@ Key fields:
 - `reasoning`: requested effort tier.
 - `criterion`: targeted progress item.
 - `requiresChange`: whether a net repository diff since phase start is mandatory.
+- `validation`: optional deterministic gate override for `spec.lifecycle`.
 - `if`: optional boolean condition. A false condition skips the phase without
   invoking its actor or creating a completion marker.
 - `prompt`: bounded work instructions.
@@ -265,7 +287,12 @@ evidence at the current commit.
 
 ## `spec.recovery`
 
-Recovery of an interrupted active phase.
+Explicit legacy recovery escape hatch for an interrupted active phase. Normal
+safe recovery is runtime-derived from the durable active-phase record and
+`spec.lifecycle`; it does not require a `flow` recovery step or a procedural
+`activePhase` sequence. Existing `spec.recovery` documents remain valid, but an
+override cannot mark a phase complete without the same deterministic acceptance
+and checkpoint contract.
 
 A strong recovery contract:
 
@@ -275,7 +302,8 @@ A strong recovery contract:
 4. treats a valid completed phase marker as accepted and clears only stale active state;
 5. reruns the same actor when `actor_completed` is absent, preserving partial work;
 6. resumes deterministic validation/checkpoint/marker work without replaying the actor when `actor_completed` is present;
-7. preserves useful commits/working-tree changes;
+7. preflights retained commits and working-tree changes before rerunning an actor,
+   preserves them, and never deletes them as a recovery side effect;
 8. keeps deterministic validation repair budgets and repository-policy failures bounded or terminal as configured.
 
 ## `spec.flow`
