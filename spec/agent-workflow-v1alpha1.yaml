@@ -202,11 +202,13 @@ spec:
   # Validation owns advancement. Agents never decide that a phase is accepted.
   validation:
     baseline:
+      dependencies: ["**"]
       steps:
         - uses: assert-scope
         - uses: quality-gate
 
     phaseGate:
+      dependencies: ["**"]
       steps:
         - uses: assert-scope
         - uses: quality-gate

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -223,6 +224,14 @@ func (v validator) references() {
 		path := "spec.validation." + name
 		if len(validation.Steps) == 0 {
 			v.add(Invalid, path+".steps", "must contain at least one deterministic validation step")
+		}
+		for i, dependency := range validation.Dependencies {
+			if strings.TrimSpace(dependency) == "" {
+				v.add(Invalid, fmt.Sprintf("%s.dependencies[%d]", path, i), "must not be empty")
+			}
+			if filepath.IsAbs(dependency) {
+				v.add(Invalid, fmt.Sprintf("%s.dependencies[%d]", path, i), "must be workspace-relative")
+			}
 		}
 		v.toolUses(path+".steps", validation.Steps)
 		v.toolUses(path+".onFailure.then", validation.OnFailure.Then)

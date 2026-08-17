@@ -29,10 +29,7 @@ func shortSHA(s string) string {
 	return s
 }
 func errorOutput(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return boundedFailureOutput(err)
 }
 
 func (e *Engine) validCommitMarker(name string) (bool, string, error) {
@@ -224,7 +221,7 @@ func (e *Engine) assertAllowedScope() error {
 // evidence. It never removes or resets user changes.
 func (e *Engine) assertMutationBoundary(requireClean, strictLineage bool) error {
 	if err := e.assertLineage(strictLineage); err != nil {
-		return err
+		return &safetyViolation{err: err}
 	}
 	if err := e.assertIntegrity(); err != nil {
 		return err

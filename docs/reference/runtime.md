@@ -42,6 +42,7 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/run-identity
 refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/complete
+refs/agentflow/workflow-<hex-encoded-workflow-name>/validation-evidence/<run>/<key>
 ```
 
 The names above are the defaults. `spec.state.records` may configure the base,
@@ -77,6 +78,17 @@ it cannot reinterpret an unrelated checkbox or status edit as accepted work.
 When deterministic validation fails, the same record stores a typed
 `failure_kind` (`validation` or `safety`); repair budgeting applies only to the
 former, while repository-policy safety failures remain terminal.
+Successful deterministic validations additionally write small, digest-only
+records under `validation-evidence/`. Their key covers the validation and
+referenced tool definitions, resolved input digests, declared dependency
+patterns and file-content identity, acceptance policy, run identity, and phase
+acceptance context. A later request reuses one only after the runtime rechecks
+lineage, protected integrity, and mutation scope. A stale record therefore
+cannot authorize work across a safety failure, failed lineage, changed repair
+policy, or changed relevant tree. Evidence is namespaced by workflow and run
+identity, so it is not a general-purpose artifact cache and cannot collide with
+another workflow or concurrent invocation. Capture logs and failure output are
+bounded diagnostics, not evidence payloads.
 The workflow-name component is a byte-for-byte hex encoding, so two names that
 would sanitize to the same Git-ref spelling still retain isolated state.
 Deleting/resetting workflow state deletes only these refs; normal repository
@@ -217,7 +229,9 @@ The current runtime supports the following executable core:
 - named AI phases with provider-neutral actors;
 - shell, workspace-policy, Git-checkpoint, file-regex, and Markdown-checklist
   validation tools;
-- captured shell output and bounded validation failure logs;
+- captured shell output and bounded, redacted validation failure logs;
+- durable content-addressed success evidence for equivalent deterministic
+  validation requests;
 - one bounded repair attempt;
 - automatic Git checkpoints of allowed dirty files;
 - resumable active phases and commit-aware phase markers;

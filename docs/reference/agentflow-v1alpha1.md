@@ -185,7 +185,15 @@ target.
 
 Named deterministic acceptance gates.
 
-A validation can contain ordered steps and a failure policy.
+A validation can contain ordered steps, an optional `dependencies` list, and a
+failure policy. Dependencies are workspace-relative files or glob patterns that
+the gate reads; omitting the list conservatively addresses the whole present
+implementation tree. Validation output captures are not inputs. The resolved
+tool definitions, non-secret input digests, declared dependencies, relevant
+file contents, and acceptance policy form durable success evidence. An
+equivalent later request may reuse that evidence, but a changed dependency,
+tool, input, policy, lineage, integrity boundary, or scope runs the gate again
+or fails closed.
 
 Common policies:
 
@@ -194,6 +202,12 @@ Common policies:
   If `onFailure.then` is omitted, the original ordered validation steps are
   rerun; an omitted list never turns a failed gate into success.
 - exhausted repair budget: fail workflow.
+
+Only successful deterministic validation produces evidence. A repair actor does
+not inherit a cached success: after repair, the declared deterministic gate is
+run again before new success evidence is written. Failure output retained for
+repair is bounded and redacted; prompts, complete environments, resolved
+parameter values, and secrets are not durable evidence.
 
 Do not assume every named gate shares the same repair policy.
 

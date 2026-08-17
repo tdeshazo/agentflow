@@ -350,18 +350,73 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if !ok {
 		return fmt.Errorf("unknown validation %q", name)
 	}
+	key, cacheable, keyErr := e.validationEvidenceKey(name, v, p)
+	if keyErr != nil {
+		return keyErr
+	}
+	if cacheable {
+		// Evidence is never a substitute for the safety boundary. In
+		// particular, a successful gate from a clean lineage cannot authorize
+		// acceptance after a protected-file or scope violation.
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+			if p != nil {
+				_ = e.persistSafetyFailure(p, err)
+			} else {
+				_ = e.persistValidationFailure(nil, name, err)
+			}
+			return err
+		}
+		if hit, err := e.loadValidationEvidence(key); err != nil {
+			return err
+		} else if hit {
+			if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+				if p != nil {
+					_ = e.persistSafetyFailure(p, err)
+				} else {
+					_ = e.persistValidationFailure(nil, name, err)
+				}
+				return err
+			}
+			fmt.Fprintf(e.Out, "==> Reusing deterministic validation evidence: %s\n", name)
+			if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
+				return clearErr
+			}
+			return nil
+		}
+	}
 	err := e.runToolUses(ctx, v.Steps, p)
 	if err == nil {
+		if cacheable {
+			// A deterministic validation must not publish success for a different
+			// tree than the one it inspected. This also prevents a tool that
+			// accidentally mutates an allowed file from creating reusable proof.
+			finalKey, _, finalErr := e.validationEvidenceKey(name, v, p)
+			if finalErr != nil {
+				return finalErr
+			}
+			if finalKey != key {
+				return fmt.Errorf("validation %s changed relevant inputs while running; success evidence was not recorded", name)
+			}
+			if boundaryErr := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); boundaryErr != nil {
+				if p != nil {
+					_ = e.persistSafetyFailure(p, boundaryErr)
+				} else {
+					_ = e.persistValidationFailure(nil, name, boundaryErr)
+				}
+				return boundaryErr
+			}
+			if err := e.persistValidationEvidence(key); err != nil {
+				return fmt.Errorf("persist validation %s evidence: %w", name, err)
+			}
+		}
 		if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 			return clearErr
 		}
 		return nil
 	}
 	failure := err
-	if p != nil {
-		if persistErr := e.persistValidationFailure(p, name, failure); persistErr != nil {
-			return persistErr
-		}
+	if persistErr := e.persistValidationFailure(p, name, failure); persistErr != nil {
+		return persistErr
 	}
 	var safetyErr *safetyViolation
 	if errors.As(failure, &safetyErr) {
@@ -377,7 +432,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if !available {
 		return &repairBudgetExhaustedError{validation: name, failure: failure}
 	}
-	e.lastFailure = errorOutput(failure)
+	e.lastFailure = boundedFailureOutput(failure)
 	fmt.Fprintf(e.Out, "==> Validation %s failed; running one repair attempt\n", name)
 	if err := e.runAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, p); err != nil {
 		return err
@@ -392,6 +447,23 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if err := e.runToolUses(ctx, steps, p); err != nil {
 		return fmt.Errorf("validation %s still fails after repair: %w", name, err)
 	}
+	if cacheable {
+		finalKey, _, keyErr := e.validationEvidenceKey(name, v, p)
+		if keyErr != nil {
+			return keyErr
+		}
+		if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+			if p != nil {
+				_ = e.persistSafetyFailure(p, err)
+			} else {
+				_ = e.persistValidationFailure(nil, name, err)
+			}
+			return err
+		}
+		if err := e.persistValidationEvidence(finalKey); err != nil {
+			return fmt.Errorf("persist validation %s evidence after repair: %w", name, err)
+		}
+	}
 	e.lastFailure = ""
 	if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 		return clearErr
@@ -400,6 +472,17 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 }
 
 func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failure error) error {
+	if p == nil {
+		record := e.standaloneFailureRecord(name)
+		kind := PhaseFailureValidation
+		var safetyErr *safetyViolation
+		if errors.As(failure, &safetyErr) {
+			kind = PhaseFailureSafety
+		}
+		return e.Store.SetJSON(record, validationFailureEvidence{
+			Validation: name, FailureKind: kind, Output: errorOutput(failure),
+		})
+	}
 	var active ActivePhase
 	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
 	if err != nil || !ok || active.PhaseID != p.ID {
@@ -452,7 +535,23 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			return e.Store.SetJSON(e.activeRecord(), active)
 		}
 	}
+	if _, ok, err := e.Store.Resolve(e.standaloneFailureRecord(name)); err != nil || !ok {
+		return err
+	}
+	if err := e.Store.Delete(e.standaloneFailureRecord(name)); err != nil {
+		return err
+	}
 	return e.clearStandaloneRepairState(name)
+}
+
+type validationFailureEvidence struct {
+	Validation  string           `json:"validation"`
+	FailureKind PhaseFailureKind `json:"failure_kind"`
+	Output      string           `json:"output,omitempty"`
+}
+
+func (e *Engine) standaloneFailureRecord(validation string) string {
+	return fmt.Sprintf("validation-failures/%x", validation)
 }
 
 // consumeRepairAttempt persists the applicable repair budget before invoking a

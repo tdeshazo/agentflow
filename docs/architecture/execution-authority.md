@@ -63,8 +63,14 @@ deterministic acceptance boundary.
 The interpreter stores workflow evidence in Git objects and namespaced refs,
 including base/branch lineage, an active-phase record, completed phase markers,
 human-gate evidence, integrity baselines, run identity, and the final completion
-marker. These records survive process interruption without a separate state
-database and are tied to repository commits.
+marker. Successful deterministic validations also have digest-only,
+content-addressed evidence keyed by their definition, resolved inputs,
+declared dependencies, relevant file contents, policy, run identity, and
+acceptance context. A lookup still performs the safety boundary first, so this
+evidence survives process interruption without becoming authority across a
+changed tree, lineage, integrity boundary, scope, or repair policy. These
+records survive process interruption without a separate state database and are
+tied to repository commits or current workspace identity as appropriate.
 
 Recovery validates the saved base and branch lineage. It preserves useful
 partial commits and worktree changes. If an active phase lacks durable

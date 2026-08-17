@@ -264,10 +264,11 @@ type ProgressInvariant struct {
 }
 
 type Validation struct {
-	Repair    string        `yaml:"repair"`
-	Steps     []ToolUse     `yaml:"steps"`
-	OnFailure FailurePolicy `yaml:"onFailure"`
-	Failure   string        `yaml:"failure"`
+	Repair       string        `yaml:"repair"`
+	Steps        []ToolUse     `yaml:"steps"`
+	Dependencies []string      `yaml:"dependencies"`
+	OnFailure    FailurePolicy `yaml:"onFailure"`
+	Failure      string        `yaml:"failure"`
 }
 type FailurePolicy struct {
 	Strategy          string    `yaml:"strategy"`
