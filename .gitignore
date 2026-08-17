@@ -4,3 +4,6 @@
 *~
 .vscode/
 .idea/
+.agents/
+.
+skills-lock.json
