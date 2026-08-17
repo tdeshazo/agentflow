@@ -1,0 +1,36 @@
+# AgentFlow documentation
+
+This is the purpose-based documentation front door for AgentFlow. Start with
+the section that matches the question you are trying to answer:
+
+- [Architecture](architecture/): durable design contracts and authority
+  boundaries.
+- [Guides](guides/): contributor workflows, development checks, and
+  self-hosting.
+- [Planning](planning/): how to navigate and execute the canonical roadmap.
+- [Reference](reference/): normative AgentWorkflow field semantics and the Go
+  runtime reference.
+- [Research](research/README.md): exploratory findings that inform design and
+  planning.
+- [Evidence](evidence/README.md): retained proof of completed execution and
+  verification claims.
+- [Reviews](reviews/README.md): dated project assessments.
+
+## Where to start
+
+- To understand who may act and who may accept work, read
+  [Execution authority](architecture/execution-authority.md).
+- To author or audit a workflow, read the
+  [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md).
+- To understand the current interpreter, read the
+  [Go runtime reference](reference/runtime.md).
+- To contribute a change, follow the
+  [development guide](guides/development.md).
+- To run a bounded AgentFlow development task, follow the
+  [self-hosting guide](guides/self-hosting.md).
+- To choose roadmap work, use the
+  [planning index](planning/README.md), which points to the root
+  [ROADMAP.md](../ROADMAP.md) as the canonical source of priority and status.
+
+The root [README.md](../README.md) remains the repository and product front
+door. This index is the main entry point for the documentation itself.

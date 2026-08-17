@@ -1,15 +1,42 @@
 # AgentFlow Workflow Specification
 
-A small, declarative specification for coordinating AI agents, deterministic tools, workspace mutation, validation, recovery, human verification, and completion.
+AgentFlow is a small, declarative specification for coordinating AI agents,
+deterministic tools, workspace mutation, validation, recovery, human
+verification, and completion.
 
 This repository contains:
 
 - a reference `agentflow.dev/v1alpha1` `AgentWorkflow` definition;
 - a field-level specification reference;
-- an agent skill for efficiently describing, reviewing, and comparing workflow specifications;
-- a concrete Priority 5 workflow example translated from an imperative shell orchestrator;
-- an experimental Go interpreter with a provider-neutral execution interface and an initial Codex CLI provider; and
-- a roadmap for evolving AgentFlow into a portable YAML SDL with a reference Go interpreter.
+- an agent skill for describing, reviewing, and comparing workflow
+  specifications;
+- concrete workflow examples;
+- an experimental Go interpreter with a provider-neutral execution interface;
+  and
+- a roadmap for evolving AgentFlow into a portable YAML SDL with a reference
+  Go interpreter.
+
+## Start here
+
+[docs/README.md](docs/README.md) is the main documentation entry point. It
+organizes the documentation by purpose:
+
+- [Execution authority](docs/architecture/execution-authority.md) explains
+  the current separation among definition, execution, and assurance.
+- [Development guide](docs/guides/development.md) covers prerequisites,
+  deterministic checks, focused commands, and contributor workflow.
+- [Self-hosting guide](docs/guides/self-hosting.md) explains the bounded
+  AgentFlow development workflow and retained
+  [MVP evidence](docs/evidence/self-hosting-mvp.md).
+- [AgentWorkflow v1alpha1 reference](docs/reference/agentflow-v1alpha1.md)
+  documents field semantics.
+- [Go runtime reference](docs/reference/runtime.md) documents the current
+  interpreter and its limits.
+- [Planning](docs/planning/README.md) navigates the canonical root
+  [ROADMAP.md](ROADMAP.md).
+- [Research](docs/research/README.md), [evidence](docs/evidence/README.md),
+  and [reviews](docs/reviews/README.md) explain the repository's exploratory,
+  proof, and assessment records.
 
 ## Repository layout
 
@@ -34,14 +61,15 @@ This repository contains:
 ├── spec/
 │   └── agent-workflow-v1alpha1.yaml
 ├── docs/
-│   ├── agentflow-v1alpha1.md
-│   ├── runtime.md
-│   └── research/
+│   ├── architecture/
+│   ├── evidence/
+│   ├── guides/
+│   ├── planning/
+│   ├── reference/
+│   ├── research/
+│   └── reviews/
 ├── skills/
 │   └── agent-workflow-spec-describer/
-│       ├── SKILL.md
-│       └── references/
-│           └── agentflow-v1alpha1.md
 └── examples/
     └── finish-priority-05.agent-workflow.yaml
 ```
@@ -51,61 +79,52 @@ This repository contains:
 The format separates orchestration authority into explicit domains:
 
 - **Agents** perform bounded reasoning and workspace work.
-- **Deterministic tools** produce authoritative checks and repository operations.
+- **Deterministic tools** produce authoritative checks and repository
+  operations.
 - **Workspace policy** defines what may change and what must remain protected.
 - **Validation** decides whether a phase may advance and how repair is bounded.
-- **State and recovery** make interrupted workflows resumable without discarding useful work.
+- **State and recovery** make interrupted workflows resumable without
+  discarding useful work.
 - **Human gates** represent manual verification as durable workflow state.
-- **Completion** is an explicit final transition after all required assertions and gates pass.
+- **Completion** is an explicit final transition after all required assertions
+  and gates pass.
 
-A central invariant is that an agent may mutate the workspace, but it does not decide whether its own phase is accepted. Advancement belongs to deterministic workflow logic.
+A central invariant is that an agent may mutate the workspace, but it does not
+decide whether its own phase is accepted. Advancement belongs to deterministic
+workflow logic.
 
-## Start here
+## Current interpreter
 
-Read [`docs/agentflow-v1alpha1.md`](docs/agentflow-v1alpha1.md) for the field semantics, then inspect [`spec/agent-workflow-v1alpha1.yaml`](spec/agent-workflow-v1alpha1.yaml) for a complete reference definition.
+The experimental Go interpreter executes the supported core of `v1alpha1`
+against Git workspaces, stores durable workflow state in namespaced Git refs,
+and uses the public [provider interface](provider/provider.go) for AI
+execution. The initial adapter uses non-interactive Codex CLI execution.
 
-See [`ROADMAP.md`](ROADMAP.md) for the planned progression from the current `v1alpha1` foundation to a GitHub-Actions-like YAML authoring model, broader Go runtime support, explicit DAG execution, typed artifacts, extensibility, security, observability, composition, and `v1beta1` conformance.
+See the [runtime reference](docs/reference/runtime.md) for CLI usage, state
+layout, supported constructs, provider behavior, and current limits. The
+[example workflow](examples/finish-priority-05.agent-workflow.yaml) shows
+phases, protected boundaries, validation, bounded repair, checkpointing,
+resume, human verification, and completion bookkeeping.
 
-The project's minimum viable product is **self-hosting**: AgentFlow plus its Go interpreter must be capable of orchestrating a real, validated, resumable change to `agentflow-spec` itself without a bespoke shell script owning phase advancement, repair, checkpointing, or completion.
+## Validation
 
-## Go interpreter
-
-The repository now includes an experimental interpreter for the executable core of `v1alpha1`. It keeps durable orchestration state in Git objects and namespaced refs rather than a separate database, and exposes AI execution through the public [`provider.Provider`](provider/provider.go) interface. The initial adapter uses non-interactive Codex CLI execution.
+Run the repository-owned deterministic development gate:
 
 ```sh
-go run ./cmd/agentflow run \
-  -f examples/finish-priority-05.agent-workflow.yaml \
-  -C /path/to/target/repository
-
-go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
-go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
-go run ./cmd/agentflow validate -f workflow.yaml
+./scripts/check.sh
 ```
 
-See [`docs/runtime.md`](docs/runtime.md) for state layout, supported constructs, provider behavior, and current limits.
-
-The [`examples/finish-priority-05.agent-workflow.yaml`](examples/finish-priority-05.agent-workflow.yaml) file demonstrates a concrete workflow with:
-
-- nine ordered AI phases;
-- per-phase model and reasoning assignments;
-- protected Git/workspace boundaries;
-- a canonical quality gate;
-- one bounded repair attempt for phase failures;
-- commit-aware checkpointing and resume;
-- manual SSH/terminal verification; and
-- deterministic completion bookkeeping.
+It checks formatting and diff hygiene, tests, vet, race-enabled tests, the
+deterministic self-hosting runtime, and every shipped workflow definition. It
+does not make live model calls. For individual workflow validation, see the
+[development guide](docs/guides/development.md).
 
 ## Agent skill
 
-The skill at [`skills/agent-workflow-spec-describer/SKILL.md`](skills/agent-workflow-spec-describer/SKILL.md) teaches an agent how to explain the specification efficiently.
-
-It prioritizes execution semantics over repeating prompts and distinguishes:
-
-1. agent authority;
-2. workspace mutation authority; and
-3. deterministic validation authority.
-
-The skill supports compact descriptions, detailed audits, and semantic workflow comparisons.
+The [agent workflow specification skill](skills/agent-workflow-spec-describer/SKILL.md)
+teaches an agent how to explain the specification efficiently. It distinguishes
+agent authority, workspace mutation authority, and deterministic validation
+authority.
 
 ## Status
 
@@ -116,22 +135,11 @@ apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
 ```
 
-`v1alpha1` should be treated as an experimental format. Field names and semantics may evolve before a stable release.
-
-## Validation
-
-`agentflow validate -f workflow.yaml` decodes the authoritative executable
-model, checks structural types and document references, and reports whether a
-workflow is invalid, executable, or spec-valid but unsupported by this runtime.
-It does not create workspace or Git state. The Go interpreter fails closed on
-unsupported executable constructs; the field guide remains broader than the
-current runtime.
-
-Run `scripts/check.sh` for the repository-owned deterministic development gate.
-It checks formatting and diff hygiene, runs tests, vet, race-enabled tests, and
-validates every shipped definition under `spec/` and `examples/`. It does not
-make live model calls.
+`v1alpha1` is experimental. Field names and semantics may evolve before a
+stable release.
 
 ## Publishing
 
-This package intentionally does **not** select a software license for you. Before publishing publicly, add the license that matches how you want others to use the specification and skill.
+This package intentionally does **not** select a software license for you.
+Before publishing publicly, add the license that matches how you want others
+to use the specification and skill.
