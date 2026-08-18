@@ -55,10 +55,13 @@ var statusOutputIsTTY = clioutput.IsTTY
 
 func main() {
 	if err := run(); err != nil {
-		presenter := clioutput.NewPresenter(os.Stderr)
-		fmt.Fprintln(os.Stderr, presenter.Style(clioutput.RoleError, "agentflow:"), err)
+		writeTopLevelError(os.Stderr, clioutput.NewPresenter(os.Stderr), err)
 		os.Exit(1)
 	}
+}
+
+func writeTopLevelError(out io.Writer, presenter clioutput.Presenter, err error) {
+	fmt.Fprintln(out, presenter.Style(clioutput.RoleError, "agentflow:"), err)
 }
 
 func run() error {
@@ -137,25 +140,7 @@ func runArgs(args []string) error {
 	}
 	result := workflow.ValidateFile(*file)
 	if cmd == "validate" {
-		presenter := clioutput.NewPresenter(os.Stdout)
-		for _, diagnostic := range result.Diagnostics {
-			role := clioutput.RoleWarning
-			if result.Status == workflow.Invalid {
-				role = clioutput.RoleError
-			}
-			presenter.Line(role, "%s", diagnostic.String())
-		}
-		switch result.Status {
-		case workflow.Executable:
-			presenter.Line(clioutput.RoleSuccess, "valid and executable")
-			return nil
-		case workflow.Unsupported:
-			presenter.Line(clioutput.RoleWarning, "valid but unsupported by this runtime")
-			return nil
-		default:
-			presenter.Line(clioutput.RoleError, "invalid")
-			return fmt.Errorf("workflow is invalid")
-		}
+		return writeValidationResult(clioutput.NewPresenter(os.Stdout), result)
 	}
 	if result.Status == workflow.Invalid {
 		return diagnosticsError(result)
@@ -214,12 +199,36 @@ func runArgs(args []string) error {
 }
 
 func usage() error {
-	presenter := clioutput.NewPresenter(os.Stderr)
-	fmt.Fprintf(os.Stderr, "%s agentflow <validate|plan|run|status|reset> -f workflow.yaml [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Style(clioutput.RoleLabel, "usage:"))
-	fmt.Fprintln(os.Stderr, "       agentflow run --detach -f workflow.yaml [-C repo] [--codex-bin path] [--set key=value]")
-	fmt.Fprintln(os.Stderr, "       agentflow status --all [-C repo] [--json]")
-	fmt.Fprintln(os.Stderr, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
+	writeUsage(os.Stderr, clioutput.NewPresenter(os.Stderr))
 	return fmt.Errorf("invalid command")
+}
+
+func writeUsage(out io.Writer, presenter clioutput.Presenter) {
+	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> -f workflow.yaml [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
+	fmt.Fprintln(out, "       agentflow run --detach -f workflow.yaml [-C repo] [--codex-bin path] [--set key=value]")
+	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
+	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
+}
+
+func writeValidationResult(presenter clioutput.Presenter, result workflow.Result) error {
+	for _, diagnostic := range result.Diagnostics {
+		role := clioutput.RoleWarning
+		if result.Status == workflow.Invalid {
+			role = clioutput.RoleError
+		}
+		presenter.Line(role, "%s", diagnostic.String())
+	}
+	switch result.Status {
+	case workflow.Executable:
+		presenter.Line(clioutput.RoleSuccess, "valid and executable")
+		return nil
+	case workflow.Unsupported:
+		presenter.Line(clioutput.RoleWarning, "valid but unsupported by this runtime")
+		return nil
+	default:
+		presenter.Line(clioutput.RoleError, "invalid")
+		return fmt.Errorf("workflow is invalid")
+	}
 }
 
 type statusAllOutput struct {
@@ -264,10 +273,10 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 	}
 
 	presenter := clioutput.NewPresenterWithMode(out, tty, color)
-	label := func(name string) string { return presenter.Style(clioutput.RoleLabel, name+":") }
+	label := presenter.Label
 	fmt.Fprintf(out, "%s %s\n%s %d\n", label("repository"), repo.Root, label("workflows"), len(statuses))
 	for _, status := range statuses {
-		fmt.Fprintf(out, "- %s %s\n  %s %s\n", label("workflow"), status.Workflow, label("state"), presenter.Style(clioutput.StateRole(status.State), status.State))
+		fmt.Fprintf(out, "- %s %s\n  %s %s\n", label("workflow"), status.Workflow, label("state"), presenter.State(status.State))
 		if status.Namespace != "" {
 			fmt.Fprintf(out, "  %s %s\n", label("namespace"), status.Namespace)
 		}
@@ -287,7 +296,7 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 		}
 		fmt.Fprintf(out, "  %s %s\n", label("complete"), presenter.Style(completeRole, fmt.Sprint(status.Complete)))
 		if status.ProcessLiveness != "" {
-			fmt.Fprintf(out, "  %s %s\n", label("process_liveness"), presenter.Style(clioutput.StateRole(status.ProcessLiveness), status.ProcessLiveness))
+			fmt.Fprintf(out, "  %s %s\n", label("process_liveness"), presenter.State(status.ProcessLiveness))
 		}
 	}
 	return nil

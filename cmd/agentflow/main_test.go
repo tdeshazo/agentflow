@@ -32,6 +32,9 @@ func TestPlanExpandedCLI(t *testing.T) {
 	if runErr != nil {
 		t.Fatal(runErr)
 	}
+	if strings.Contains(string(output), "\x1b[") {
+		t.Fatalf("plan YAML contains ANSI escapes: %q", output)
+	}
 	for _, want := range []string{"resolvedLifecycle:", "safetyEnforcementPoints:", "recoveryBehavior:", "completionContract:"} {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("plan output missing %q:\n%s", want, output)
@@ -76,6 +79,9 @@ func TestStatusJSONCLI(t *testing.T) {
 	}
 	if !strings.HasSuffix(string(output), "\n") || strings.Contains(strings.TrimSuffix(string(output), "\n"), "\n") {
 		t.Fatalf("redirected single-workflow JSON was not compact: %q", output)
+	}
+	if strings.Contains(string(output), "\x1b[") {
+		t.Fatalf("status JSON contains ANSI escapes: %q", output)
 	}
 
 	var status map[string]any

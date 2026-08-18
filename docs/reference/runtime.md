@@ -234,6 +234,13 @@ non-terminal stdout remains compact JSON; both forms end with one newline.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
 
+Human-readable status, validation results, usage text, errors, and detached-run
+confirmations use restrained ANSI styling only when their actual output writer
+is a terminal. Set `NO_COLOR` to keep the same human-readable text without
+styling. Redirected, piped, buffered, and structured output remains free of
+presentation escapes; workflow logs, provider streams, and detached capture
+are emitted unchanged.
+
 `reset` is an explicit state operation. It removes only this workflow's
 namespaced records and preserves repository history and source changes; when
 the workflow requires a clean implementation workspace, reset refuses to run

@@ -122,12 +122,12 @@ func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 		return err
 	}
 	p := clioutput.NewPresenterWithMode(out, tty, color)
-	label := func(name string) string { return p.Style(clioutput.RoleLabel, name+":") }
+	label := p.Label
 
 	fmt.Fprintf(out, "%s %s\n", label("workflow"), snapshot.Workflow)
 	fmt.Fprintf(out, "%s %s\n", label("repo"), snapshot.Repo)
 	fmt.Fprintf(out, "%s %v\n", label("initialized"), snapshot.Initialized)
-	fmt.Fprintf(out, "%s %s\n", label("state"), p.Style(clioutput.StateRole(snapshot.State), snapshot.State))
+	fmt.Fprintf(out, "%s %s\n", label("state"), p.State(snapshot.State))
 	if snapshot.HumanGate != "" {
 		fmt.Fprintf(out, "%s %s\n", label("human_gate"), p.Style(clioutput.RoleWarning, snapshot.HumanGate))
 	}
@@ -139,7 +139,7 @@ func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 		fmt.Fprintf(out, "%s %v\n", label("actor_completed"), snapshot.ActorCompleted)
 		if snapshot.ValidationFailed != "" {
 			if snapshot.FailureKind != "" {
-				fmt.Fprintf(out, "%s %s\n", label("failure_kind"), p.Style(clioutput.StateRole(snapshot.State), snapshot.FailureKind))
+				fmt.Fprintf(out, "%s %s\n", label("failure_kind"), p.State(snapshot.FailureKind))
 			}
 			fmt.Fprintf(out, "%s %s\n", label("validation_failed"), p.Style(clioutput.RoleWarning, snapshot.ValidationFailed))
 			// Preserve the existing diagnostic in text output. It is deliberately

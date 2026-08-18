@@ -34,6 +34,12 @@ func TestNoColorEnvironmentDisablesColorPolicy(t *testing.T) {
 	if colorAllowed() {
 		t.Fatal("NO_COLOR presence did not disable ANSI color policy")
 	}
+
+	var output bytes.Buffer
+	newPresenterWithPolicy(&output, true, true, true).Line(RoleSuccess, "complete")
+	if got := output.String(); got != "complete\n" {
+		t.Fatalf("NO_COLOR presentation = %q", got)
+	}
 }
 
 func TestPresenterSemanticRoles(t *testing.T) {
@@ -46,6 +52,26 @@ func TestPresenterSemanticRoles(t *testing.T) {
 	}
 }
 
+func TestPresenterSemanticFieldHelpers(t *testing.T) {
+	var output bytes.Buffer
+	p := NewPresenterWithMode(&output, true, true)
+
+	if got := p.Label("state"); !strings.Contains(got, "state:") || !strings.Contains(got, "\x1b[") {
+		t.Fatalf("styled label = %q", got)
+	}
+	if got := p.State("running"); !strings.Contains(got, "running") || !strings.Contains(got, "\x1b[") {
+		t.Fatalf("styled state = %q", got)
+	}
+
+	plain := NewPresenterWithMode(&bytes.Buffer{}, false, true)
+	if got := plain.Label("state"); got != "state:" {
+		t.Fatalf("plain label = %q", got)
+	}
+	if got := plain.State("running"); got != "running" {
+		t.Fatalf("plain state = %q", got)
+	}
+}
+
 func TestStateRole(t *testing.T) {
 	for state, want := range map[string]Role{
 		"ready":                         RoleSuccess,
@@ -55,6 +81,7 @@ func TestStateRole(t *testing.T) {
 		"safety-failed/terminal":        RoleError,
 		"malformed":                     RoleError,
 		"active":                        RoleAccent,
+		"uninitialized":                 RoleAccent,
 	} {
 		if got := StateRole(state); got != want {
 			t.Fatalf("StateRole(%q) = %v, want %v", state, got, want)

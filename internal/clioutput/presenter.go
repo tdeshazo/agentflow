@@ -22,6 +22,10 @@ const (
 	RoleMuted
 )
 
+// RoleProgress is an alias for the accent role used for active work and other
+// in-progress values.
+const RoleProgress = RoleAccent
+
 const ansiReset = "\x1b[0m"
 
 // Presenter applies terminal-only semantic styling without changing the
@@ -36,7 +40,7 @@ type Presenter struct {
 // styling is disabled when NO_COLOR is present in the environment.
 func NewPresenter(out io.Writer) Presenter {
 	tty := IsTTY(out)
-	return NewPresenterWithMode(out, tty, tty && colorAllowed())
+	return newPresenterWithPolicy(out, tty, tty, !colorAllowed())
 }
 
 func colorAllowed() bool {
@@ -46,10 +50,14 @@ func colorAllowed() bool {
 
 // NewPresenterWithMode is the deterministic presentation seam used by tests.
 func NewPresenterWithMode(out io.Writer, tty, color bool) Presenter {
+	return newPresenterWithPolicy(out, tty, color, false)
+}
+
+func newPresenterWithPolicy(out io.Writer, tty, color, noColor bool) Presenter {
 	if out == nil {
 		out = io.Discard
 	}
-	return Presenter{Out: out, TTY: tty, Color: tty && color}
+	return Presenter{Out: out, TTY: tty, Color: tty && color && !noColor}
 }
 
 // ColorEnabled reports whether ANSI styling should be used for out.
@@ -102,6 +110,17 @@ func (p Presenter) Style(role Role, text string) string {
 	return code + text + ansiReset
 }
 
+// Label formats a human-facing field label with its semantic label role.
+func (p Presenter) Label(name string) string {
+	return p.Style(RoleLabel, name+":")
+}
+
+// State formats a durable state value with the role appropriate to that
+// state. Unknown states remain visible and use the accent role.
+func (p Presenter) State(state string) string {
+	return p.Style(StateRole(state), state)
+}
+
 // Line writes one formatted line with semantic styling.
 func (p Presenter) Line(role Role, format string, args ...any) {
 	fmt.Fprintln(p.Out, p.Style(role, fmt.Sprintf(format, args...)))
@@ -117,10 +136,12 @@ func StateRole(state string) Role {
 	switch state {
 	case "ready", "completed", "running":
 		return RoleSuccess
-	case "human-gated", "validation-failed/recoverable", "not_running":
+	case "human-gated", "validation-failed/recoverable", "validation", "not_running":
 		return RoleWarning
-	case "safety-failed/terminal", "malformed":
+	case "safety-failed/terminal", "safety", "malformed":
 		return RoleError
+	case "active":
+		return RoleProgress
 	default:
 		return RoleAccent
 	}
