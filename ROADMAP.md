@@ -154,7 +154,7 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 **Goal:** Make AgentFlow workflows materially more concise than equivalent imperative orchestrators by keeping workflow-specific policy in YAML while moving generic lifecycle mechanics into the runtime.
 
-The first executable examples proved that AgentFlow can preserve the semantics of large shell orchestrators. They also exposed the next design constraint: a declarative workflow should not have to restate how AgentFlow itself persists an active phase, resumes it, checkpoints accepted work, advances progress, or reuses deterministic evidence. Priority 4 therefore treats the current self-hosting and `finish-priority-05` workflows as compression and authority benchmarks before adding more execution topology.
+The first executable examples proved that AgentFlow can preserve the semantics of large shell orchestrators. They also exposed the next design constraint: a declarative workflow should not have to restate how AgentFlow itself persists an active phase, resumes it, checkpoints accepted work, advances progress, or reuses deterministic evidence. Priority 4 therefore treats the current self-hosting workflows as compression and authority benchmarks before adding more execution topology.
 
 ### Immediate implementation order
 
@@ -443,4 +443,4 @@ The recommended implementation order is:
 8. **Trace and composition** — make larger systems explainable and reusable.
 9. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
 
-The roadmap should be updated when implementation, research, or self-hosting experience materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.
+The roadmap should be updated when implementation, research, or self-hosting experience materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.q
