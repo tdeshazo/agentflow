@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -74,6 +74,9 @@ func TestStatusJSONCLI(t *testing.T) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
+	if !strings.HasSuffix(string(output), "\n") || strings.Contains(strings.TrimSuffix(string(output), "\n"), "\n") {
+		t.Fatalf("redirected single-workflow JSON was not compact: %q", output)
+	}
 
 	var status map[string]any
 	if err := json.Unmarshal(output, &status); err != nil {
@@ -106,7 +109,13 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	if !strings.Contains(textOutput, "workflow: alpha") || !strings.Contains(textOutput, "workflow: beta") || !strings.Contains(textOutput, "state: ready") {
 		t.Fatalf("status --all text = %s", textOutput)
 	}
+	if strings.Contains(textOutput, "{\n") {
+		t.Fatalf("non-JSON status was pretty-printed as JSON: %s", textOutput)
+	}
 	jsonOutput := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "--json", "-C", repo.Root}) })
+	if !strings.HasSuffix(jsonOutput, "\n") || strings.Contains(strings.TrimSuffix(jsonOutput, "\n"), "\n") {
+		t.Fatalf("redirected repository-wide JSON was not compact: %q", jsonOutput)
+	}
 	var collection struct {
 		SchemaVersion int                         `json:"schema_version"`
 		Repo          string                      `json:"repo"`
@@ -118,6 +127,32 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	if collection.SchemaVersion != 1 || collection.Repo != repo.Root || len(collection.Workflows) != 2 {
 		t.Fatalf("status --all collection = %+v", collection)
 	}
+}
+
+func TestStatusJSONUsesSameTTYPolicyForSingleAndAll(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	workflowFile := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	originalDetector := statusOutputIsTTY
+	t.Cleanup(func() { statusOutputIsTTY = originalDetector })
+
+	statusOutputIsTTY = func(io.Writer) bool { return true }
+	prettySingle := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--json", "-f", workflowFile, "-C", repo.Root})
+	})
+	prettyAll := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--all", "--json", "-C", repo.Root})
+	})
+
+	statusOutputIsTTY = func(io.Writer) bool { return false }
+	compactSingle := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--json", "-f", workflowFile, "-C", repo.Root})
+	})
+	compactAll := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--all", "--json", "-C", repo.Root})
+	})
+
+	assertJSONFormattingAndEquivalentData(t, prettySingle, compactSingle)
+	assertJSONFormattingAndEquivalentData(t, prettyAll, compactAll)
 }
 
 func TestStatusAllReportsOnlyVerifiedProcessLiveness(t *testing.T) {
@@ -220,6 +255,11 @@ func TestLogsCLIRejectsNegativeTailAndReportsUnknownWorkflow(t *testing.T) {
 	if !strings.Contains(output, `"phase":"two"`) || strings.Contains(output, `"phase":"one"`) {
 		t.Fatalf("tail output = %s", output)
 	}
+	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+		if strings.HasPrefix(line, " ") {
+			t.Fatalf("logs output was JSON pretty-printed: %q", output)
+		}
+	}
 }
 
 func newCLIStatusRepo(t *testing.T) gitstate.Repo {
@@ -258,5 +298,30 @@ func captureCLIStdout(t *testing.T, fn func() error) string {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	return string(bytes.TrimSpace(data))
+	return string(data)
+}
+
+func assertJSONFormattingAndEquivalentData(t *testing.T, pretty, compact string) {
+	t.Helper()
+	if !strings.HasSuffix(pretty, "\n") || !strings.HasSuffix(compact, "\n") {
+		t.Fatalf("JSON output missing final newline: pretty=%q compact=%q", pretty, compact)
+	}
+	prettyBody := strings.TrimSuffix(pretty, "\n")
+	compactBody := strings.TrimSuffix(compact, "\n")
+	if !strings.Contains(prettyBody, "\n") {
+		t.Fatalf("TTY JSON was not indented: %q", pretty)
+	}
+	if strings.Contains(compactBody, "\n") {
+		t.Fatalf("non-TTY JSON was not one line: %q", compact)
+	}
+	var prettyValue, compactValue any
+	if err := json.Unmarshal([]byte(prettyBody), &prettyValue); err != nil {
+		t.Fatalf("pretty JSON is invalid: %q: %v", pretty, err)
+	}
+	if err := json.Unmarshal([]byte(compactBody), &compactValue); err != nil {
+		t.Fatalf("compact JSON is invalid: %q: %v", compact, err)
+	}
+	if !reflect.DeepEqual(prettyValue, compactValue) {
+		t.Fatalf("pretty and compact JSON differ: pretty=%v compact=%v", prettyValue, compactValue)
+	}
 }

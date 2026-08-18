@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
 	"github.com/tdeshazo/agentflow-spec/internal/engine"
 	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
 	"github.com/tdeshazo/agentflow-spec/internal/observability"
@@ -49,6 +49,8 @@ func (s sets) Values() []string {
 }
 
 const detachedChildEnv = "AGENTFLOW_DETACHED_CHILD"
+
+var statusOutputIsTTY = clioutput.IsTTY
 
 func main() {
 	if err := run(); err != nil {
@@ -193,7 +195,8 @@ func runArgs(args []string) error {
 		return e.Run(ctx)
 	case "status":
 		if *jsonOutput {
-			return e.StatusJSON()
+			stdout := os.Stdout
+			return e.StatusJSONTo(stdout, statusOutputIsTTY(stdout))
 		}
 		return e.Status()
 	case "reset":
@@ -244,7 +247,8 @@ func runAllStatus(repoRoot string, jsonOutput bool) error {
 		statuses = append(statuses, status)
 	}
 	if jsonOutput {
-		return json.NewEncoder(os.Stdout).Encode(statusAllOutput{SchemaVersion: 1, Repo: repo.Root, Workflows: statuses})
+		stdout := os.Stdout
+		return clioutput.WriteJSONWithTTY(stdout, statusAllOutput{SchemaVersion: 1, Repo: repo.Root, Workflows: statuses}, statusOutputIsTTY(stdout))
 	}
 	fmt.Fprintf(os.Stdout, "repository: %s\nworkflows: %d\n", repo.Root, len(statuses))
 	for _, status := range statuses {

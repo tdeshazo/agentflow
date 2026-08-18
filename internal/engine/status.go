@@ -1,9 +1,10 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 
+	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
 
@@ -144,11 +145,17 @@ func (e *Engine) Status() error {
 
 // StatusJSON writes one JSON object describing the durable workflow state.
 func (e *Engine) StatusJSON() error {
+	return e.StatusJSONTo(e.Out, clioutput.IsTTY(e.Out))
+}
+
+// StatusJSONTo writes one JSON object describing the durable workflow state
+// to out using the supplied terminal presentation policy.
+func (e *Engine) StatusJSONTo(out io.Writer, tty bool) error {
 	snapshot, err := e.statusSnapshot()
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(e.Out).Encode(snapshot)
+	return clioutput.WriteJSONWithTTY(out, snapshot, tty)
 }
 
 func (e *Engine) pendingHumanGateForStatus() (string, error) {

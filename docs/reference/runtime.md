@@ -228,7 +228,11 @@ contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
 `complete`, plus available `base`, `branch`, phase, gate, and commit context.
 Validation failure output is represented by its non-secret validation name and
 failure kind; prompts, reasoning, parameter values, environment values, and
-command output are not included.
+command output are not included. When stdout is an interactive terminal, the
+object is indented for readability. Redirected, piped, buffered, and other
+non-terminal stdout remains compact JSON; both forms end with one newline.
+The same presentation rule applies to the collection returned by
+`status --all --json`, without changing its schema or workflow ordering.
 
 `reset` is an explicit state operation. It removes only this workflow's
 namespaced records and preserves repository history and source changes; when
