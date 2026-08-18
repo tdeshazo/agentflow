@@ -419,6 +419,14 @@ func (e *Engine) finishObservation() error {
 	if err != nil || !ok {
 		return err
 	}
+	// A second invocation may have replaced the descriptor while this process
+	// was running. Never clear another process's verified liveness metadata.
+	if descriptor.Process != nil {
+		current := gitstate.CurrentProcessMetadata()
+		if current == nil || current.PID != descriptor.Process.PID || current.Start != descriptor.Process.Start {
+			return nil
+		}
+	}
 	descriptor.Process = nil
 	return e.Store.SetJSON(gitstate.DescriptorRecord, descriptor)
 }

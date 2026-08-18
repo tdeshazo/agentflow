@@ -139,10 +139,12 @@ published by ordinary commits or pushes, and are preserved by workflow reset.
 They record operational boundaries such as workflow start/end, phase start/end,
 provider execution, validation, checkpoint, human-gate, and completion events.
 The logger does not persist prompts, parameters, environments, or identity
-inputs. If a future provider/tool integration persists raw execution output,
-that output may contain sensitive content and must remain local with restrictive
-permissions. `logs --follow` only watches the log file and cancellation of the
-reader does not signal or cancel the workflow process.
+inputs. Workflow-configured shell capture files are separate from these runtime
+logs; captured execution output may contain sensitive content and should remain
+local with restrictive permissions. `logs --follow` only watches the log file
+and cancellation of the reader does not signal or cancel the workflow process.
+`--tail` and `--follow` are separate modes; supplying both is rejected. A
+negative `--tail` value is rejected, and `--tail 0` emits no existing lines.
 
 ## Runtime-owned phase lifecycle
 

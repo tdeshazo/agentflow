@@ -89,6 +89,9 @@ func runArgs(args []string) error {
 	if tailProvided && *tail < 0 {
 		return fmt.Errorf("--tail must not be negative")
 	}
+	if *follow && tailProvided {
+		return fmt.Errorf("--tail and --follow are mutually exclusive")
+	}
 	if *follow && cmd != "logs" {
 		return fmt.Errorf("--follow is only supported with logs")
 	}

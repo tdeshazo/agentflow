@@ -44,6 +44,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 	if err != nil {
 		return StatusProjection{}, err
 	}
+	if initialized && !repo.ObjectExists(base+"^{commit}") {
+		return StatusProjection{}, fmt.Errorf("base record %q does not name a commit", d.Records.Base)
+	}
 	head, err := repo.Head()
 	if err != nil {
 		return StatusProjection{}, err
@@ -58,6 +61,14 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 	activeExists, err := store.GetJSON(d.Records.ActivePhase, &active)
 	if err != nil {
 		return StatusProjection{}, err
+	}
+	if activeExists {
+		if active.PhaseID == "" {
+			return StatusProjection{}, fmt.Errorf("active phase record %q has no phase id", d.Records.ActivePhase)
+		}
+		if active.StartCommit != "" && !repo.ObjectExists(active.StartCommit+"^{commit}") {
+			return StatusProjection{}, fmt.Errorf("active phase record %q has an invalid start commit", d.Records.ActivePhase)
+		}
 	}
 	completeSHA, completeExists, err := store.Resolve(d.Records.WorkflowComplete)
 	if err != nil {

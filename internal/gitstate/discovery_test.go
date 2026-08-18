@@ -147,6 +147,49 @@ func TestWorkflowNameEncodingRejectsTraversalNamespace(t *testing.T) {
 	}
 }
 
+func TestStatusProjectionRejectsNonAuthoritativeAcceptanceShapes(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	store := NewStore(repo, "malformed-acceptance")
+	if err := store.SetJSON(DescriptorRecord, NewDescriptor("malformed-acceptance", "", RecordNames{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetJSON("base", map[string]string{"not": "a commit"}); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err := repo.FindDescriptor("malformed-acceptance")
+	if err != nil || !found || item.Descriptor == nil {
+		t.Fatalf("descriptor = %#v, found=%v, err=%v", item, found, err)
+	}
+	if _, err := item.Descriptor.ProjectStatus(repo, item.Namespace); err == nil {
+		t.Fatal("status projected a JSON blob as the base commit")
+	}
+
+	if err := store.SetCommit("base", mustHead(t, repo)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetJSON("active", map[string]any{"actor_completed": false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := item.Descriptor.ProjectStatus(repo, item.Namespace); err == nil {
+		t.Fatal("status projected an active record without a phase id")
+	}
+}
+
+func TestProcessLivenessRequiresVerifiedStartMetadata(t *testing.T) {
+	metadata := CurrentProcessMetadata()
+	if metadata == nil {
+		t.Skip("process start metadata is unavailable on this host")
+	}
+	if got, verified := ProcessLiveness(metadata); !verified || got != "running" {
+		t.Fatalf("current process liveness = %q, verified=%v", got, verified)
+	}
+	stale := *metadata
+	stale.Start += "-stale"
+	if got, verified := ProcessLiveness(&stale); !verified || got != "not_running" {
+		t.Fatalf("stale process liveness = %q, verified=%v", got, verified)
+	}
+}
+
 func newDiscoveryRepo(t *testing.T) Repo {
 	t.Helper()
 	dir := t.TempDir()
@@ -161,4 +204,13 @@ func newDiscoveryRepo(t *testing.T) Repo {
 	git("config", "user.email", "test@example.com")
 	git("commit", "--allow-empty", "-qm", "init")
 	return Repo{Root: dir}
+}
+
+func mustHead(t *testing.T, repo Repo) string {
+	t.Helper()
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return head
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
+	"github.com/tdeshazo/agentflow-spec/internal/observability"
 )
 
 func TestPlanExpandedCLI(t *testing.T) {
@@ -138,6 +139,24 @@ func TestLogsCLIRejectsNegativeTailAndReportsUnknownWorkflow(t *testing.T) {
 	}
 	if err := runLogs(repo.Root, "no-log", -1, false); err == nil || !strings.Contains(err.Error(), "no logs") {
 		t.Fatalf("no-log error = %v", err)
+	}
+	withLog := gitstate.NewStore(repo, "with-log")
+	if err := withLog.SetJSON(gitstate.DescriptorRecord, gitstate.NewDescriptor("with-log", "", gitstate.RecordNames{})); err != nil {
+		t.Fatal(err)
+	}
+	logStore, err := observability.Open(repo, "with-log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logStore.Close()
+	for _, phase := range []string{"one", "two"} {
+		if err := logStore.Event("phase_start", map[string]string{"phase": phase}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := captureCLIStdout(t, func() error { return runLogs(repo.Root, "with-log", 1, false) })
+	if !strings.Contains(output, `"phase":"two"`) || strings.Contains(output, `"phase":"one"`) {
+		t.Fatalf("tail output = %s", output)
 	}
 }
 
