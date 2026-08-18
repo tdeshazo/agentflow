@@ -36,8 +36,12 @@ type Presenter struct {
 // styling is disabled when NO_COLOR is present in the environment.
 func NewPresenter(out io.Writer) Presenter {
 	tty := IsTTY(out)
+	return NewPresenterWithMode(out, tty, tty && colorAllowed())
+}
+
+func colorAllowed() bool {
 	_, noColor := os.LookupEnv("NO_COLOR")
-	return NewPresenterWithMode(out, tty, tty && !noColor)
+	return !noColor
 }
 
 // NewPresenterWithMode is the deterministic presentation seam used by tests.

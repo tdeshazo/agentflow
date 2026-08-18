@@ -29,6 +29,13 @@ func TestPresenterStylesOnlyTTYColorMode(t *testing.T) {
 	}
 }
 
+func TestNoColorEnvironmentDisablesColorPolicy(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	if colorAllowed() {
+		t.Fatal("NO_COLOR presence did not disable ANSI color policy")
+	}
+}
+
 func TestPresenterSemanticRoles(t *testing.T) {
 	p := NewPresenterWithMode(&bytes.Buffer{}, true, true)
 	for _, role := range []Role{RoleHeading, RoleLabel, RoleSuccess, RoleWarning, RoleError, RoleAccent, RoleMuted} {

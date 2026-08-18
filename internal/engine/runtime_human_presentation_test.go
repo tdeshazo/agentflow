@@ -54,3 +54,23 @@ func TestInteractiveHumanGateRejectsUncheckedChecklistItemWithoutEvidence(t *tes
 		t.Fatalf("rejected checklist wrote human evidence: ok=%v err=%v", ok, resolveErr)
 	}
 }
+
+func TestInteractiveHumanGateStillRequiresExactFinalAcknowledgement(t *testing.T) {
+	original := humanGateInteractive
+	humanGateInteractive = func(io.Reader, io.Writer) bool { return true }
+	t.Cleanup(func() { humanGateInteractive = original })
+
+	repo := newSelfHostingRepo(t)
+	w := selfHostingWorkflow(t, repo)
+	e := newSelfHostingEngine(t, w, &selfHostingFakeProvider{commitLuna: true})
+	e.In = strings.NewReader("y\ny\ny\ny\n")
+	e.Out = io.Discard
+
+	err := e.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "human gate self-host-review not confirmed") {
+		t.Fatalf("human gate final acknowledgement error = %v", err)
+	}
+	if _, ok, resolveErr := e.Store.Resolve("human/self-host-review"); resolveErr != nil || ok {
+		t.Fatalf("bad final acknowledgement wrote human evidence: ok=%v err=%v", ok, resolveErr)
+	}
+}
