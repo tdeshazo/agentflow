@@ -108,38 +108,54 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	return snapshot, nil
 }
 
-// Status writes the existing human-readable status form.
+// Status writes the human-readable status form. Redirected and buffered output
+// keeps the historical plain-text bytes; terminal output may add ANSI styling.
 func (e *Engine) Status() error {
+	return e.StatusTo(e.Out, clioutput.IsTTY(e.Out), clioutput.ColorEnabled(e.Out))
+}
+
+// StatusTo writes human-readable status using an explicit presentation mode.
+// It exists so TTY/color branches can be tested without a real terminal.
+func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 	snapshot, err := e.statusSnapshot()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(e.Out, "workflow: %s\nrepo: %s\ninitialized: %v\n", snapshot.Workflow, snapshot.Repo, snapshot.Initialized)
-	fmt.Fprintf(e.Out, "state: %s\n", snapshot.State)
+	p := clioutput.NewPresenterWithMode(out, tty, color)
+	label := func(name string) string { return p.Style(clioutput.RoleLabel, name+":") }
+
+	fmt.Fprintf(out, "%s %s\n", label("workflow"), snapshot.Workflow)
+	fmt.Fprintf(out, "%s %s\n", label("repo"), snapshot.Repo)
+	fmt.Fprintf(out, "%s %v\n", label("initialized"), snapshot.Initialized)
+	fmt.Fprintf(out, "%s %s\n", label("state"), p.Style(clioutput.StateRole(snapshot.State), snapshot.State))
 	if snapshot.HumanGate != "" {
-		fmt.Fprintf(e.Out, "human_gate: %s\n", snapshot.HumanGate)
+		fmt.Fprintf(out, "%s %s\n", label("human_gate"), p.Style(clioutput.RoleWarning, snapshot.HumanGate))
 	}
 	if snapshot.Initialized {
-		fmt.Fprintf(e.Out, "base: %s\nbranch: %s\n", snapshot.Base, snapshot.Branch)
+		fmt.Fprintf(out, "%s %s\n%s %s\n", label("base"), snapshot.Base, label("branch"), snapshot.Branch)
 	}
 	if snapshot.ActivePhase != "" {
-		fmt.Fprintf(e.Out, "active_phase: %s @ %s\n", snapshot.ActivePhase, snapshot.PhaseStartCommit)
-		fmt.Fprintf(e.Out, "actor_completed: %v\n", snapshot.ActorCompleted)
+		fmt.Fprintf(out, "%s %s @ %s\n", label("active_phase"), p.Style(clioutput.RoleAccent, snapshot.ActivePhase), snapshot.PhaseStartCommit)
+		fmt.Fprintf(out, "%s %v\n", label("actor_completed"), snapshot.ActorCompleted)
 		if snapshot.ValidationFailed != "" {
 			if snapshot.FailureKind != "" {
-				fmt.Fprintf(e.Out, "failure_kind: %s\n", snapshot.FailureKind)
+				fmt.Fprintf(out, "%s %s\n", label("failure_kind"), p.Style(clioutput.StateRole(snapshot.State), snapshot.FailureKind))
 			}
-			fmt.Fprintf(e.Out, "validation_failed: %s\n", snapshot.ValidationFailed)
+			fmt.Fprintf(out, "%s %s\n", label("validation_failed"), p.Style(clioutput.RoleWarning, snapshot.ValidationFailed))
 			// Preserve the existing diagnostic in text output. It is deliberately
 			// absent from StatusSnapshot because it may contain command output.
-			fmt.Fprintf(e.Out, "validation_error: %s\n", snapshot.validationError)
+			fmt.Fprintf(out, "%s %s\n", label("validation_error"), p.Style(clioutput.RoleError, snapshot.validationError))
 		}
 	}
-	fmt.Fprintf(e.Out, "complete: %v", snapshot.Complete)
+	completeRole := clioutput.RoleMuted
 	if snapshot.Complete {
-		fmt.Fprintf(e.Out, " @ %s", snapshot.CompleteCommit)
+		completeRole = clioutput.RoleSuccess
 	}
-	fmt.Fprintln(e.Out)
+	fmt.Fprintf(out, "%s %s", label("complete"), p.Style(completeRole, fmt.Sprint(snapshot.Complete)))
+	if snapshot.Complete {
+		fmt.Fprintf(out, " @ %s", snapshot.CompleteCommit)
+	}
+	fmt.Fprintln(out)
 	return nil
 }
 

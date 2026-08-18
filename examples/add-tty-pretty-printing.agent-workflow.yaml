@@ -3,12 +3,13 @@ kind: AgentWorkflow
 metadata:
   name: add-tty-pretty-printing
   description: >-
-    Repository-owned workflow to pretty-print machine-readable AgentFlow status
-    JSON when stdout is an interactive terminal while preserving compact,
-    script-friendly JSON when output is piped or redirected. The workflow keeps
-    TTY detection in the presentation layer, requires deterministic regression
-    coverage for both output modes, independently audits compatibility, and
-    records a real-terminal verification before completion.
+    Repository-owned workflow to add a general terminal presentation layer to
+    AgentFlow and improve interactive human-gate confirmation. Human-facing
+    output may use restrained semantic ANSI styling when the relevant output is
+    a TTY, while JSON, YAML, logs, pipes, redirections, and other machine-facing
+    streams preserve valid stable content. Interactive human gates confirm each
+    checklist item before the final exact acknowledgement and persist evidence
+    only after every required confirmation succeeds.
 
 spec:
   parameters:
@@ -105,27 +106,29 @@ spec:
       actor: terra
       reasoning: high
       prompt: |
-        The deterministic AgentFlow quality gate failed while implementing
-        TTY-aware JSON pretty printing.
+        The deterministic AgentFlow quality gate failed while implementing the
+        terminal presentation and human-gate UX task.
 
         Inspect the actual checkout and repair only the failure required by this
-        bounded output-formatting task. Preserve the mutation allowlist and
-        protected resources. Do not weaken scripts/check.sh, CI policy, the
-        roadmap, research documents, or this workflow.
+        bounded CLI/runtime task. Preserve the mutation allowlist and protected
+        resources. Do not weaken scripts/check.sh, CI policy, the roadmap,
+        research documents, or this workflow.
 
         Required invariants:
-        - `status --json` remains valid JSON in every output mode;
-        - `status --all --json` remains valid JSON in every output mode;
-        - interactive terminal output is indented and readable;
-        - piped or redirected output remains compact and automation-friendly;
-        - the JSON schema, field names, values, and omission behavior do not
-          change merely because output formatting changes;
-        - TTY detection is based on the actual output destination, not stdin;
-        - non-JSON status, logs, plan, validation, run, and reset behavior are
-          unchanged by this task;
-        - tests do not depend on a developer having a real terminal attached;
-        - no new terminal dependency is added when the existing module graph can
-          support the implementation cleanly.
+        - presentation changes never change workflow acceptance authority;
+        - redirected, piped, and buffered human-readable output remains plain;
+        - `NO_COLOR` disables ANSI styling without changing textual content;
+        - JSON and YAML remain syntactically valid and contain no ANSI escapes;
+        - logs, log following/tailing, detached durable logs, and provider output
+          remain raw rather than being presentation-filtered;
+        - terminal styling is based on the actual output destination;
+        - interactive checklist prompts require terminal-backed stdin and stdout;
+        - non-interactive human gates retain the existing single exact-text
+          acknowledgement protocol;
+        - an interactive human gate persists no evidence until every checklist
+          item and the final acknowledgement have succeeded;
+        - tests exercise TTY/color/interactivity branches deterministically
+          without requiring a real PTY.
 
         --- gate output ---
         {{ tail(validation.failure.log, 260) }}
@@ -154,6 +157,8 @@ spec:
         - cmd/agentflow/main.go
         - cmd/agentflow/main_test.go
         - internal/engine/status.go
+        - internal/engine/runtime_human.go
+        - internal/clioutput/json.go
         - go.mod
         - "{{ spec.paths.runtime_reference }}"
         - "{{ spec.paths.canonical_gate }}"
@@ -183,117 +188,153 @@ spec:
         - uses: canonical-gate
 
   phases:
-    - id: implement-pretty-json
+    - id: implement-terminal-presentation
       kind: implementation
-      label: implement-tty-aware-json-formatting
+      label: implement-general-tty-presentation
       prompt: |
-        Add TTY-aware pretty printing for AgentFlow's explicit JSON status
-        output without changing the underlying status contract.
+        Build a small reusable terminal presentation layer and apply it to
+        AgentFlow's human-facing command output without changing machine-facing
+        contracts.
 
-        Inspect `cmd/agentflow/main.go`, `cmd/agentflow/main_test.go`,
-        `internal/engine/status.go`, the runtime documentation, and the current
-        module dependencies before changing anything.
+        Inspect `internal/clioutput/**`, `cmd/agentflow/main.go`,
+        `internal/engine/status.go`, current CLI tests, and runtime docs before
+        changing anything.
 
         Required behavior:
 
-        1. Single-workflow JSON status
-           `agentflow status --json -f <workflow> ...`
-           - If the command's stdout destination is an interactive terminal,
-             emit the existing JSON object with stable indentation suitable for
-             a human to read, followed by a final newline.
-           - If stdout is a pipe, regular file, buffer, or another non-TTY
-             destination, preserve compact single-object JSON output followed by
-             a final newline.
+        1. Presentation helper
+           - Keep TTY detection based on the actual writer.
+           - Add semantic roles for headings, labels, success, warning, error,
+             accent/progress, and muted text.
+           - Use restrained ANSI styling only when output is a TTY.
+           - Honor `NO_COLOR`: when it is present, emit the same human-readable
+             text without ANSI sequences.
+           - Unknown writers remain non-TTY by default.
+           - Provide deterministic seams so TTY=true/false and color=true/false
+             can be tested with ordinary buffers.
 
-        2. Repository-wide JSON status
-           `agentflow status --all --json ...`
-           - Apply the same TTY-aware formatting policy to the existing
-             collection object.
-           - Do not change collection schema, workflow ordering, state
-             projection, process-liveness semantics, or malformed-entry
-             handling.
+        2. Human-readable status
+           - Style labels and state values for `status -f ...` and
+             `status --all` when stdout is a terminal.
+           - Preserve the existing plain-text bytes for redirected, piped, and
+             buffered output, including `NO_COLOR` terminal mode apart from the
+             absence of ANSI styling.
+           - Do not change status state derivation, authority, schema, ordering,
+             omission rules, or process-liveness semantics.
 
-        3. Presentation boundary
-           - Detect TTY state from stdout/the actual output writer, never stdin.
-           - Keep terminal detection and JSON formatting as presentation
-             concerns; they must not become durable workflow state or influence
-             execution/acceptance semantics.
-           - Prefer one small shared output helper so the single-workflow and
-             repository-wide JSON paths cannot drift. `internal/clioutput/**`
-             is available for that helper if a shared package is the cleanest
-             implementation.
-           - The current module already carries `github.com/mattn/go-isatty`
-             indirectly. Prefer the existing dependency when suitable. If it is
-             imported directly, update module metadata correctly rather than
-             adding a second TTY library.
-           - Treat unknown/non-file `io.Writer` destinations as non-TTY unless
-             there is deterministic evidence otherwise.
-           - Do not add ANSI color or terminal-width-dependent layout.
+        3. Validation, usage, errors, and confirmations
+           - Give terminal validation outcomes semantic success/warning/error
+             emphasis.
+           - Style the CLI usage label and top-level `agentflow:` error prefix.
+           - Style detached-run confirmation as success.
+           - Preserve the underlying text and exit behavior in non-TTY output.
 
-        4. Compatibility
-           - Keep current JSON field names, values, `omitempty` behavior, and
-             semantic content unchanged.
-           - Keep non-JSON `status` output unchanged.
-           - Keep `logs` byte-stream behavior unchanged; in particular do not
-             reformat the line-oriented durable log stream.
-           - Keep `plan --expanded`, validation diagnostics, run output, reset,
-             detached execution, and exit/error behavior unchanged.
+        4. Structured/raw boundaries
+           - Keep `status --json` and `status --all --json` valid JSON with no
+             ANSI escapes. TTY JSON may remain indented and non-TTY JSON compact.
+           - Keep `plan --expanded` valid YAML with no ANSI escapes.
+           - Do not transform workflow logs, `--follow`, `--tail`, detached log
+             capture, or provider stdout/stderr.
 
-        5. Regression coverage
-           Add focused deterministic tests proving:
-           - pretty mode produces multi-line indented valid JSON;
-           - compact mode produces valid one-line JSON;
-           - both modes decode to equivalent data;
-           - `status --json` and `status --all --json` use the same policy;
-           - redirected/pipe-oriented CLI tests remain compact;
-           - non-JSON status and logs are not routed through JSON pretty
-             printing.
+        Add focused deterministic tests for semantic roles, state styling,
+        `NO_COLOR`/no-color behavior, TTY text status, non-TTY text stability,
+        and ANSI-free structured output.
 
-        Tests must exercise the formatting branch without requiring a real PTY;
-        factor the detection/encoding seam so TTY=true and TTY=false can be
-        tested deterministically. Run focused tests and the canonical gate
-        before returning.
+    - id: improve-human-gate-interaction
+      kind: implementation
+      label: implement-interactive-human-checklist-confirmation
+      prompt: |
+        Improve human-gate terminal UX while preserving the durable gate model
+        and non-interactive compatibility.
 
-    - id: audit-pretty-json
+        Inspect `internal/engine/runtime_human.go`, the `HumanGate` model and
+        specification reference, self-hosting runtime tests, and existing human
+        gate examples before changing anything.
+
+        Required behavior:
+
+        1. Interactive detection
+           - Enter checklist-by-checklist confirmation only when both the input
+             and output are terminal-backed.
+           - Provide an injectable/testable interactivity seam; tests must not
+             require a real PTY.
+           - Pipes, buffers, and programmatic readers retain the existing
+             non-interactive protocol.
+
+        2. Checklist UX
+           - Present each required checklist item as an explicit prompt ending
+             in `[y/N]: `.
+           - Accept `y` or `yes`, case-insensitively, for each item.
+           - Any other answer fails the human gate immediately with deterministic
+             context naming the rejected checklist item.
+           - After all items pass, retain the workflow-declared exact-text final
+             acknowledgement. Do not silently reinterpret or bypass it.
+
+        3. Evidence authority
+           - Do not persist the human-gate evidence record after an individual
+             checklist answer.
+           - Persist evidence only after all interactive checklist items and the
+             final acknowledgement succeed.
+           - Existing idempotent-record, prerequisite, condition, skip, and
+             evidence-record semantics remain unchanged.
+
+        4. Presentation
+           - Give terminal human-gate headings, prompts, warnings, successful
+             confirmation, and completion summaries semantic styling through the
+             shared presentation helper.
+           - `NO_COLOR` removes ANSI without disabling interactive prompts.
+           - Non-TTY human-gate output keeps the existing text/protocol so current
+             tests and non-interactive callers that provide one `yes` line remain
+             compatible.
+
+        Add deterministic regression tests proving that all interactive checklist
+        items must pass, rejected items write no human evidence, the final exact
+        acknowledgement remains required, and non-interactive behavior remains
+        backward compatible.
+
+    - id: audit-terminal-presentation
       kind: audit
-      label: independently-audit-tty-aware-json-formatting
+      label: independently-audit-terminal-presentation-and-human-gates
       validation: audit-gate
       prompt: |
-        Independently audit the final checkout for the TTY-aware JSON pretty
-        printing task.
+        Independently audit the final checkout for the terminal presentation and
+        human-gate interaction task.
 
-        Do not accept the implementation phase's completion claim as evidence.
-        Inspect the changed files and compare the saved base through HEAD.
-        Verify all of the following from code and tests:
+        Do not accept implementation completion claims as evidence. Inspect the
+        actual changed files and compare the saved base through HEAD. Verify:
 
-        - stdout, not stdin, controls terminal formatting;
-        - terminal JSON is indented but semantically identical to compact JSON;
-        - non-TTY JSON remains compact and suitable for shell pipelines;
-        - single-workflow and `--all` JSON share the same formatting policy;
-        - JSON schema and status authority semantics are unchanged;
-        - line-oriented workflow logs are untouched;
-        - non-JSON CLI output remains backward compatible;
-        - tests cover both formatter branches deterministically without a live
-          terminal dependency;
-        - dependency changes, if any, are minimal and correctly represented in
-          go.mod/go.sum;
+        - ANSI appears only in terminal-oriented human presentation;
+        - `NO_COLOR` produces plain text without disabling terminal checklist UX;
+        - non-TTY human-readable output stays backward compatible;
+        - JSON/YAML are valid and ANSI-free;
+        - logs, detached capture, follow/tail, and provider output remain raw;
+        - status state/schema/authority semantics are unchanged;
+        - interactive checklist confirmation requires terminal input and output;
+        - every checklist item must be confirmed before the final exact-text
+          acknowledgement;
+        - rejected checklist input cannot write durable human evidence;
+        - non-interactive human gates still accept the historical single exact
+          acknowledgement line;
+        - tests cover TTY/color/interactivity branches without a live PTY;
+        - dependency and module metadata remain minimal and correct;
         - no protected resource or unrelated path changed.
 
-        Run focused tests as useful and the canonical gate. Repair a genuine
-        in-scope defect if needed; otherwise leave the checkout unchanged. Do
-        not broaden the feature into color, tables, width-aware rendering, or
-        general CLI redesign.
+        Run focused tests and the canonical gate. Repair a genuine in-scope
+        defect if needed; otherwise leave the checkout unchanged. Do not turn
+        this into a full-screen UI, dynamic terminal-width renderer, or styling
+        layer for raw machine/log/provider streams.
 
   flow:
     - id: already-complete
       if: "{{ state.workflow_complete.exists }}"
       then:
-        - report: "TTY-aware JSON pretty printing already completed at {{ state.workflow_complete.value }}"
+        - report: "TTY presentation and human-gate UX already completed at {{ state.workflow_complete.value }}"
         - stop: success
     - id: starting-state
       validate: starting-state
-    - phase: implement-pretty-json
-    - phase: audit-pretty-json
+    - phase: implement-terminal-presentation
+    - phase: improve-human-gate-interaction
+    - phase: audit-terminal-presentation
     - id: post-audit
       validate: audit-gate
     - human: terminal-output-review
@@ -301,22 +342,24 @@ spec:
 
   humanGates:
     - id: terminal-output-review
-      requires: [audit-pretty-json]
+      requires: [audit-terminal-presentation]
       after:
         - validation: post-audit
       instructions: >-
-        Verify the final CLI behavior in a real interactive terminal and once
-        through a pipe or redirection. Confirm that explicit status JSON is
-        readable when stdout is a terminal, remains compact when stdout is not
-        a terminal, and parses successfully in both cases. Also confirm that
-        ordinary text status and workflow logs retain their prior presentation.
+        Verify the final CLI in a real terminal and through pipes/redirection.
+        Confirm that human-facing status, validation/results, errors, human-gate
+        prompts, and completion output are readable in a TTY; NO_COLOR removes
+        ANSI; machine/raw streams stay clean; and this gate itself prompts for
+        each checklist item before the final acknowledgement.
       checklist:
-        - id: tty-json-readable
-          text: "status --json and status --all --json are indented and readable when stdout is a TTY."
-        - id: piped-json-compact
-          text: "The same JSON commands stay compact and valid when piped or redirected."
-        - id: non-json-unchanged
-          text: "Text status and workflow log output remain backward compatible."
+        - id: terminal-styling-readable
+          text: "Human-facing status and command results use restrained readable terminal styling."
+        - id: no-color-and-pipes-clean
+          text: "NO_COLOR and non-TTY output remain plain, while JSON/YAML/log streams contain no ANSI escapes."
+        - id: human-checklist-interactive
+          text: "This human gate prompts for each checklist item with [y/N] before the final exact acknowledgement."
+        - id: raw-streams-unchanged
+          text: "Workflow logs, follow/tail output, detached log capture, and provider output remain raw."
       acknowledgement:
         type: exact-text
         value: "yes"
@@ -336,7 +379,7 @@ spec:
       writeMarker:
         value: head_commit
       summary:
-        title: "TTY-aware JSON pretty printing complete."
+        title: "TTY presentation and human-gate UX complete."
         include:
           - branch
           - base_commit
