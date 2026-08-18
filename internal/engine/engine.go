@@ -33,6 +33,11 @@ type Engine struct {
 	Parameters       map[string]any
 	In               io.Reader
 	Out              io.Writer
+	// HumanGateInteractive overrides terminal detection for deterministic
+	// callers and tests. A nil function uses the real input/output terminal
+	// check, so pipes and programmatic readers retain the non-interactive
+	// protocol.
+	HumanGateInteractive HumanGateInteractivity
 
 	lastFailure        string
 	phase              *workflow.Phase

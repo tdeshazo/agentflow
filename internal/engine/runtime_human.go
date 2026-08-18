@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,7 +14,11 @@ import (
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 )
 
-var humanGateInteractive = clioutput.IsInteractive
+// HumanGateInteractivity determines whether a human gate should use its
+// checklist-by-checklist terminal protocol for a particular input/output pair.
+// The default is clioutput.IsInteractive, which requires both ends to be
+// terminal-backed.
+type HumanGateInteractivity = func(io.Reader, io.Writer) bool
 
 func (e *Engine) runFlowAssertion(a workflow.Assertion) error {
 	typeName := a.Type
@@ -152,7 +157,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 	fmt.Fprintln(e.Out, gate.Instructions)
 
 	reader := bufio.NewReader(e.In)
-	if humanGateInteractive(e.In, e.Out) {
+	if e.humanGateIsInteractive() {
 		for i, item := range gate.Checklist {
 			presenter.Print(clioutput.RoleAccent, "%d. %s [y/N]: ", i+1, item.Text)
 			answer, err := readHumanLine(reader)
@@ -163,7 +168,10 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 			case "y", "yes":
 				// Continue to the next required check.
 			default:
-				return fmt.Errorf("human gate %s checklist item %d not confirmed", id, i+1)
+				if item.ID != "" {
+					return fmt.Errorf("human gate %s checklist item %d not confirmed: %s", id, i+1, item.ID)
+				}
+				return fmt.Errorf("human gate %s checklist item %d not confirmed: %s", id, i+1, item.Text)
 			}
 		}
 		if len(gate.Checklist) > 0 {
@@ -204,6 +212,14 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 		presenter.Line(clioutput.RoleSuccess, "Human verification recorded.")
 	}
 	return nil
+}
+
+func (e *Engine) humanGateIsInteractive() bool {
+	detect := e.HumanGateInteractive
+	if detect == nil {
+		detect = clioutput.IsInteractive
+	}
+	return detect(e.In, e.Out)
 }
 
 func readHumanLine(reader *bufio.Reader) (string, error) {
