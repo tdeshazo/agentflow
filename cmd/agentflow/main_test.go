@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -119,9 +120,70 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	}
 }
 
+func TestStatusAllReportsOnlyVerifiedProcessLiveness(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	metadata := gitstate.CurrentProcessMetadata()
+	if metadata == nil {
+		t.Skip("process start metadata is unavailable on this host")
+	}
+	descriptor := gitstate.NewDescriptor("live", "", gitstate.RecordNames{})
+	descriptor.Process = metadata
+	store := gitstate.NewStore(repo, "live")
+	if err := store.SetJSON(gitstate.DescriptorRecord, descriptor); err != nil {
+		t.Fatal(err)
+	}
+	var collection statusAllOutput
+	output := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "--json", "-C", repo.Root}) })
+	if err := json.Unmarshal([]byte(output), &collection); err != nil {
+		t.Fatal(err)
+	}
+	if len(collection.Workflows) != 1 || collection.Workflows[0].ProcessLiveness != "running" {
+		t.Fatalf("verified liveness = %+v", collection.Workflows)
+	}
+
+	descriptor.Process.Start += "-stale"
+	if err := store.SetJSON(gitstate.DescriptorRecord, descriptor); err != nil {
+		t.Fatal(err)
+	}
+	output = captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "--json", "-C", repo.Root}) })
+	if err := json.Unmarshal([]byte(output), &collection); err != nil {
+		t.Fatal(err)
+	}
+	if len(collection.Workflows) != 1 || collection.Workflows[0].ProcessLiveness != "not_running" {
+		t.Fatalf("stale liveness = %+v", collection.Workflows)
+	}
+}
+
 func TestStatusAllRejectsWorkflowFileSelector(t *testing.T) {
 	if err := runArgs([]string{"status", "--all", "-f", "workflow.yaml"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("selector conflict error = %v", err)
+	}
+}
+
+func TestDetachAcceptedOnlyForRun(t *testing.T) {
+	for _, command := range []string{"validate", "plan", "status", "logs", "reset"} {
+		t.Run(command, func(t *testing.T) {
+			err := runArgs([]string{command, "--detach"})
+			if err == nil || !strings.Contains(err.Error(), command+" does not support --detach") {
+				t.Fatalf("--detach error = %v", err)
+			}
+		})
+	}
+}
+
+func TestForegroundRunDoesNotTakeDetachedPath(t *testing.T) {
+	original := detachedStart
+	t.Cleanup(func() { detachedStart = original })
+	called := false
+	detachedStart = func(*exec.Cmd) error {
+		called = true
+		return errors.New("detached path was used")
+	}
+	if err := runArgs([]string{"run"}); err == nil || !strings.Contains(err.Error(), "-f workflow YAML is required") {
+		t.Fatalf("foreground run error = %v", err)
+	}
+	if called {
+		t.Fatal("foreground run used detached launcher")
 	}
 }
 

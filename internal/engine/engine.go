@@ -40,6 +40,9 @@ type Engine struct {
 	tempDirectory      string
 	parametersResolved bool
 	logStore           *observability.LogStore
+	outputBridge       *observability.OutputBridge
+	outputRestore      func()
+	detached           bool
 }
 
 // ActivePhase is the durable record of a phase's current execution state,
@@ -96,6 +99,9 @@ var invocationSequence uint64
 type Options struct {
 	RepoRoot  string
 	Overrides map[string]string
+	// Detached enables child-process diagnostic capture. It does not change
+	// workflow semantics or state authority.
+	Detached bool
 	// StateOnly constructs an engine for status or explicit reset. When the
 	// repository root is supplied, it deliberately avoids resolving run
 	// parameters so operators need not re-enter a task or secret just to inspect
@@ -154,7 +160,7 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved}
+	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved, detached: opts.Detached}
 	if !opts.StateOnly && w.Spec.Temp.Directory != "" {
 		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
 		if err != nil {
@@ -314,6 +320,14 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 				fields["result"] = "failure"
 			}
 			_ = e.logStore.Event("workflow_end", fields)
+			if e.outputRestore != nil {
+				e.outputRestore()
+				e.outputRestore = nil
+			}
+			if e.outputBridge != nil {
+				_ = e.outputBridge.Close()
+				e.outputBridge = nil
+			}
 			_ = e.logStore.Close()
 			e.logStore = nil
 		}
@@ -410,6 +424,21 @@ func (e *Engine) startObservation() error {
 		return fmt.Errorf("persist observability descriptor: %w", err)
 	}
 	e.logStore = logStore
+	if e.detached {
+		bridge, bridgeErr := observability.NewOutputBridge(logStore)
+		if bridgeErr != nil {
+			_ = logStore.Close()
+			e.logStore = nil
+			return fmt.Errorf("capture detached output: %w", bridgeErr)
+		}
+		oldStdout, oldStderr := os.Stdout, os.Stderr
+		os.Stdout, os.Stderr = bridge.Stdout(), bridge.Stderr()
+		e.outputRestore = func() {
+			os.Stdout, os.Stderr = oldStdout, oldStderr
+		}
+		e.outputBridge = bridge
+		e.Out = bridge.Stdout()
+	}
 	return nil
 }
 

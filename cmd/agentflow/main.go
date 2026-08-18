@@ -21,20 +21,34 @@ import (
 	codexprovider "github.com/tdeshazo/agentflow-spec/provider/codex"
 )
 
-type sets map[string]string
+type sets struct {
+	values []string
+	parsed map[string]string
+}
 
-func (s *sets) String() string { return fmt.Sprint(map[string]string(*s)) }
+func (s *sets) String() string { return fmt.Sprint(s.parsed) }
 func (s *sets) Set(v string) error {
 	k, val, ok := strings.Cut(v, "=")
 	if !ok || k == "" {
 		return fmt.Errorf("expected key=value")
 	}
-	if *s == nil {
-		*s = sets{}
+	if s.parsed == nil {
+		s.parsed = map[string]string{}
 	}
-	(*s)[k] = val
+	s.values = append(s.values, v)
+	s.parsed[k] = val
 	return nil
 }
+
+func (s sets) Map() map[string]string {
+	return s.parsed
+}
+
+func (s sets) Values() []string {
+	return append([]string(nil), s.values...)
+}
+
+const detachedChildEnv = "AGENTFLOW_DETACHED_CHILD"
 
 func main() {
 	if err := run(); err != nil {
@@ -57,6 +71,7 @@ func runArgs(args []string) error {
 	file := fs.String("f", "", "workflow YAML file")
 	repo := fs.String("C", "", "repository root override")
 	codexBin := fs.String("codex-bin", "codex", "Codex CLI binary")
+	detach := fs.Bool("detach", false, "start the workflow in a detached child process (run only)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON (status only)")
 	all := fs.Bool("all", false, "inspect every discovered workflow (status only)")
 	workflowName := fs.String("workflow", "", "workflow name (logs only)")
@@ -94,6 +109,9 @@ func runArgs(args []string) error {
 	}
 	if *follow && cmd != "logs" {
 		return fmt.Errorf("--follow is only supported with logs")
+	}
+	if *detach && cmd != "run" {
+		return fmt.Errorf("%s does not support --detach; use --detach with run", cmd)
 	}
 	if cmd == "status" && *all && *file != "" {
 		return fmt.Errorf("status selectors --all and -f are mutually exclusive")
@@ -136,6 +154,14 @@ func runArgs(args []string) error {
 	if result.Status == workflow.Unsupported {
 		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
 	}
+	if *detach {
+		pid, err := launchDetachedRun(os.Args[0], *file, *repo, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "detached workflow %q started (pid %d)\n", result.Document.Workflow.Metadata.Name, pid)
+		return nil
+	}
 	if cmd == "plan" {
 		if !*expanded {
 			return fmt.Errorf("plan requires --expanded")
@@ -156,7 +182,7 @@ func runArgs(args []string) error {
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
 	stateOnly := cmd == "status" || cmd == "reset"
-	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: map[string]string(overrides), StateOnly: stateOnly})
+	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: overrides.Map(), StateOnly: stateOnly, Detached: os.Getenv(detachedChildEnv) == "1" && cmd == "run"})
 	if err != nil {
 		return err
 	}
@@ -179,6 +205,7 @@ func runArgs(args []string) error {
 
 func usage() error {
 	fmt.Fprintln(os.Stderr, "usage: agentflow <validate|plan|run|status|reset> -f workflow.yaml [-C repo] [--expanded] [--json] [--set key=value]")
+	fmt.Fprintln(os.Stderr, "       agentflow run --detach -f workflow.yaml [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(os.Stderr, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(os.Stderr, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
 	return fmt.Errorf("invalid command")

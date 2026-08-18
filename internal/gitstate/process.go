@@ -1,10 +1,7 @@
 package gitstate
 
 import (
-	"fmt"
 	"os"
-	"strconv"
-	"strings"
 )
 
 // CurrentProcessMetadata returns a PID and kernel process-start token when the
@@ -32,24 +29,4 @@ func ProcessLiveness(metadata *ProcessMetadata) (string, bool) {
 		return "running", true
 	}
 	return "not_running", true
-}
-
-func processStartToken(pid int) (string, bool) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return "", false
-	}
-	closeParen := strings.LastIndexByte(string(b), ')')
-	if closeParen < 0 || closeParen+2 >= len(b) {
-		return "", false
-	}
-	fields := strings.Fields(string(b)[closeParen+2:])
-	// The slice starts at stat field 3 (state); field 22 (starttime) is index 19.
-	if len(fields) <= 19 {
-		return "", false
-	}
-	if _, err := strconv.ParseUint(fields[19], 10, 64); err != nil {
-		return "", false
-	}
-	return fields[19], true
 }

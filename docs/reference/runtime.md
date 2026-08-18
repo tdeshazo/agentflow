@@ -15,7 +15,20 @@ This prevents descriptive fields from being silently treated as enforcement.
 go run ./cmd/agentflow run \
   -f examples/finish-priority-05.agent-workflow.yaml \
   -C /path/to/target/repository
+
+go run ./cmd/agentflow run --detach \
+  -f examples/finish-priority-05.agent-workflow.yaml \
+  -C /path/to/target/repository
 ```
+
+Foreground execution is the default. `run --detach` starts the same
+AgentFlow executable in a new session and returns after the child process has
+started; it does not wait for workflow success. The child receives the same
+workflow file, repository, Codex binary, and repeated `--set` values, with
+stdin disconnected and `--detach` removed. Inspect a detached run with
+`status --all -C /path/to/target/repository` and
+`logs --workflow workflow-name -C /path/to/target/repository` (optionally
+using `--tail N` or `--follow`).
 
 State can be inspected or reset independently:
 
