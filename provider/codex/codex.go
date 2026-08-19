@@ -48,7 +48,7 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	args := buildArgsForOutput(req, last, p.outputIsTTY(stdout))
+	args := buildArgsForOutput(req, last, p.outputIsTTY(stdout) && p.outputIsTTY(stderr))
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = req.Workspace
 	cmd.Stdin = bytes.NewBufferString(req.Prompt)
@@ -100,9 +100,6 @@ func (p Provider) outputIsTTY(out io.Writer) bool {
 
 func colorPolicy(req provider.Request, outputTTY bool) string {
 	intent := req.Presentation
-	if intent == "" && req.Color != "" {
-		intent = provider.PresentationIntent(req.Color)
-	}
 
 	switch intent {
 	case provider.PresentationNever:

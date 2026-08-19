@@ -25,6 +25,22 @@ const (
 	PresentationNever PresentationIntent = "never"
 )
 
+// ResolvePresentationIntent converts a workflow-facing presentation value into
+// a known provider intent. An omitted or unknown value uses the safe native
+// default; each provider still resolves that intent against its output sink.
+func ResolvePresentationIntent(value string) PresentationIntent {
+	switch PresentationIntent(value) {
+	case PresentationAlways:
+		return PresentationAlways
+	case PresentationNever:
+		return PresentationNever
+	case PresentationAuto:
+		return PresentationAuto
+	default:
+		return PresentationAuto
+	}
+}
+
 // Request specifies work to be performed by a provider.
 // It is intentionally provider-neutral. Provider-specific adapters translate
 // these capabilities into their native CLI/API options.
@@ -37,10 +53,7 @@ type Request struct {
 	Approval     string
 	Ephemeral    bool
 	Presentation PresentationIntent
-	// Color is retained as a compatibility alias for callers using the
-	// pre-presentation request field. New callers should use Presentation.
-	Color    string
-	Metadata map[string]string
+	Metadata     map[string]string
 }
 
 // Result contains provider output useful for audit and debugging purposes.
