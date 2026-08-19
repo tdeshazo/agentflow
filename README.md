@@ -8,8 +8,8 @@ This repository contains:
 
 - a reference `agentflow.dev/v1alpha1` `AgentWorkflow` definition;
 - a field-level specification reference;
-- an agent skill for describing, reviewing, and comparing workflow
-  specifications;
+- an agent skill for authoring, describing, reviewing, and comparing workflow
+  specifications without requiring AgentFlow implementation source;
 - concrete workflow examples;
 - an experimental Go interpreter with a provider-neutral execution interface;
   and
@@ -134,9 +134,12 @@ does not make live model calls. For individual workflow validation, see the
 ## Agent skill
 
 The [agent workflow specification skill](skills/agent-workflow-spec-describer/SKILL.md)
-teaches an agent how to explain the specification efficiently. It distinguishes
-agent authority, workspace mutation authority, and deterministic validation
-authority.
+teaches an agent how to create and modify executable workflows from the bundled
+public contract, then validate and inspect their expanded plans without reading
+AgentFlow implementation source. It also explains, reviews, and compares
+existing workflows while preserving the separation among agent authority,
+workspace mutation authority, deterministic validation authority, human gates,
+and completion.
 
 ## Status
 
