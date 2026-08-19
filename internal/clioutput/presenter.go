@@ -3,7 +3,9 @@ package clioutput
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/mattn/go-isatty"
 )
@@ -51,24 +53,31 @@ const ansiReset = "\x1b[0m"
 // Presenter applies terminal-only semantic styling without changing the
 // underlying text contract for redirected or buffered output.
 type Presenter struct {
-	Out   io.Writer
-	TTY   bool
-	Color bool
-	Mode  PresentationMode
+	Out     io.Writer
+	TTY     bool
+	Color   bool
+	Mode    PresentationMode
+	Profile TerminalProfile
 }
 
 // NewPresenter builds a presenter from the actual output destination. ANSI
 // styling is disabled when NO_COLOR is present in the environment.
 func NewPresenter(out io.Writer) Presenter {
-	tty := IsTTY(out)
-	return NewPresenterWithTTY(out, tty)
+	profile := DetectTerminal(out)
+	return NewPresenterWithProfile(out, presentationMode(profile.TTY), profile)
 }
 
 // NewPresenterWithTTY applies the real NO_COLOR policy with an explicit
 // terminal mode. It is useful when the terminal state is supplied by a caller
 // or test rather than inferred from the writer itself.
 func NewPresenterWithTTY(out io.Writer, tty bool) Presenter {
-	return newPresenterWithPresentationPolicy(out, presentationMode(tty), tty, tty, !colorAllowed())
+	profile := DetectTerminal(out)
+	profile.TTY = tty
+	profile.Interactive = tty
+	if !tty || !colorAllowed() {
+		profile.Color = ColorNone
+	}
+	return NewPresenterWithProfile(out, presentationMode(tty), profile)
 }
 
 func colorAllowed() bool {
@@ -78,26 +87,64 @@ func colorAllowed() bool {
 
 // NewPresenterWithMode is the deterministic presentation seam used by tests.
 func NewPresenterWithMode(out io.Writer, tty, color bool) Presenter {
-	return newPresenterWithPresentationPolicy(out, presentationMode(tty), tty, color, false)
+	level := ColorNone
+	if tty && color {
+		level = ColorBasic
+	}
+	return NewPresenterWithProfile(out, presentationMode(tty), TerminalProfile{
+		TTY:         tty,
+		Interactive: tty,
+		Color:       level,
+		Unicode:     tty && color && detectUnicode(tty),
+	})
 }
 
 // NewPresenterWithPresentation constructs a presenter for an explicit
 // semantic mode. Rich implies an interactive terminal capability; use
 // NewPresenterWithCapabilities when those capabilities need to be injected.
 func NewPresenterWithPresentation(out io.Writer, mode PresentationMode) Presenter {
-	return newPresenterWithPresentationPolicy(
-		out,
-		mode,
-		mode == PresentationRich,
-		true,
-		!colorAllowed(),
-	)
+	profile := DetectTerminal(out)
+	if mode == PresentationRich {
+		profile.TTY = true
+		profile.Interactive = true
+		if profile.Color == ColorUnknown || profile.Color == ColorNone {
+			profile.Color = ColorBasic
+		}
+	}
+	return NewPresenterWithProfile(out, mode, profile)
 }
 
 // NewPresenterWithCapabilities is the deterministic seam for callers and
 // tests that know both the presentation mode and terminal capabilities.
 func NewPresenterWithCapabilities(out io.Writer, mode PresentationMode, tty, color bool) Presenter {
-	return newPresenterWithPresentationPolicy(out, mode, tty, color, false)
+	level := ColorNone
+	if tty && color {
+		level = ColorBasic
+	}
+	return NewPresenterWithProfile(out, mode, TerminalProfile{
+		TTY:         tty,
+		Interactive: tty,
+		Color:       level,
+		Unicode:     tty && color && detectUnicode(tty),
+	})
+}
+
+// NewPresenterWithProfile is the explicit capability seam for callers and
+// tests. A zero or unknown color level intentionally produces plain text.
+func NewPresenterWithProfile(out io.Writer, mode PresentationMode, profile TerminalProfile) Presenter {
+	if out == nil {
+		out = io.Discard
+	}
+	if mode == PresentationRaw {
+		return Presenter{Out: out, Mode: mode, Profile: profile}
+	}
+	return Presenter{
+		Out:     out,
+		TTY:     profile.TTY,
+		Color:   mode == PresentationRich && profile.TTY && profile.Color.Enabled(),
+		Mode:    mode,
+		Profile: profile,
+	}
 }
 
 func presentationMode(tty bool) PresentationMode {
@@ -112,13 +159,16 @@ func newPresenterWithPolicy(out io.Writer, tty, color, noColor bool) Presenter {
 }
 
 func newPresenterWithPresentationPolicy(out io.Writer, mode PresentationMode, tty, color, noColor bool) Presenter {
-	if out == nil {
-		out = io.Discard
+	level := ColorNone
+	if tty && color && !noColor {
+		level = ColorBasic
 	}
-	if mode == PresentationRaw {
-		return Presenter{Out: out, Mode: mode}
-	}
-	return Presenter{Out: out, Mode: mode, TTY: tty, Color: mode == PresentationRich && tty && color && !noColor}
+	return NewPresenterWithProfile(out, mode, TerminalProfile{
+		TTY:         tty,
+		Interactive: tty,
+		Color:       level,
+		Unicode:     tty && color && !noColor && detectUnicode(tty),
+	})
 }
 
 // ColorEnabled reports whether ANSI styling should be used for out.
@@ -139,7 +189,7 @@ func IsTTYReader(r io.Reader) bool {
 // IsInteractive reports whether a human can interact through terminal-backed
 // input and output. Pipes, files, and test buffers remain non-interactive.
 func IsInteractive(in io.Reader, out io.Writer) bool {
-	return IsTTYReader(in) && IsTTY(out)
+	return DetectTerminalProfile(in, out).Interactive
 }
 
 // Style returns text decorated for its semantic role when terminal color is
@@ -151,9 +201,9 @@ func (p Presenter) Style(role Role, text string) string {
 	code := ""
 	switch role {
 	case RoleHeading:
-		code = "\x1b[1;36m"
+		code = "\x1b[1m"
 	case RoleLabel:
-		code = "\x1b[36m"
+		code = "\x1b[2m"
 	case RoleSuccess:
 		code = "\x1b[32m"
 	case RoleWarning:
@@ -161,7 +211,7 @@ func (p Presenter) Style(role Role, text string) string {
 	case RoleError:
 		code = "\x1b[31m"
 	case RoleAccent:
-		code = "\x1b[1;34m"
+		code = "\x1b[36m"
 	case RoleMuted:
 		code = "\x1b[2m"
 	}
@@ -169,6 +219,61 @@ func (p Presenter) Style(role Role, text string) string {
 		return text
 	}
 	return code + text + ansiReset
+}
+
+func (p Presenter) richVisuals() bool {
+	return p.Mode == PresentationRich && p.Color
+}
+
+func (p Presenter) glyph(unicode, ascii string) string {
+	if p.Profile.Unicode {
+		return unicode
+	}
+	return ascii
+}
+
+func (p Presenter) eventLine(unicodeGlyph, asciiGlyph, indent string, role Role, format string, args ...any) {
+	if !p.richVisuals() {
+		p.semanticLine(role, "==> "+format, args...)
+		return
+	}
+	p.semanticLine(role, "%s%s ==> %s", indent, p.glyph(unicodeGlyph, asciiGlyph), fmt.Sprintf(format, args...))
+}
+
+// Hyperlink wraps visible text in an OSC-8 hyperlink only when the profile
+// explicitly established support. Invalid control-containing URLs are left
+// visible and unlinked.
+func (p Presenter) Hyperlink(text, target string) string {
+	if p.Mode == PresentationRaw || !p.Profile.Hyperlinks || text == "" || target == "" {
+		return text
+	}
+	if strings.ContainsAny(target, "\x00\x1b\r\n") {
+		return text
+	}
+	return "\x1b]8;;" + target + "\x1b\\" + text + "\x1b]8;;\x1b\\"
+}
+
+// FileURL returns a local file URL suitable for an OSC-8 target.
+func FileURL(path string) string {
+	if path == "" {
+		return ""
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
+}
+
+// GitSummary presents a compact, orchestration-owned repository summary.
+// Paths are intentionally not listed here; callers can inspect Git state or
+// request logs explicitly without turning normal presentation into a diff.
+func (p Presenter) GitSummary(scope string, changedFiles []string) {
+	if scope == "" {
+		scope = "repository"
+	}
+	count := len(changedFiles)
+	word := "files"
+	if count == 1 {
+		word = "file"
+	}
+	p.eventLine("└", "-", "  ", RoleMuted, "Git %s: %d %s changed", scope, count, word)
 }
 
 // Label formats a human-facing field label with its semantic label role.
@@ -228,104 +333,104 @@ func (p Presenter) Prompt(format string, args ...any) {
 
 // PhaseStart presents the beginning of a phase.
 func (p Presenter) PhaseStart(id, label string) {
-	p.semanticLine(RoleAccent, "==> Phase %s: %s", id, label)
+	p.eventLine("▸", ">", "", RoleAccent, "Phase %s: %s", id, label)
 }
 
 // PhaseSkip presents a condition-based phase skip.
 func (p Presenter) PhaseSkip(id, reason string) {
 	if reason == "" {
-		p.semanticLine(RoleMuted, "==> Skipping phase %s", id)
+		p.eventLine("·", "-", "", RoleMuted, "Skipping phase %s", id)
 		return
 	}
-	p.semanticLine(RoleMuted, "==> Skipping phase %s: %s", id, reason)
+	p.eventLine("·", "-", "", RoleMuted, "Skipping phase %s: %s", id, reason)
 }
 
 // CompletedPhaseSkip presents reuse of a completed phase marker.
 func (p Presenter) CompletedPhaseSkip(id, label, commit string) {
-	p.semanticLine(RoleMuted, "==> Skipping completed phase %s: %s (%s)", id, label, commit)
+	p.eventLine("·", "-", "", RoleMuted, "Skipping completed phase %s: %s (%s)", id, label, commit)
 }
 
 // CriterionAlreadyChecked presents the legacy checked-criterion shortcut.
 func (p Presenter) CriterionAlreadyChecked(id string) {
-	p.semanticLine(RoleSuccess, "==> Criterion already checked; marking phase %s complete", id)
+	p.eventLine("✓", "+", "  ", RoleSuccess, "Criterion already checked; marking phase %s complete", id)
 }
 
 // PhaseResume presents recovery of an interrupted phase.
 func (p Presenter) PhaseResume(id, label string) {
-	p.semanticLine(RoleAccent, "==> Recovering interrupted phase %s: %s", id, label)
+	p.eventLine("↺", "~", "", RoleAccent, "Recovering interrupted phase %s: %s", id, label)
 }
 
 // HumanGateAlreadyRecorded presents durable human-gate evidence reuse.
 func (p Presenter) HumanGateAlreadyRecorded(id string) {
-	p.semanticLine(RoleAccent, "==> Human gate %s already recorded", id)
+	p.eventLine("·", "-", "  ", RoleAccent, "Human gate %s already recorded", id)
 }
 
 // RetainedWorkResume presents recovery decisions for retained phase work.
 func (p Presenter) RetainedWorkResume(actor string) {
-	p.semanticLine(RoleWarning, "==> Retained phase work is not yet acceptable; resuming actor %s", actor)
+	p.eventLine("↺", "~", "  ", RoleWarning, "Retained phase work is not yet acceptable; resuming actor %s", actor)
 }
 
 // RetainedWorkPreflight presents a successful preflight that still lacks actor
 // completion evidence.
 func (p Presenter) RetainedWorkPreflight() {
-	p.semanticLine(
-		RoleWarning,
-		"==> Retained phase work passed a preflight gate; actor completion evidence is still required",
+	p.eventLine(
+		"·", "-", "  ", RoleWarning,
+		"Retained phase work passed a preflight gate; actor completion evidence is still required",
 	)
 }
 
 // ProviderIdentity presents the provider and actor owning an execution unit.
 func (p Presenter) ProviderIdentity(provider, actor string) {
 	if actor == "" {
-		p.semanticLine(RoleAccent, "==> Provider %s", provider)
+		p.eventLine("·", "-", "  ", RoleAccent, "Provider %s", provider)
 		return
 	}
-	p.semanticLine(RoleAccent, "==> Provider %s: actor %s", provider, actor)
+	p.eventLine("·", "-", "  ", RoleAccent, "Provider %s: actor %s", provider, actor)
 }
 
 // ValidationSuccess presents a successful deterministic validation.
 func (p Presenter) ValidationSuccess(name string) {
-	p.semanticLine(RoleSuccess, "==> Validation %s passed", name)
+	p.eventLine("✓", "+", "  ", RoleSuccess, "Validation %s passed", name)
 }
 
 // ValidationFailure presents a failed deterministic validation.
 func (p Presenter) ValidationFailure(name string) {
-	p.semanticLine(RoleError, "==> Validation %s failed", name)
+	p.eventLine("✗", "!", "  ", RoleError, "Validation %s failed", name)
 }
 
 // ValidationReuse presents reuse of durable deterministic validation evidence.
 func (p Presenter) ValidationReuse(name string) {
-	p.semanticLine(RoleSuccess, "==> Reusing deterministic validation evidence: %s", name)
+	p.eventLine("✓", "+", "  ", RoleSuccess, "Reusing deterministic validation evidence: %s", name)
 }
 
 // RepairAttempt presents the bounded repair transition after validation
 // failure. Its plain text is retained for compatibility with existing output.
 func (p Presenter) RepairAttempt(name string) {
-	p.semanticLine(RoleWarning, "==> Validation %s failed; running one repair attempt", name)
+	p.eventLine("↻", "~", "  ", RoleWarning, "Validation %s failed; running one repair attempt", name)
 }
 
 // CheckpointSummary presents a completed checkpoint when a commit is known.
 func (p Presenter) CheckpointSummary(label, commit string) {
 	if commit == "" {
-		p.semanticLine(RoleSuccess, "==> Checkpoint %s complete", label)
+		p.eventLine("✓", "+", "  ", RoleSuccess, "Checkpoint %s complete", label)
 		return
 	}
-	p.semanticLine(RoleSuccess, "==> Checkpoint %s complete at %s", label, commit)
+	p.eventLine("✓", "+", "  ", RoleSuccess, "Checkpoint %s complete at %s", label, commit)
 }
 
 // PhaseComplete presents a phase acceptance summary.
 func (p Presenter) PhaseComplete(id, commit string) {
-	p.semanticLine(RoleSuccess, "==> Phase %s complete at %s", id, commit)
+	p.eventLine("✓", "+", "  ", RoleSuccess, "Phase %s complete at %s", id, commit)
 }
 
 // CompletionSummary presents the final workflow completion notice.
 func (p Presenter) CompletionSummary(name string) {
-	p.semanticLine(RoleSuccess, "Workflow %s complete.", name)
+	p.eventLine("✓", "+", "", RoleSuccess, "Workflow %s complete.", name)
 }
 
 // WorkflowAlreadyComplete presents durable completion-marker reuse.
 func (p Presenter) WorkflowAlreadyComplete(name, commit string) {
-	p.semanticLine(RoleSuccess, "Workflow %s already complete at %s", name, commit)
+	p.eventLine("✓", "+", "", RoleSuccess, "Workflow %s already complete at %s", name, commit)
 }
 
 // Notice presents a human-facing notice with a semantic role.
@@ -369,10 +474,10 @@ func (p Presenter) ListItem(key, value string) {
 // Rule presents a human-facing section rule.
 func (p Presenter) Rule(label string) {
 	if label == "" {
-		p.semanticLine(RoleHeading, "--------------------")
+		p.semanticLine(RoleMuted, "--------------------")
 		return
 	}
-	p.semanticLine(RoleHeading, "=== %s ===", label)
+	p.semanticLine(RoleMuted, "=== %s ===", label)
 }
 
 // Separator presents a blank separator in human-facing output.

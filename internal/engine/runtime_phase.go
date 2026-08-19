@@ -175,8 +175,21 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 		}
 	} else if err := e.runPhaseActor(ctx, p, p.Prompt, &active); err != nil {
 		return err
+	} else {
+		e.presentActorGitSummary(active.StartCommit)
 	}
 	return e.finishPhase(ctx, p, active)
+}
+
+// presentActorGitSummary is deliberately best-effort. It observes repository
+// state after the provider returns, but its output never participates in
+// validation, checkpointing, or advancement.
+func (e *Engine) presentActorGitSummary(start string) {
+	files, err := e.Repo.ChangedFilesSince(start)
+	if err != nil {
+		return
+	}
+	e.presenter().GitSummary("since phase start", e.filterIgnored(files))
 }
 func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active ActivePhase) error {
 	if e.runtimeOwnsPhaseLifecycle(p) {
@@ -349,6 +362,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 			}
 		}
 	}
+	e.presenter().ProviderIdentity(prov.Name(), actorName)
 	e.logEvent("provider_start", map[string]string{"provider": prov.Name(), "actor": actorName})
 	_, err = prov.Run(ctx, provider.Request{
 		Workspace:    e.Repo.Root,

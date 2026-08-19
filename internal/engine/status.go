@@ -111,7 +111,12 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 // Status writes the human-readable status form. Redirected and buffered output
 // keeps the historical plain-text bytes; terminal output may add ANSI styling.
 func (e *Engine) Status() error {
-	return e.StatusTo(e.Out, clioutput.IsTTY(e.Out), clioutput.ColorEnabled(e.Out))
+	snapshot, err := e.statusSnapshot()
+	if err != nil {
+		return err
+	}
+	p := clioutput.NewPresenter(e.Out)
+	return writeStatusSnapshot(p, snapshot)
 }
 
 // StatusTo writes human-readable status using an explicit presentation mode.
@@ -122,9 +127,12 @@ func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 		return err
 	}
 	p := clioutput.NewPresenterWithMode(out, tty, color)
+	return writeStatusSnapshot(p, snapshot)
+}
 
+func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	p.Metadata("workflow", snapshot.Workflow)
-	p.Metadata("repo", snapshot.Repo)
+	p.Metadata("repo", p.Hyperlink(snapshot.Repo, clioutput.FileURL(snapshot.Repo)))
 	p.Metadata("initialized", fmt.Sprint(snapshot.Initialized))
 	p.MetadataStyled("state", snapshot.State, clioutput.StateRole(snapshot.State))
 	if snapshot.HumanGate != "" {
