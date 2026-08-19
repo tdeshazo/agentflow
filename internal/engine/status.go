@@ -181,9 +181,9 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 		p.MetadataStyled("next_action", snapshot.NextAction, clioutput.StateRole(snapshot.NextAction))
 		switch snapshot.Recovery {
 		case "automatic-on-rerun":
-			p.Line(clioutput.RoleWarning, "recovery guidance: correct the validation failure if needed, then rerun; durable phase state will be used")
+			p.Line(clioutput.RoleWarning, "recovery guidance: correct the validation failure if needed, then rerun; durable phase state will be used. Use reset only to intentionally abandon the run")
 		case "operator-action-required":
-			p.Line(clioutput.RoleError, "recovery guidance: automatic actor and repair execution stopped; repair or revert the workspace-policy violation, then rerun")
+			p.Line(clioutput.RoleError, "recovery guidance: operator action is required; automatic actor and repair execution stopped. repair or revert the workspace-policy violation, then rerun. reset is not required merely because the safety failure occurred")
 		}
 	}
 	completeRole := clioutput.RoleMuted
@@ -201,20 +201,30 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 // FailureRecoveryGuidance reports durable recovery advice for a failed run.
 // An empty result means durable state cannot safely support recovery advice.
 func (e *Engine) FailureRecoveryGuidance() string {
+	if !e.recoveryEligible {
+		return ""
+	}
 	snapshot, err := e.statusSnapshot()
 	if err != nil {
 		return ""
 	}
 
 	switch snapshot.State {
+	case "active":
+		if snapshot.ActivePhase == "" {
+			return ""
+		}
+		return "AgentFlow recovery: retained phase work and durable state are preserved. " +
+			"Inspect status and logs, then rerun the same agentflow run command (the same invocation); AgentFlow will resume from durable phase state rather than discard accepted work. " +
+			"Use reset only to intentionally abandon this durable run."
 	case "validation-failed/recoverable":
 		return "AgentFlow recovery: retained phase work is preserved in durable state. " +
-			"Inspect status and logs, then rerun the same agentflow run command; AgentFlow will resume from durable phase state without discarding accepted work. " +
+			"Inspect status and logs, then rerun the same agentflow run command (the same invocation); rerunning is the normal recovery action. AgentFlow will resume from durable phase state rather than discard accepted work. " +
 			"Use reset only to intentionally abandon this durable run."
 	case "safety-failed/terminal":
 		return "AgentFlow recovery: operator action is required. Automatic actor and repair recovery stopped for the current workspace-policy violation. " +
-			"Repair or revert the violation, inspect status and logs, then rerun the same agentflow run command so normal durable recovery checks can decide whether to resume. " +
-			"Use reset only to intentionally abandon this durable run."
+			"Repair or revert the violation, inspect status and logs, then rerun the same agentflow run command (the same invocation) so normal durable recovery checks can decide whether to resume. " +
+			"Reset is not required merely because the safety failure occurred; use reset only to intentionally abandon this durable run."
 	default:
 		return ""
 	}

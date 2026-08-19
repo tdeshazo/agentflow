@@ -724,7 +724,7 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	if !strings.Contains(out.String(), "recovery: operator-action-required") || !strings.Contains(out.String(), "next_action: remediate-then-rerun") {
 		t.Fatalf("safety recovery status = %s", out.String())
 	}
-	if !strings.Contains(out.String(), "automatic actor and repair execution stopped") || !strings.Contains(out.String(), "repair or revert") {
+	if !strings.Contains(out.String(), "operator action is required") || !strings.Contains(out.String(), "automatic actor and repair execution stopped") || !strings.Contains(out.String(), "repair or revert") || !strings.Contains(out.String(), "reset is not required") {
 		t.Fatalf("safety recovery wording = %s", out.String())
 	}
 	out.Reset()
@@ -771,6 +771,38 @@ func TestFailureRecoveryGuidanceRequiresDurableActionableState(t *testing.T) {
 	}
 	if guidance := e.FailureRecoveryGuidance(); guidance != "" {
 		t.Fatalf("guidance without durable state = %q", guidance)
+	}
+}
+
+func TestFailureRecoveryGuidanceDoesNotBorrowStateAcrossRunIdentityMismatch(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "guidance-run-identity")
+	w.Spec.Parameters["task"] = workflow.Parameter{Type: "string", Default: "old task"}
+	p := &durableProvider{action: func(_ context.Context, _ provider.Request) error {
+		return context.Canceled
+	}}
+	first, err := New(w, map[string]provider.Provider{"test": p}, Options{Overrides: map[string]string{"task": "old task"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.In = strings.NewReader("")
+	first.Out = io.Discard
+	if err := first.Run(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("initial interrupted run = %v", err)
+	}
+
+	second, err := New(w, map[string]provider.Provider{"test": p}, Options{Overrides: map[string]string{"task": "new task"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.In = strings.NewReader("")
+	second.Out = io.Discard
+	err = second.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "resolved run inputs changed") {
+		t.Fatalf("identity mismatch = %v", err)
+	}
+	if guidance := second.FailureRecoveryGuidance(); guidance != "" {
+		t.Fatalf("identity mismatch borrowed recovery guidance = %q", guidance)
 	}
 }
 

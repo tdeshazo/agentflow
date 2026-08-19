@@ -239,16 +239,21 @@ parameters.
 
 ## Recovering from a failed run
 
-When a failed `run` has durable phase state, AgentFlow appends recovery guidance
-after the primary error. For a recoverable validation failure, inspect `status`
-and `logs`, make any needed deterministic or manual correction, then rerun the
-same `agentflow run` command. Retained phase work and accepted work remain in
-durable Git-backed state. For a `safety-failed/terminal` state, automatic
-actor/repair work has stopped for the current workspace-policy violation: an
-operator must repair or revert that violation before rerunning, after which the
-normal recovery checks decide whether resume is safe. `reset` is only for
-intentionally abandoning the durable run; it is not the ordinary recovery
-action.
+When a failed `run` has durable phase state, AgentFlow appends a recovery footer
+after the primary error. The normal operator sequence is:
+
+1. Read the primary error and AgentFlow recovery footer.
+2. Inspect `status` and `logs`.
+3. Make any required deterministic/manual correction, including repairing or
+   reverting a workspace-policy violation.
+4. Rerun the same `agentflow run` invocation. AgentFlow uses its normal durable
+   recovery checks to resume retained phase work when safe.
+
+For a `safety-failed/terminal` state, automatic actor/repair work has stopped
+for the current unsafe workspace condition, but the durable run is not
+abandoned: restore policy compliance and rerun. `reset` is only for
+intentionally abandoning the durable run, and is not required merely because a
+safety failure occurred.
 
 Pass `--json` for one machine-readable object instead of the default text. It
 contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
@@ -258,6 +263,9 @@ failure kind; prompts, reasoning, parameter values, environment values, and
 command output are not included. When stdout is an interactive terminal, the
 object is indented for readability. Redirected, piped, buffered, and other
 non-terminal stdout remains compact JSON; both forms end with one newline.
+Actionable failures also include stable `recovery` and `next_action` fields:
+validation failures use `automatic-on-rerun`/`rerun`, while safety failures use
+`operator-action-required`/`remediate-then-rerun`.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
 

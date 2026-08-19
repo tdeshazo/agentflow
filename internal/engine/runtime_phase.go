@@ -158,6 +158,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
 		return err
 	}
+	e.recoveryEligible = true
 
 	e.presenter().PhaseStart(id, p.Label)
 	e.logEvent("phase_start", map[string]string{"phase": id})

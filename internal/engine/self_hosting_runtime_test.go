@@ -249,6 +249,12 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		if err := e.Run(context.Background()); !errors.Is(err, context.Canceled) {
 			t.Fatalf("run error = %v", err)
 		}
+		guidance := e.FailureRecoveryGuidance()
+		if !strings.Contains(guidance, "retained phase work and durable state are preserved") ||
+			!strings.Contains(guidance, "rerun the same agentflow run command") ||
+			!strings.Contains(guidance, "rather than discard accepted work") {
+			t.Fatalf("interrupted recovery guidance = %q", guidance)
+		}
 		var out bytes.Buffer
 		e.Out = &out
 		if err := e.Status(); err != nil {
@@ -280,6 +286,13 @@ func TestSelfHostingStatusFixtures(t *testing.T) {
 		status := assertJSONStatus(t, e, "validation-failed/recoverable")
 		if status.FailureKind != string(PhaseFailureValidation) || status.ValidationFailed != "implementation-gate" || status.Recovery != "automatic-on-rerun" || status.NextAction != "rerun" {
 			t.Fatalf("validation JSON status = %+v", status)
+		}
+		var jsonOut bytes.Buffer
+		if err := e.StatusJSONTo(&jsonOut, false); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(jsonOut.String(), "validation_error") || strings.Contains(jsonOut.String(), "still fails after repair") {
+			t.Fatalf("validation JSON exposed arbitrary output = %s", jsonOut.String())
 		}
 		if guidance := e.FailureRecoveryGuidance(); !strings.Contains(guidance, "retained phase work is preserved") || !strings.Contains(guidance, "rerun the same agentflow run command") || !strings.Contains(guidance, "intentionally abandon") {
 			t.Fatalf("recoverable guidance = %q", guidance)
