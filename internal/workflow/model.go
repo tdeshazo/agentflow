@@ -217,7 +217,6 @@ type Agent struct {
 	Sandbox           string `yaml:"sandbox"`
 	Approval          string `yaml:"approval"`
 	Ephemeral         bool   `yaml:"ephemeral"`
-	Color             string `yaml:"color"`
 	MayCommit         bool   `yaml:"may_commit"`
 	OutputLastMessage bool   `yaml:"output_last_message"`
 	present           map[string]bool

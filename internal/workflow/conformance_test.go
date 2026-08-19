@@ -187,7 +187,7 @@ func TestPriority4BenchmarkWorkflowsPreserveConciseSafetyContracts(t *testing.T)
 				t.Fatalf("normalized lifecycle = %#v", n.Spec.Lifecycle)
 			}
 			for name, agent := range n.Spec.Agents {
-				if agent.Runner != "codex" || agent.Sandbox != "workspace-write" || agent.Approval != "never" || !agent.Ephemeral || agent.Color != "never" || !agent.MayCommit || !agent.OutputLastMessage {
+				if agent.Runner != "codex" || agent.Sandbox != "workspace-write" || agent.Approval != "never" || !agent.Ephemeral || !agent.MayCommit || !agent.OutputLastMessage {
 					t.Fatalf("agent %q lost inherited execution authority: %#v", name, agent)
 				}
 			}

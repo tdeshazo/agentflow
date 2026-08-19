@@ -39,7 +39,6 @@ type PlannedAgent struct {
 	Sandbox           string `yaml:"sandbox,omitempty"`
 	Approval          string `yaml:"approval,omitempty"`
 	Ephemeral         bool   `yaml:"ephemeral"`
-	Color             string `yaml:"color,omitempty"`
 	MayCommit         bool   `yaml:"mayCommit"`
 	OutputLastMessage bool   `yaml:"outputLastMessage"`
 }
@@ -85,7 +84,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		a := w.Spec.Agents[name]
 		plan.ResolvedAgents = append(plan.ResolvedAgents, PlannedAgent{
 			Name: name, Runner: a.Runner, Model: a.Model, Sandbox: a.Sandbox,
-			Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color,
+			Approval: a.Approval, Ephemeral: a.Ephemeral,
 			MayCommit: a.MayCommit, OutputLastMessage: a.OutputLastMessage,
 		})
 	}

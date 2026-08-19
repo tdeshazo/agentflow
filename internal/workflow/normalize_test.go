@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -84,39 +83,21 @@ func TestNormalizeWorkflowResolvesConciseDefaults(t *testing.T) {
 	}
 }
 
-func TestNormalizeWorkflowPreservesAgentColorValuesAndDefaults(t *testing.T) {
-	d, err := Decode(writeWorkflow(t, `
+func TestDecodeRejectsWorkflowOwnedStyling(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
-metadata: {name: color-compatibility}
+metadata: {name: styling-is-application-owned}
 spec:
   defaults:
     agent:
       color: auto
   agents:
-    inherited: {}
-    overridden:
+    worker:
       color: never
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := NormalizeWorkflow(d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NormalizeWorkflow(d)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("normalization was not deterministic:\nfirst: %#v\nsecond: %#v", first, second)
-	}
-	if got := first.Workflow.Spec.Agents["inherited"].Color; got != "auto" {
-		t.Fatalf("inherited color = %q, want auto", got)
-	}
-	if got := first.Workflow.Spec.Agents["overridden"].Color; got != "never" {
-		t.Fatalf("overridden color = %q, want never", got)
+	if err == nil || !strings.Contains(err.Error(), "field color not found") {
+		t.Fatalf("workflow-owned styling error = %v", err)
 	}
 }
 

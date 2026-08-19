@@ -145,7 +145,7 @@ Agent capability does not determine phase acceptance. Validation does.
 execution into ordinary v1alpha1 fields and is validated both before and after
 that compilation. It may contain:
 
-- `agent`: inherited runner, model, sandbox, approval, ephemeral, color,
+- `agent`: inherited runner, model, sandbox, approval, ephemeral,
   commit, and output capability values. A locally written agent field,
   including `false` for a boolean, overrides the inherited value.
 - `lifecycle`: the safe-resume lifecycle used when `spec.lifecycle` is absent.
