@@ -77,7 +77,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 	if ok, _, err := e.validCommitMarker(record); err != nil {
 		return err
 	} else if ok {
-		presenter.Line(clioutput.RoleAccent, "==> Human gate %s already recorded", id)
+		presenter.HumanGateAlreadyRecorded(id)
 		return nil
 	}
 	for _, prerequisite := range gate.Requires {
@@ -129,7 +129,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 			}
 		}
 		if gate.Skip.Warning != "" {
-			presenter.Line(clioutput.RoleWarning, "WARNING: %s", gate.Skip.Warning)
+			presenter.Notice(clioutput.RoleWarning, "WARNING: %s", gate.Skip.Warning)
 		}
 		if gate.Skip.Record != "" {
 			resolved, err := e.recordName(gate.Skip.Record, nil)
@@ -152,14 +152,14 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 		return e.persistHumanEvidence(gate, record, head)
 	}
 
-	fmt.Fprintln(e.Out)
-	presenter.Line(clioutput.RoleHeading, "=== Human verification: %s ===", id)
-	fmt.Fprintln(e.Out, gate.Instructions)
+	presenter.Separator()
+	presenter.Rule(fmt.Sprintf("Human verification: %s", id))
+	presenter.TextLine("%s", gate.Instructions)
 
 	reader := bufio.NewReader(e.In)
 	if e.humanGateIsInteractive() {
 		for i, item := range gate.Checklist {
-			presenter.Print(clioutput.RoleAccent, "%d. %s [y/N]: ", i+1, item.Text)
+			presenter.Prompt("%d. %s [y/N]: ", i+1, item.Text)
 			answer, err := readHumanLine(reader)
 			if err != nil {
 				return err
@@ -175,17 +175,17 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 			}
 		}
 		if len(gate.Checklist) > 0 {
-			presenter.Line(clioutput.RoleSuccess, "All checklist items confirmed.")
+			presenter.Notice(clioutput.RoleSuccess, "All checklist items confirmed.")
 		}
 	} else {
 		// Preserve the original non-interactive protocol so tests, pipes, and
 		// callers providing a single acknowledgement line remain compatible.
 		for i, item := range gate.Checklist {
-			fmt.Fprintf(e.Out, "%d. %s\n", i+1, item.Text)
+			presenter.TextLine("%d. %s", i+1, item.Text)
 		}
 	}
 
-	presenter.Print(clioutput.RoleAccent, "Type %q to confirm: ", gate.Acknowledgement.Value)
+	presenter.Prompt("Type %q to confirm: ", gate.Acknowledgement.Value)
 	line, err := readHumanLine(reader)
 	if err != nil {
 		return err
@@ -209,7 +209,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 		return err
 	}
 	if presenter.TTY {
-		presenter.Line(clioutput.RoleSuccess, "Human verification recorded.")
+		presenter.Notice(clioutput.RoleSuccess, "Human verification recorded.")
 	}
 	return nil
 }
@@ -312,31 +312,33 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
 	changed, _ := e.changedImplementationFiles()
 	log, _ := e.Repo.LogSince(base)
-	presenter := clioutput.NewPresenter(e.Out)
-	fmt.Fprintln(e.Out)
-	presenter.Line(clioutput.RoleSuccess, "Workflow %s complete.", e.Workflow.Metadata.Name)
-	fmt.Fprintf(e.Out, "%s %s\n%s %s\n%s %s\n", presenter.Style(clioutput.RoleLabel, "Branch:"), branch, presenter.Style(clioutput.RoleLabel, "Base:"), base, presenter.Style(clioutput.RoleLabel, "Head:"), head)
+	presenter := e.presenter()
+	presenter.Separator()
+	presenter.CompletionSummary(e.Workflow.Metadata.Name)
+	presenter.Metadata("Branch", branch)
+	presenter.Metadata("Base", base)
+	presenter.Metadata("Head", head)
 	if strings.TrimSpace(log) != "" {
-		presenter.Line(clioutput.RoleHeading, "Commits since base:")
-		fmt.Fprint(e.Out, log)
+		presenter.Notice(clioutput.RoleHeading, "Commits since base:")
+		clioutput.NewPresenterWithPresentation(e.Out, clioutput.PresentationRaw).Raw(log)
 	}
 	if len(changed) > 0 {
-		presenter.Line(clioutput.RoleHeading, "Changed files:")
-		fmt.Fprintf(e.Out, "- %s\n", strings.Join(changed, "\n- "))
+		presenter.Notice(clioutput.RoleHeading, "Changed files:")
+		presenter.TextLine("- %s", strings.Join(changed, "\n- "))
 	}
 	if c.Summary.Title != "" {
-		fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Summary:"), presenter.Style(clioutput.RoleSuccess, c.Summary.Title))
+		presenter.MetadataStyled("Summary", c.Summary.Title, clioutput.RoleSuccess)
 	}
 	for _, item := range c.Summary.Include {
 		switch item {
 		case "branch":
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Branch:"), branch)
+			presenter.Metadata("Branch", branch)
 		case "base_commit":
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Base:"), base)
+			presenter.Metadata("Base", base)
 		case "head_commit":
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Head:"), head)
+			presenter.Metadata("Head", head)
 		case "state_directory":
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "State directory:"), e.Workflow.Spec.State.Directory)
+			presenter.Metadata("State directory", e.Workflow.Spec.State.Directory)
 		case "workspace_clean":
 			dirty, err := e.implementationDirtyFiles()
 			if err != nil {
@@ -347,9 +349,9 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 			if len(dirty) == 0 {
 				role = clioutput.RoleSuccess
 			}
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Workspace clean:"), presenter.Style(role, value))
+			presenter.MetadataStyled("Workspace clean", value, role)
 		case "canonical_gate_green":
-			fmt.Fprintf(e.Out, "%s %s\n", presenter.Style(clioutput.RoleLabel, "Canonical gate:"), presenter.Style(clioutput.RoleSuccess, "green"))
+			presenter.MetadataStyled("Canonical gate", "green", clioutput.RoleSuccess)
 		case "commits_since_base", "changed_files_since_base":
 			// The detailed values are already emitted above; keep this summary
 			// vocabulary deterministic without inventing a second data model.

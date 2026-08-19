@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
 	"github.com/tdeshazo/agentflow-spec/provider"
 )
@@ -62,7 +63,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("phase %s condition: %w", id, err)
 		}
 		if !ok {
-			fmt.Fprintf(e.Out, "==> Skipping phase %s: condition is false\n", id)
+			e.presenter().PhaseSkip(id, "condition is false")
 			return nil
 		}
 	}
@@ -73,7 +74,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 		if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 			return fmt.Errorf("completed phase %s is no longer safe to skip: %w", id, err)
 		}
-		fmt.Fprintf(e.Out, "==> Skipping completed phase %s: %s (%s)\n", id, p.Label, sha)
+		e.presenter().CompletedPhaseSkip(id, p.Label, sha)
 		return nil
 	}
 	if p.Kind == "criterion" && (p.Criterion != "" || p.CriterionID != "") {
@@ -136,7 +137,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return err
 			}
-			fmt.Fprintf(e.Out, "==> Criterion already checked; marking phase %s complete\n", id)
+			e.presenter().CriterionAlreadyChecked(id)
 			return nil
 		}
 	}
@@ -158,7 +159,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 		return err
 	}
 
-	fmt.Fprintf(e.Out, "==> Phase %s: %s\n", id, p.Label)
+	e.presenter().PhaseStart(id, p.Label)
 	e.logEvent("phase_start", map[string]string{"phase": id})
 	defer func() {
 		result := "success"
@@ -246,7 +247,7 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 	if !e.Repo.IsAncestor(a.StartCommit, "HEAD") {
 		return fmt.Errorf("HEAD no longer descends from interrupted phase start %s", a.StartCommit)
 	}
-	fmt.Fprintf(e.Out, "==> Recovering interrupted phase %s: %s\n", p.ID, p.Label)
+	e.presenter().PhaseResume(p.ID, p.Label)
 	if marked, _, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if marked {
@@ -275,9 +276,9 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 				}
 				return err
 			}
-			fmt.Fprintf(e.Out, "==> Retained phase work is not yet acceptable; resuming actor %s\n", p.Actor)
+			e.presenter().RetainedWorkResume(p.Actor)
 		} else {
-			fmt.Fprintln(e.Out, "==> Retained phase work passed a preflight gate; actor completion evidence is still required")
+			e.presenter().RetainedWorkPreflight()
 		}
 	}
 	prompt := "Resume this phase from the repository state already present.\nInspect partial commits and working-tree changes first; preserve correct work and finish only this phase's objective.\n\n" + p.Prompt
@@ -416,7 +417,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 				}
 				return err
 			}
-			fmt.Fprintf(e.Out, "==> Reusing deterministic validation evidence: %s\n", name)
+			e.presenter().ValidationReuse(name)
 			if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 				return clearErr
 			}
@@ -472,7 +473,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		return &repairBudgetExhaustedError{validation: name, failure: failure}
 	}
 	e.lastFailure = boundedFailureOutput(failure)
-	fmt.Fprintf(e.Out, "==> Validation %s failed; running one repair attempt\n", name)
+	e.presenter().RepairAttempt(name)
 	if err := e.runAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, p); err != nil {
 		return err
 	}
@@ -707,7 +708,7 @@ func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workfl
 		cmd.Stderr = &stderr
 		err = cmd.Run()
 		output := stdout.String() + stderr.String()
-		fmt.Fprint(e.Out, output)
+		clioutput.NewPresenterWithPresentation(e.Out, clioutput.PresentationRaw).Raw(output)
 		if t.Capture.Log != "" {
 			logPath, expandErr := e.context(p).Expand(t.Capture.Log)
 			if expandErr != nil {

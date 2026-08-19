@@ -335,7 +335,7 @@ func (e *Engine) requirePhaseCompletion(phase *workflow.Phase) error {
 	} else if active {
 		return fmt.Errorf("phase %s finished without clearActivePhase", phase.ID)
 	}
-	fmt.Fprintf(e.Out, "==> Phase %s complete at %s\n", phase.ID, shortSHA(head))
+	e.presenter().PhaseComplete(phase.ID, shortSHA(head))
 	return nil
 }
 
