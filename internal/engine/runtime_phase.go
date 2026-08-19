@@ -357,7 +357,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		Sandbox:      a.Sandbox,
 		Approval:     a.Approval,
 		Ephemeral:    a.Ephemeral,
-		Presentation: provider.PresentationIntent(a.Color),
+		Presentation: provider.ResolvePresentationIntent(a.Color),
 		Metadata:     metadata,
 	})
 	if err != nil {

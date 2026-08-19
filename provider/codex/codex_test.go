@@ -17,7 +17,7 @@ import (
 func TestBuildArgs(t *testing.T) {
 	got := buildArgs(provider.Request{
 		Workspace: "/repo", Model: "gpt-test", Reasoning: "high",
-		Sandbox: "workspace-write", Ephemeral: true, Color: "never",
+		Sandbox: "workspace-write", Ephemeral: true, Presentation: provider.PresentationNever,
 	}, "/tmp/last")
 	want := []string{
 		"exec", "--cd", "/repo", "-c", `approval_policy="never"`, "--sandbox", "workspace-write", "--ephemeral",
@@ -81,14 +81,22 @@ done
 	}
 	t.Setenv("ARGS_FILE", argsFile)
 
-	p := Provider{Binary: fake}
+	p := Provider{
+		Binary: fake,
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+		OutputTTY: func(io.Writer) bool {
+			return false
+		},
+	}
 	result, err := p.Run(context.Background(), provider.Request{
-		Workspace: workspace,
-		Model:     "gpt-test",
-		Reasoning: "high",
-		Prompt:    "perform the task",
-		Sandbox:   "workspace-write",
-		Approval:  "never",
+		Workspace:    workspace,
+		Model:        "gpt-test",
+		Reasoning:    "high",
+		Prompt:       "perform the task",
+		Sandbox:      "workspace-write",
+		Approval:     "never",
+		Presentation: provider.PresentationAlways,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -113,12 +121,23 @@ done
 	if contains(got, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("Codex invocation must not bypass sandboxing: %#v", got)
 	}
+	for i := range got {
+		if got[i] == "--color" {
+			if i+1 >= len(got) || got[i+1] != string(provider.PresentationNever) {
+				t.Fatalf("redirected Codex color = %#v, want never", got[i:])
+			}
+			return
+		}
+	}
+	t.Fatal("redirected Codex invocation omitted --color")
 }
 
 func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 	workspace := t.TempDir()
 	fake := filepath.Join(t.TempDir(), "codex")
+	argsFile := filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$ARGS_FILE\"\n" +
 		"printf 'provider stdout\\n'\n" +
 		"printf 'provider diagnostic\\n' >&2\n" +
 		"while [ \"$#\" -gt 0 ]; do\n" +
@@ -130,6 +149,7 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
+	t.Setenv("ARGS_FILE", argsFile)
 
 	var stdout, stderr bytes.Buffer
 	p := Provider{
@@ -160,12 +180,21 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 	if strings.Contains(stdout.String()+stderr.String(), "\x1b[") {
 		t.Fatal("AgentFlow inserted ANSI into provider streams")
 	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read redirected args: %v", err)
+	}
+	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, string(provider.PresentationNever)) {
+		t.Fatalf("redirected Codex args = %#v, want --color never", got)
+	}
 }
 
 func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	workspace := t.TempDir()
 	fake := filepath.Join(t.TempDir(), "codex")
+	argsFile := filepath.Join(t.TempDir(), "args")
 	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$ARGS_FILE\"\n" +
 		"printf '\\033[31mprovider stdout\\033[0m\\n'\n" +
 		"printf '\\033[33mprovider diagnostic\\033[0m\\n' >&2\n" +
 		"while [ \"$#\" -gt 0 ]; do\n" +
@@ -177,6 +206,7 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
+	t.Setenv("ARGS_FILE", argsFile)
 
 	var stdout, stderr bytes.Buffer
 	p := Provider{
@@ -200,6 +230,22 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	if got, want := stderr.String(), "\x1b[33mprovider diagnostic\x1b[0m\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
 	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read attached args: %v", err)
+	}
+	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, string(provider.PresentationAuto)) {
+		t.Fatalf("attached Codex args = %#v, want --color auto", got)
+	}
+}
+
+func containsColorArg(args []string, want string) bool {
+	for i := range args {
+		if args[i] == "--color" && i+1 < len(args) && args[i+1] == want {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(values []string, want string) bool {
