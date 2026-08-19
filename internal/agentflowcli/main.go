@@ -256,7 +256,10 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	defer stop()
 	switch cmd {
 	case "run":
-		return e.Run(ctx)
+		if err := e.Run(ctx); err != nil {
+			return appendRecoveryGuidance(err, e.FailureRecoveryGuidance())
+		}
+		return nil
 	case "status":
 		if *jsonOutput {
 			stdout := os.Stdout
@@ -268,6 +271,13 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	default:
 		return usage()
 	}
+}
+
+func appendRecoveryGuidance(err error, guidance string) error {
+	if guidance == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n\n%s", err, guidance)
 }
 
 func requiresWorkflowSelector(cmd string) bool {
@@ -374,6 +384,10 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 		}
 		if status.ActivePhase != "" {
 			presenter.IndentedMetadata("  ", "active_phase", status.ActivePhase, clioutput.RoleAccent)
+		}
+		if status.Recovery != "" {
+			presenter.IndentedMetadata("  ", "recovery", status.Recovery, clioutput.StateRole(status.Recovery))
+			presenter.IndentedMetadata("  ", "next_action", status.NextAction, clioutput.StateRole(status.NextAction))
 		}
 		completeRole := clioutput.RoleMuted
 		if status.Complete {

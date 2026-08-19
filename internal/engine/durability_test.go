@@ -700,6 +700,9 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "durable-safety-failure")
 	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+			return err
+		}
 		return os.WriteFile(filepath.Join(request.Workspace, "not-allowed.txt"), []byte("unsafe\n"), 0o644)
 	}}
 	e := newDurableEngine(t, w, p)
@@ -718,12 +721,56 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	if !strings.Contains(out.String(), "state: safety-failed/terminal") || !strings.Contains(out.String(), "actor_completed: true") || !strings.Contains(out.String(), "failure_kind: safety") {
 		t.Fatalf("safety status = %s", out.String())
 	}
+	if !strings.Contains(out.String(), "recovery: operator-action-required") || !strings.Contains(out.String(), "next_action: remediate-then-rerun") {
+		t.Fatalf("safety recovery status = %s", out.String())
+	}
+	if !strings.Contains(out.String(), "automatic actor and repair execution stopped") || !strings.Contains(out.String(), "repair or revert") {
+		t.Fatalf("safety recovery wording = %s", out.String())
+	}
+	out.Reset()
+	if err := e.StatusJSONTo(&out, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"state":"safety-failed/terminal"`) || strings.Contains(out.String(), "out-of-scope file changed") {
+		t.Fatalf("safety JSON compatibility/privacy = %s", out.String())
+	}
+	if guidance := e.FailureRecoveryGuidance(); !strings.Contains(guidance, "operator action is required") || !strings.Contains(guidance, "Repair or revert") || !strings.Contains(guidance, "intentionally abandon") {
+		t.Fatalf("safety guidance = %q", guidance)
+	}
 
 	if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "out-of-scope file changed") {
 		t.Fatalf("recovered safety failure = %v", err)
 	}
 	if p.calls != 1 {
 		t.Fatalf("safety failure replayed a completed actor: calls = %d", p.calls)
+	}
+
+	if err := os.Remove(filepath.Join(repo, "not-allowed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
+		t.Fatalf("rerun after operator remediation = %v", err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("operator remediation replayed completed actor: calls = %d", p.calls)
+	}
+	if _, ok, err := e.Store.Resolve("phases/change"); err != nil || !ok {
+		t.Fatalf("remediated safety failure did not retain and accept phase state: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestFailureRecoveryGuidanceRequiresDurableActionableState(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "guidance-needs-state")
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("unsafe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.Run(context.Background()); err == nil {
+		t.Fatal("initialization unexpectedly succeeded")
+	}
+	if guidance := e.FailureRecoveryGuidance(); guidance != "" {
+		t.Fatalf("guidance without durable state = %q", guidance)
 	}
 }
 

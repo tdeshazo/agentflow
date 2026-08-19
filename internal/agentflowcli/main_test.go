@@ -110,9 +110,14 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 		if err := store.SetJSON("branch", "main"); err != nil {
 			t.Fatal(err)
 		}
+		if name == "beta" {
+			if err := store.SetJSON("active", map[string]any{"phase_id": "implement", "phase_start_commit": head, "failure_kind": "safety"}); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	textOutput := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "-C", repo.Root}) })
-	if !strings.Contains(textOutput, "workflow: alpha") || !strings.Contains(textOutput, "workflow: beta") || !strings.Contains(textOutput, "state: ready") {
+	if !strings.Contains(textOutput, "workflow: alpha") || !strings.Contains(textOutput, "workflow: beta") || !strings.Contains(textOutput, "state: ready") || !strings.Contains(textOutput, "recovery: operator-action-required") || !strings.Contains(textOutput, "next_action: remediate-then-rerun") {
 		t.Fatalf("status --all text = %s", textOutput)
 	}
 	if strings.Contains(textOutput, "{\n") {
@@ -132,6 +137,9 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	}
 	if collection.SchemaVersion != 1 || collection.Repo != repo.Root || len(collection.Workflows) != 2 {
 		t.Fatalf("status --all collection = %+v", collection)
+	}
+	if collection.Workflows[1].State != "safety-failed/terminal" || collection.Workflows[1].Recovery != "operator-action-required" || collection.Workflows[1].NextAction != "remediate-then-rerun" {
+		t.Fatalf("status --all recovery metadata = %+v", collection.Workflows[1])
 	}
 }
 

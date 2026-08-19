@@ -64,6 +64,45 @@ func TestDiscoverDescriptorsProjectsMultipleNamespacesAndConfigurableRecords(t *
 	}
 }
 
+func TestStatusProjectionAddsRecoveryMetadataForActionableFailures(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name       string
+		failure    string
+		state      string
+		recovery   string
+		nextAction string
+	}{
+		{name: "validation", failure: "validation", state: "validation-failed/recoverable", recovery: "automatic-on-rerun", nextAction: "rerun"},
+		{name: "safety", failure: "safety", state: "safety-failed/terminal", recovery: "operator-action-required", nextAction: "remediate-then-rerun"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(repo, tt.name)
+			descriptor := NewDescriptor(tt.name, "", RecordNames{})
+			if err := store.SetJSON(DescriptorRecord, descriptor); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetCommit("base", head); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetJSON("active", map[string]any{"phase_id": "implement", "phase_start_commit": head, "failure_kind": tt.failure}); err != nil {
+				t.Fatal(err)
+			}
+			status, err := descriptor.ProjectStatus(repo, store.Namespace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.State != tt.state || status.Recovery != tt.recovery || status.NextAction != tt.nextAction {
+				t.Fatalf("status = %+v", status)
+			}
+		})
+	}
+}
+
 func TestDiscoveryRetainsMalformedNamespaceAndDescriptor(t *testing.T) {
 	repo := newDiscoveryRepo(t)
 	valid := NewStore(repo, "valid")

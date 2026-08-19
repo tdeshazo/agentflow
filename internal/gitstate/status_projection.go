@@ -20,6 +20,8 @@ type StatusProjection struct {
 	ActorCompleted   bool   `json:"actor_completed"`
 	FailureKind      string `json:"failure_kind,omitempty"`
 	ValidationFailed string `json:"validation_failed,omitempty"`
+	Recovery         string `json:"recovery,omitempty"`
+	NextAction       string `json:"next_action,omitempty"`
 	Complete         bool   `json:"complete"`
 	CompleteCommit   string `json:"complete_commit,omitempty"`
 	ProcessLiveness  string `json:"process_liveness,omitempty"`
@@ -126,7 +128,19 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		projection.FailureKind = active.FailureKind
 		projection.ValidationFailed = active.Validation
 	}
+	setRecoveryMetadata(&projection)
 	return projection, nil
+}
+
+func setRecoveryMetadata(projection *StatusProjection) {
+	switch projection.State {
+	case "validation-failed/recoverable":
+		projection.Recovery = "automatic-on-rerun"
+		projection.NextAction = "rerun"
+	case "safety-failed/terminal":
+		projection.Recovery = "operator-action-required"
+		projection.NextAction = "remediate-then-rerun"
+	}
 }
 
 // ProjectionError returns a stable status item for a malformed namespace.

@@ -237,6 +237,19 @@ commit is no longer an ancestor of `HEAD`. Status only needs the workspace
 location; it does not require the original task, model values, or other run
 parameters.
 
+## Recovering from a failed run
+
+When a failed `run` has durable phase state, AgentFlow appends recovery guidance
+after the primary error. For a recoverable validation failure, inspect `status`
+and `logs`, make any needed deterministic or manual correction, then rerun the
+same `agentflow run` command. Retained phase work and accepted work remain in
+durable Git-backed state. For a `safety-failed/terminal` state, automatic
+actor/repair work has stopped for the current workspace-policy violation: an
+operator must repair or revert that violation before rerunning, after which the
+normal recovery checks decide whether resume is safe. `reset` is only for
+intentionally abandoning the durable run; it is not the ordinary recovery
+action.
+
 Pass `--json` for one machine-readable object instead of the default text. It
 contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
 `complete`, plus available `base`, `branch`, phase, gate, and commit context.
