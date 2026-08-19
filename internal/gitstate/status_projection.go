@@ -68,7 +68,10 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		if active.PhaseID == "" {
 			return StatusProjection{}, fmt.Errorf("active phase record %q has no phase id", d.Records.ActivePhase)
 		}
-		if active.StartCommit != "" && !repo.ObjectExists(active.StartCommit+"^{commit}") {
+		if active.StartCommit == "" {
+			return StatusProjection{}, fmt.Errorf("active phase record %q has no start commit", d.Records.ActivePhase)
+		}
+		if !repo.ObjectExists(active.StartCommit + "^{commit}") {
 			return StatusProjection{}, fmt.Errorf("active phase record %q has an invalid start commit", d.Records.ActivePhase)
 		}
 	}

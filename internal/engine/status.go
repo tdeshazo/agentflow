@@ -54,10 +54,27 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	if err != nil {
 		return StatusSnapshot{}, err
 	}
+	if activeExists {
+		if active.PhaseID == "" {
+			return StatusSnapshot{}, fmt.Errorf("active phase record %q has no phase id", e.activeRecord())
+		}
+		if active.StartCommit == "" {
+			return StatusSnapshot{}, fmt.Errorf("active phase record %q has no start commit", e.activeRecord())
+		}
+		if !e.Repo.ObjectExists(active.StartCommit + "^{commit}") {
+			return StatusSnapshot{}, fmt.Errorf("active phase record %q has an invalid start commit", e.activeRecord())
+		}
+	}
 
 	state := "uninitialized"
 	if initialized {
 		state = "ready"
+	}
+	if !initialized && activeExists {
+		// Match repository-wide status: an active record without the base
+		// initialization record is not resumable state and must not be presented
+		// as a fresh, uninitialized workflow.
+		state = "stale"
 	}
 	if completed {
 		state = "completed"
