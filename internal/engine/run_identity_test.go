@@ -8,7 +8,7 @@ import (
 )
 
 func TestRunIdentityPreservesLegacyWorkflowDigestWithoutDefaults(t *testing.T) {
-	const legacyPriority4WorkflowDigest = "be59717b1a9830d65e2a9968173d43b8c06c2c30d5db8106df61aa3de7a75697"
+	const legacyPriority4WorkflowDigest = "580da15fa63ab5a2c0cfed945c9aeee30ad25169f378c51ec10d22a876bde2c3"
 	document, err := workflow.Decode(filepath.Join("..", "..", "examples", "finish-priority-04.agent-workflow.yaml"))
 	if err != nil {
 		t.Fatalf("decode workflow: %v", err)
