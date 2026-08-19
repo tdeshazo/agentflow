@@ -29,6 +29,87 @@ func TestPresenterStylesOnlyTTYColorMode(t *testing.T) {
 	}
 }
 
+func TestPresenterPresentationModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     PresentationMode
+		tty      bool
+		color    bool
+		wantANSI bool
+		wantText string
+		wantRaw  bool
+	}{
+		{
+			name:     "rich terminal",
+			mode:     PresentationRich,
+			tty:      true,
+			color:    true,
+			wantANSI: true,
+			wantText: "==> Phase build: Build",
+		},
+		{
+			name:     "plain buffer",
+			mode:     PresentationPlain,
+			wantText: "==> Phase build: Build",
+		},
+		{
+			name:     "raw boundary",
+			mode:     PresentationRaw,
+			wantRaw:  true,
+			wantText: "provider output\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			p := NewPresenterWithCapabilities(&output, test.mode, test.tty, test.color)
+			p.PhaseStart("build", "Build")
+			p.Rule("Lifecycle")
+			p.KeyValue("state", "active")
+			if test.wantRaw {
+				p.Raw(test.wantText)
+			}
+
+			got := output.String()
+			if test.wantRaw {
+				if got != test.wantText {
+					t.Fatalf("raw output = %q, want %q", got, test.wantText)
+				}
+				if strings.Contains(got, "==>") || strings.Contains(got, "===") || strings.Contains(got, "\x1b[") {
+					t.Fatalf("raw boundary contains AgentFlow framing: %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, test.wantText) {
+				t.Fatalf("output = %q, missing %q", got, test.wantText)
+			}
+			if strings.Contains(got, "provider output") {
+				t.Fatalf("non-raw semantic output unexpectedly contained raw payload: %q", got)
+			}
+			if strings.Contains(got, "\x1b[") != test.wantANSI {
+				t.Fatalf("ANSI=%v output = %q", test.wantANSI, got)
+			}
+		})
+	}
+}
+
+func TestPresenterRichModeKeepsInteractivityWhenNoColorIsSet(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	var output bytes.Buffer
+	p := NewPresenterWithTTY(&output, true)
+	p.Line(RoleSuccess, "complete")
+
+	if !p.TTY {
+		t.Fatal("NO_COLOR disabled terminal capability")
+	}
+	if p.Color {
+		t.Fatal("NO_COLOR did not disable Rich ANSI styling")
+	}
+	if got := output.String(); got != "complete\n" {
+		t.Fatalf("NO_COLOR output = %q", got)
+	}
+}
+
 func TestNoColorEnvironmentDisablesColorPolicy(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	if colorAllowed() {

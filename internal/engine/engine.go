@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
 	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
 	"github.com/tdeshazo/agentflow-spec/internal/observability"
 	"github.com/tdeshazo/agentflow-spec/internal/workflow"
@@ -377,7 +378,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		if err := e.assertMutationBoundary(true, e.lifecycleConfigured()); err != nil {
 			return fmt.Errorf("completed workflow is no longer safe to reuse: %w", err)
 		}
-		fmt.Fprintf(e.Out, "Workflow %s already complete at %s\n", e.Workflow.Metadata.Name, completeSHA)
+		e.presenter().WorkflowAlreadyComplete(e.Workflow.Metadata.Name, completeSHA)
 		return nil
 	}
 	var active ActivePhase
@@ -563,7 +564,7 @@ func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error 
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(e.Out, message)
+			e.presenter().Notice(clioutput.RolePlain, "%s", message)
 		}
 		if action.Stop != "" {
 			if action.Stop == "success" {
@@ -573,6 +574,13 @@ func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error 
 		}
 	}
 	return nil
+}
+
+func (e *Engine) presenter() clioutput.Presenter {
+	if e.detached {
+		return clioutput.NewPresenterWithPresentation(e.Out, clioutput.PresentationRaw)
+	}
+	return clioutput.NewPresenter(e.Out)
 }
 
 // Reset clears the durable workflow state, allowing the workflow to be re-executed.

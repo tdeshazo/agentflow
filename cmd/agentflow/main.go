@@ -355,30 +355,38 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 	}
 
 	presenter := clioutput.NewPresenterWithMode(out, tty, color)
-	label := presenter.Label
-	fmt.Fprintf(out, "%s %s\n%s %d\n", label("repository"), repo.Root, label("workflows"), len(statuses))
+	presenter.Metadata("repository", repo.Root)
+	presenter.Metadata("workflows", fmt.Sprint(len(statuses)))
 	for _, status := range statuses {
-		fmt.Fprintf(out, "- %s %s\n  %s %s\n", label("workflow"), status.Workflow, label("state"), presenter.State(status.State))
+		presenter.ListItem("workflow", status.Workflow)
+		presenter.IndentedMetadata("  ", "state", status.State, clioutput.StateRole(status.State))
 		if status.Namespace != "" {
-			fmt.Fprintf(out, "  %s %s\n", label("namespace"), status.Namespace)
+			presenter.IndentedMetadata("  ", "namespace", status.Namespace, clioutput.RolePlain)
 		}
 		if status.Error != "" {
-			fmt.Fprintf(out, "  %s %s\n", label("error"), presenter.Style(clioutput.RoleError, status.Error))
+			presenter.IndentedMetadata("  ", "error", status.Error, clioutput.RoleError)
 			continue
 		}
 		if status.Initialized {
-			fmt.Fprintf(out, "  %s %s\n  %s %s\n  %s %s\n", label("base"), status.Base, label("branch"), status.Branch, label("head"), status.Head)
+			presenter.IndentedMetadata("  ", "base", status.Base, clioutput.RolePlain)
+			presenter.IndentedMetadata("  ", "branch", status.Branch, clioutput.RolePlain)
+			presenter.IndentedMetadata("  ", "head", status.Head, clioutput.RolePlain)
 		}
 		if status.ActivePhase != "" {
-			fmt.Fprintf(out, "  %s %s\n", label("active_phase"), presenter.Style(clioutput.RoleAccent, status.ActivePhase))
+			presenter.IndentedMetadata("  ", "active_phase", status.ActivePhase, clioutput.RoleAccent)
 		}
 		completeRole := clioutput.RoleMuted
 		if status.Complete {
 			completeRole = clioutput.RoleSuccess
 		}
-		fmt.Fprintf(out, "  %s %s\n", label("complete"), presenter.Style(completeRole, fmt.Sprint(status.Complete)))
+		presenter.IndentedMetadata("  ", "complete", fmt.Sprint(status.Complete), completeRole)
 		if status.ProcessLiveness != "" {
-			fmt.Fprintf(out, "  %s %s\n", label("process_liveness"), presenter.State(status.ProcessLiveness))
+			presenter.IndentedMetadata(
+				"  ",
+				"process_liveness",
+				status.ProcessLiveness,
+				clioutput.StateRole(status.ProcessLiveness),
+			)
 		}
 	}
 	return nil

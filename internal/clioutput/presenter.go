@@ -8,6 +8,26 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
+// PresentationMode controls whether AgentFlow owns the presentation of an
+// output stream. Rich is reserved for an interactive terminal, Plain keeps
+// stable human-readable bytes without styling, and Raw is a write-through
+// boundary for provider, log, and machine-readable streams.
+type PresentationMode uint8
+
+const (
+	PresentationPlain PresentationMode = iota
+	PresentationRich
+	PresentationRaw
+)
+
+// Short mode names are convenient at call sites that are already in the
+// clioutput package's presentation vocabulary.
+const (
+	Plain = PresentationPlain
+	Rich  = PresentationRich
+	Raw   = PresentationRaw
+)
+
 // Role identifies a semantic presentation role for human-facing terminal text.
 type Role int
 
@@ -34,6 +54,7 @@ type Presenter struct {
 	Out   io.Writer
 	TTY   bool
 	Color bool
+	Mode  PresentationMode
 }
 
 // NewPresenter builds a presenter from the actual output destination. ANSI
@@ -47,7 +68,7 @@ func NewPresenter(out io.Writer) Presenter {
 // terminal mode. It is useful when the terminal state is supplied by a caller
 // or test rather than inferred from the writer itself.
 func NewPresenterWithTTY(out io.Writer, tty bool) Presenter {
-	return newPresenterWithPolicy(out, tty, tty, !colorAllowed())
+	return newPresenterWithPresentationPolicy(out, presentationMode(tty), tty, tty, !colorAllowed())
 }
 
 func colorAllowed() bool {
@@ -57,14 +78,47 @@ func colorAllowed() bool {
 
 // NewPresenterWithMode is the deterministic presentation seam used by tests.
 func NewPresenterWithMode(out io.Writer, tty, color bool) Presenter {
-	return newPresenterWithPolicy(out, tty, color, false)
+	return newPresenterWithPresentationPolicy(out, presentationMode(tty), tty, color, false)
+}
+
+// NewPresenterWithPresentation constructs a presenter for an explicit
+// semantic mode. Rich implies an interactive terminal capability; use
+// NewPresenterWithCapabilities when those capabilities need to be injected.
+func NewPresenterWithPresentation(out io.Writer, mode PresentationMode) Presenter {
+	return newPresenterWithPresentationPolicy(
+		out,
+		mode,
+		mode == PresentationRich,
+		true,
+		!colorAllowed(),
+	)
+}
+
+// NewPresenterWithCapabilities is the deterministic seam for callers and
+// tests that know both the presentation mode and terminal capabilities.
+func NewPresenterWithCapabilities(out io.Writer, mode PresentationMode, tty, color bool) Presenter {
+	return newPresenterWithPresentationPolicy(out, mode, tty, color, false)
+}
+
+func presentationMode(tty bool) PresentationMode {
+	if tty {
+		return PresentationRich
+	}
+	return PresentationPlain
 }
 
 func newPresenterWithPolicy(out io.Writer, tty, color, noColor bool) Presenter {
+	return newPresenterWithPresentationPolicy(out, presentationMode(tty), tty, color, noColor)
+}
+
+func newPresenterWithPresentationPolicy(out io.Writer, mode PresentationMode, tty, color, noColor bool) Presenter {
 	if out == nil {
 		out = io.Discard
 	}
-	return Presenter{Out: out, TTY: tty, Color: tty && color && !noColor}
+	if mode == PresentationRaw {
+		return Presenter{Out: out, Mode: mode}
+	}
+	return Presenter{Out: out, Mode: mode, TTY: tty, Color: mode == PresentationRich && tty && color && !noColor}
 }
 
 // ColorEnabled reports whether ANSI styling should be used for out.
@@ -91,7 +145,7 @@ func IsInteractive(in io.Reader, out io.Writer) bool {
 // Style returns text decorated for its semantic role when terminal color is
 // enabled. The original text is returned byte-for-byte otherwise.
 func (p Presenter) Style(role Role, text string) string {
-	if !p.Color || text == "" || role == RolePlain {
+	if p.Mode == PresentationRaw || !p.Color || text == "" || role == RolePlain {
 		return text
 	}
 	code := ""
@@ -136,6 +190,197 @@ func (p Presenter) Line(role Role, format string, args ...any) {
 // Print writes formatted text without adding a newline.
 func (p Presenter) Print(role Role, format string, args ...any) {
 	fmt.Fprint(p.Out, p.Style(role, fmt.Sprintf(format, args...)))
+}
+
+// Raw writes an already-owned stream without adding or removing bytes. It is
+// the explicit boundary for provider output, logs, JSON, YAML, and detached
+// capture.
+func (p Presenter) Raw(text string) {
+	fmt.Fprint(p.Out, text)
+}
+
+// RawLine writes one already-owned line without styling or framing.
+func (p Presenter) RawLine(format string, args ...any) {
+	fmt.Fprintln(p.Out, fmt.Sprintf(format, args...))
+}
+
+func (p Presenter) semanticLine(role Role, format string, args ...any) {
+	if p.Mode == PresentationRaw {
+		return
+	}
+	p.Line(role, format, args...)
+}
+
+// TextLine writes human-facing text as a semantic event. Raw mode suppresses
+// it; callers with an owned payload should use Raw instead.
+func (p Presenter) TextLine(format string, args ...any) {
+	p.semanticLine(RolePlain, format, args...)
+}
+
+// Prompt writes an interactive human prompt. Raw mode suppresses it along
+// with other AgentFlow framing.
+func (p Presenter) Prompt(format string, args ...any) {
+	if p.Mode == PresentationRaw {
+		return
+	}
+	p.Print(RoleAccent, format, args...)
+}
+
+// PhaseStart presents the beginning of a phase.
+func (p Presenter) PhaseStart(id, label string) {
+	p.semanticLine(RoleAccent, "==> Phase %s: %s", id, label)
+}
+
+// PhaseSkip presents a condition-based phase skip.
+func (p Presenter) PhaseSkip(id, reason string) {
+	if reason == "" {
+		p.semanticLine(RoleMuted, "==> Skipping phase %s", id)
+		return
+	}
+	p.semanticLine(RoleMuted, "==> Skipping phase %s: %s", id, reason)
+}
+
+// CompletedPhaseSkip presents reuse of a completed phase marker.
+func (p Presenter) CompletedPhaseSkip(id, label, commit string) {
+	p.semanticLine(RoleMuted, "==> Skipping completed phase %s: %s (%s)", id, label, commit)
+}
+
+// CriterionAlreadyChecked presents the legacy checked-criterion shortcut.
+func (p Presenter) CriterionAlreadyChecked(id string) {
+	p.semanticLine(RoleSuccess, "==> Criterion already checked; marking phase %s complete", id)
+}
+
+// PhaseResume presents recovery of an interrupted phase.
+func (p Presenter) PhaseResume(id, label string) {
+	p.semanticLine(RoleAccent, "==> Recovering interrupted phase %s: %s", id, label)
+}
+
+// HumanGateAlreadyRecorded presents durable human-gate evidence reuse.
+func (p Presenter) HumanGateAlreadyRecorded(id string) {
+	p.semanticLine(RoleAccent, "==> Human gate %s already recorded", id)
+}
+
+// RetainedWorkResume presents recovery decisions for retained phase work.
+func (p Presenter) RetainedWorkResume(actor string) {
+	p.semanticLine(RoleWarning, "==> Retained phase work is not yet acceptable; resuming actor %s", actor)
+}
+
+// RetainedWorkPreflight presents a successful preflight that still lacks actor
+// completion evidence.
+func (p Presenter) RetainedWorkPreflight() {
+	p.semanticLine(
+		RoleWarning,
+		"==> Retained phase work passed a preflight gate; actor completion evidence is still required",
+	)
+}
+
+// ProviderIdentity presents the provider and actor owning an execution unit.
+func (p Presenter) ProviderIdentity(provider, actor string) {
+	if actor == "" {
+		p.semanticLine(RoleAccent, "==> Provider %s", provider)
+		return
+	}
+	p.semanticLine(RoleAccent, "==> Provider %s: actor %s", provider, actor)
+}
+
+// ValidationSuccess presents a successful deterministic validation.
+func (p Presenter) ValidationSuccess(name string) {
+	p.semanticLine(RoleSuccess, "==> Validation %s passed", name)
+}
+
+// ValidationFailure presents a failed deterministic validation.
+func (p Presenter) ValidationFailure(name string) {
+	p.semanticLine(RoleError, "==> Validation %s failed", name)
+}
+
+// ValidationReuse presents reuse of durable deterministic validation evidence.
+func (p Presenter) ValidationReuse(name string) {
+	p.semanticLine(RoleSuccess, "==> Reusing deterministic validation evidence: %s", name)
+}
+
+// RepairAttempt presents the bounded repair transition after validation
+// failure. Its plain text is retained for compatibility with existing output.
+func (p Presenter) RepairAttempt(name string) {
+	p.semanticLine(RoleWarning, "==> Validation %s failed; running one repair attempt", name)
+}
+
+// CheckpointSummary presents a completed checkpoint when a commit is known.
+func (p Presenter) CheckpointSummary(label, commit string) {
+	if commit == "" {
+		p.semanticLine(RoleSuccess, "==> Checkpoint %s complete", label)
+		return
+	}
+	p.semanticLine(RoleSuccess, "==> Checkpoint %s complete at %s", label, commit)
+}
+
+// PhaseComplete presents a phase acceptance summary.
+func (p Presenter) PhaseComplete(id, commit string) {
+	p.semanticLine(RoleSuccess, "==> Phase %s complete at %s", id, commit)
+}
+
+// CompletionSummary presents the final workflow completion notice.
+func (p Presenter) CompletionSummary(name string) {
+	p.semanticLine(RoleSuccess, "Workflow %s complete.", name)
+}
+
+// WorkflowAlreadyComplete presents durable completion-marker reuse.
+func (p Presenter) WorkflowAlreadyComplete(name, commit string) {
+	p.semanticLine(RoleSuccess, "Workflow %s already complete at %s", name, commit)
+}
+
+// Notice presents a human-facing notice with a semantic role.
+func (p Presenter) Notice(role Role, format string, args ...any) {
+	p.semanticLine(role, format, args...)
+}
+
+// KeyValue presents metadata using the renderer's stable label/value spacing.
+func (p Presenter) KeyValue(key, value string) {
+	p.Metadata(key, value)
+}
+
+// Metadata presents a stable human-readable key/value field.
+func (p Presenter) Metadata(label, value string) {
+	p.MetadataStyled(label, value, RolePlain)
+}
+
+// MetadataStyled presents a key/value field while styling its value
+// semantically in Rich mode.
+func (p Presenter) MetadataStyled(label, value string, role Role) {
+	p.IndentedMetadata("", label, value, role)
+}
+
+// IndentedMetadata presents a key/value field with a renderer-owned prefix.
+func (p Presenter) IndentedMetadata(indent, label, value string, role Role) {
+	if label == "" {
+		p.semanticLine(role, "%s%s", indent, value)
+		return
+	}
+	if label[len(label)-1] != ':' {
+		label += ":"
+	}
+	p.semanticLine(RolePlain, "%s%s %s", indent, p.Style(RoleLabel, label), p.Style(role, value))
+}
+
+// ListItem presents a single human-readable metadata item in a stable list.
+func (p Presenter) ListItem(key, value string) {
+	p.semanticLine(RolePlain, "- %s %s", p.Label(key), value)
+}
+
+// Rule presents a human-facing section rule.
+func (p Presenter) Rule(label string) {
+	if label == "" {
+		p.semanticLine(RoleHeading, "--------------------")
+		return
+	}
+	p.semanticLine(RoleHeading, "=== %s ===", label)
+}
+
+// Separator presents a blank separator in human-facing output.
+func (p Presenter) Separator() {
+	if p.Mode == PresentationRaw {
+		return
+	}
+	fmt.Fprintln(p.Out)
 }
 
 // StateRole maps durable status values to a semantic role for human display.

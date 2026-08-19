@@ -122,40 +122,44 @@ func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 		return err
 	}
 	p := clioutput.NewPresenterWithMode(out, tty, color)
-	label := p.Label
 
-	fmt.Fprintf(out, "%s %s\n", label("workflow"), snapshot.Workflow)
-	fmt.Fprintf(out, "%s %s\n", label("repo"), snapshot.Repo)
-	fmt.Fprintf(out, "%s %v\n", label("initialized"), snapshot.Initialized)
-	fmt.Fprintf(out, "%s %s\n", label("state"), p.State(snapshot.State))
+	p.Metadata("workflow", snapshot.Workflow)
+	p.Metadata("repo", snapshot.Repo)
+	p.Metadata("initialized", fmt.Sprint(snapshot.Initialized))
+	p.MetadataStyled("state", snapshot.State, clioutput.StateRole(snapshot.State))
 	if snapshot.HumanGate != "" {
-		fmt.Fprintf(out, "%s %s\n", label("human_gate"), p.Style(clioutput.RoleWarning, snapshot.HumanGate))
+		p.MetadataStyled("human_gate", snapshot.HumanGate, clioutput.RoleWarning)
 	}
 	if snapshot.Initialized {
-		fmt.Fprintf(out, "%s %s\n%s %s\n", label("base"), snapshot.Base, label("branch"), snapshot.Branch)
+		p.Metadata("base", snapshot.Base)
+		p.Metadata("branch", snapshot.Branch)
 	}
 	if snapshot.ActivePhase != "" {
-		fmt.Fprintf(out, "%s %s @ %s\n", label("active_phase"), p.Style(clioutput.RoleAccent, snapshot.ActivePhase), snapshot.PhaseStartCommit)
-		fmt.Fprintf(out, "%s %v\n", label("actor_completed"), snapshot.ActorCompleted)
+		p.MetadataStyled(
+			"active_phase",
+			fmt.Sprintf("%s @ %s", snapshot.ActivePhase, snapshot.PhaseStartCommit),
+			clioutput.RoleAccent,
+		)
+		p.Metadata("actor_completed", fmt.Sprint(snapshot.ActorCompleted))
 		if snapshot.ValidationFailed != "" {
 			if snapshot.FailureKind != "" {
-				fmt.Fprintf(out, "%s %s\n", label("failure_kind"), p.State(snapshot.FailureKind))
+				p.MetadataStyled("failure_kind", snapshot.FailureKind, clioutput.StateRole(snapshot.FailureKind))
 			}
-			fmt.Fprintf(out, "%s %s\n", label("validation_failed"), p.Style(clioutput.RoleWarning, snapshot.ValidationFailed))
+			p.MetadataStyled("validation_failed", snapshot.ValidationFailed, clioutput.RoleWarning)
 			// Preserve the existing diagnostic in text output. It is deliberately
 			// absent from StatusSnapshot because it may contain command output.
-			fmt.Fprintf(out, "%s %s\n", label("validation_error"), p.Style(clioutput.RoleError, snapshot.validationError))
+			p.MetadataStyled("validation_error", snapshot.validationError, clioutput.RoleError)
 		}
 	}
 	completeRole := clioutput.RoleMuted
 	if snapshot.Complete {
 		completeRole = clioutput.RoleSuccess
 	}
-	fmt.Fprintf(out, "%s %s", label("complete"), p.Style(completeRole, fmt.Sprint(snapshot.Complete)))
+	completeValue := fmt.Sprint(snapshot.Complete)
 	if snapshot.Complete {
-		fmt.Fprintf(out, " @ %s", snapshot.CompleteCommit)
+		completeValue += " @ " + snapshot.CompleteCommit
 	}
-	fmt.Fprintln(out)
+	p.MetadataStyled("complete", completeValue, completeRole)
 	return nil
 }
 
