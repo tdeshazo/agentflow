@@ -42,21 +42,32 @@ type TerminalProfile struct {
 // callers with a real input stream should pass it to get the stricter check.
 func DetectTerminalProfile(in io.Reader, out io.Writer) TerminalProfile {
 	tty := IsTTY(out)
-	interactive := tty && (in == nil || IsTTYReader(in))
-	return TerminalProfile{
-		TTY:         tty,
-		Interactive: interactive,
-		Color:       detectColorLevel(tty),
-		Width:       detectWidth(tty),
-		Unicode:     detectUnicode(tty),
-		Hyperlinks:  detectHyperlinks(tty),
-	}
+	profile := terminalProfileForTTY(tty)
+	profile.Interactive = tty && (in == nil || IsTTYReader(in))
+	return profile
 }
 
 // DetectTerminal is the output-only convenience form used by presentation
 // callers. Unknown input capabilities do not block terminal output styling.
 func DetectTerminal(out io.Writer) TerminalProfile {
 	return DetectTerminalProfile(nil, out)
+}
+
+// terminalProfileForTTY builds the output-side capabilities used by all
+// presenter constructors. It deliberately uses only bounded environment and
+// descriptor hints; terminal queries are not part of the default path.
+func terminalProfileForTTY(tty bool) TerminalProfile {
+	if !tty {
+		return TerminalProfile{Color: ColorNone}
+	}
+	return TerminalProfile{
+		TTY:         true,
+		Interactive: true,
+		Color:       detectColorLevel(true),
+		Width:       detectWidth(true),
+		Unicode:     detectUnicode(true),
+		Hyperlinks:  detectHyperlinks(true),
+	}
 }
 
 func detectColorLevel(tty bool) ColorLevel {

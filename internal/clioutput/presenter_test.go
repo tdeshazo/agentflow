@@ -263,6 +263,17 @@ func TestPresenterSemanticRoles(t *testing.T) {
 	}
 }
 
+func TestPresenterUsesDefaultTerminalColors(t *testing.T) {
+	p := NewPresenterWithMode(&bytes.Buffer{}, true, true)
+	for _, role := range []Role{RoleSuccess, RoleWarning, RoleError, RoleAccent} {
+		got := p.Style(role, "status")
+		if strings.Contains(got, "31m") || strings.Contains(got, "32m") ||
+			strings.Contains(got, "33m") || strings.Contains(got, "36m") {
+			t.Fatalf("role %v hard-coded a foreground palette: %q", role, got)
+		}
+	}
+}
+
 func TestPresenterSemanticFieldHelpers(t *testing.T) {
 	var output bytes.Buffer
 	p := NewPresenterWithMode(&output, true, true)
@@ -337,6 +348,15 @@ func TestPresenterHyperlinksRequireAnExplicitSafeProfile(t *testing.T) {
 	p := NewPresenterWithProfile(&bytes.Buffer{}, PresentationRich, TerminalProfile{TTY: true, Hyperlinks: true})
 	if got := p.Hyperlink("repo", "file:///tmp/repo\nunsafe"); got != "repo" {
 		t.Fatalf("unsafe hyperlink target was emitted: %q", got)
+	}
+	if got := NewPresenterWithProfile(&bytes.Buffer{}, PresentationPlain, TerminalProfile{
+		TTY:        true,
+		Hyperlinks: true,
+	}).Hyperlink("repo", "file:///tmp/repo"); got != "repo" {
+		t.Fatalf("plain presentation emitted a hyperlink: %q", got)
+	}
+	if got := p.Hyperlink("repo\nunsafe", "file:///tmp/repo"); got != "repo\nunsafe" {
+		t.Fatalf("unsafe hyperlink label was emitted: %q", got)
 	}
 }
 
