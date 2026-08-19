@@ -349,7 +349,17 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		}
 	}
 	e.logEvent("provider_start", map[string]string{"provider": prov.Name(), "actor": actorName})
-	_, err = prov.Run(ctx, provider.Request{Workspace: e.Repo.Root, Model: model, Reasoning: reasoning, Prompt: prompt, Sandbox: a.Sandbox, Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color, Metadata: metadata})
+	_, err = prov.Run(ctx, provider.Request{
+		Workspace:    e.Repo.Root,
+		Model:        model,
+		Reasoning:    reasoning,
+		Prompt:       prompt,
+		Sandbox:      a.Sandbox,
+		Approval:     a.Approval,
+		Ephemeral:    a.Ephemeral,
+		Presentation: provider.PresentationIntent(a.Color),
+		Metadata:     metadata,
+	})
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
