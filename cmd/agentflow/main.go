@@ -242,8 +242,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		_, err = os.Stdout.Write(out)
-		return err
+		return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(out)
 	}
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
@@ -484,7 +483,8 @@ func runLogs(repoRoot, workflowName string, tail int, follow bool) error {
 	if follow {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return observability.Follow(ctx, path, os.Stdout)
+		raw := clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw)
+		return observability.Follow(ctx, path, raw.Out)
 	}
 	if tail >= 0 {
 		data, err = observability.Tail(data, tail)
@@ -492,8 +492,7 @@ func runLogs(repoRoot, workflowName string, tail int, follow bool) error {
 			return err
 		}
 	}
-	_, err = os.Stdout.Write(data)
-	return err
+	return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(data)
 }
 
 func diagnosticsError(result workflow.Result) error {
