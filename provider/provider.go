@@ -34,6 +34,22 @@ const (
 	PresentationNever  = PresentationPlain
 )
 
+// ResolvePresentationIntent converts a workflow-facing presentation value into
+// a known provider intent. An omitted or unknown value uses the safe native
+// default; each provider still resolves that intent against its output sink.
+func ResolvePresentationIntent(value string) PresentationIntent {
+	switch value {
+	case "always":
+		return PresentationRich
+	case "never":
+		return PresentationPlain
+	case "auto", string(PresentationAutomatic):
+		return PresentationAutomatic
+	default:
+		return PresentationAutomatic
+	}
+}
+
 // Request specifies work to be performed by a provider.
 // It is intentionally provider-neutral. Provider-specific adapters translate
 // these capabilities into their native CLI/API options.

@@ -119,6 +119,9 @@ func mergeAgent(base, local Agent) Agent {
 	if local.present["ephemeral"] {
 		out.Ephemeral = local.Ephemeral
 	}
+	if local.present["color"] {
+		out.Color = local.Color
+	}
 	if local.present["may_commit"] {
 		out.MayCommit = local.MayCommit
 	}

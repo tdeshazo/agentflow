@@ -366,9 +366,8 @@ The Codex adapter uses headless `codex exec`. It supports the workflow's `never`
 approval policy and fails closed for other approval policies rather than silently
 ignoring them. It explicitly passes `-c approval_policy="never"`, which overrides
 any user configuration for that process, as well as the declared model, reasoning
-effort, sandbox, and ephemeral execution settings. Terminal presentation is
-chosen by the application from the output destination, never by a workflow. It
-captures the final message using `--output-last-message`.
+effort, sandbox, color, and ephemeral execution settings. It captures the final
+message using `--output-last-message`.
 
 ## Current limits
 
