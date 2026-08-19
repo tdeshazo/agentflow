@@ -54,7 +54,8 @@ spec:
       after_checkpoint: required
     mutationPolicy:
       allowed:
-        - '*.go'
+        - main.go
+        - internal/agentflowcli/**
         - internal/engine/**
         - internal/gitstate/**
         - internal/observability/**
@@ -155,8 +156,8 @@ spec:
     - id: required-files
       type: files-exist
       paths:
-        - main.go
-        - main_test.go
+        - internal/agentflowcli/main.go
+        - internal/agentflowcli/main_test.go
         - internal/engine/engine.go
         - internal/gitstate/store.go
         - "{{ spec.paths.runtime_reference }}"

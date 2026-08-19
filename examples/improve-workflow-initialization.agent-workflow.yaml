@@ -50,7 +50,8 @@ spec:
       after_checkpoint: required
     mutationPolicy:
       allowed:
-        - '*.go'
+        - main.go
+        - internal/agentflowcli/**
         - internal/clioutput/**
         - internal/workflow/**
         - docs/reference/runtime.md
@@ -163,8 +164,8 @@ spec:
     - id: required-files
       type: files-exist
       paths:
-        - main.go
-        - main_test.go
+        - internal/agentflowcli/main.go
+        - internal/agentflowcli/main_test.go
         - internal/clioutput/presenter.go
         - internal/workflow/load.go
         - go.mod
@@ -203,7 +204,7 @@ spec:
         Make repository and workflow selection ergonomic while keeping current
         explicit CLI forms compatible.
 
-        Inspect `main.go`, CLI tests, `internal/workflow/**`,
+        Inspect `internal/agentflowcli/main.go`, CLI tests, `internal/workflow/**`,
         `internal/clioutput/**`, and runtime documentation before changing
         anything. Reuse existing repo/TTY helpers when appropriate instead of
         creating parallel policy.

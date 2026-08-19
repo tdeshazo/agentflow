@@ -51,7 +51,8 @@ spec:
       after_checkpoint: required
     mutationPolicy:
       allowed:
-        - '*.go'
+        - main.go
+        - internal/agentflowcli/**
         - internal/engine/**
         - internal/clioutput/**
         - docs/reference/runtime.md
@@ -154,8 +155,8 @@ spec:
     - id: required-files
       type: files-exist
       paths:
-        - main.go
-        - main_test.go
+        - internal/agentflowcli/main.go
+        - internal/agentflowcli/main_test.go
         - internal/engine/status.go
         - internal/engine/runtime_human.go
         - internal/clioutput/json.go
@@ -196,7 +197,7 @@ spec:
         AgentFlow's human-facing command output without changing machine-facing
         contracts.
 
-        Inspect `internal/clioutput/**`, `main.go`,
+        Inspect `internal/clioutput/**`, `internal/agentflowcli/main.go`,
         `internal/engine/status.go`, current CLI tests, and runtime docs before
         changing anything.
 

@@ -1,4 +1,4 @@
-package main
+package agentflowcli
 
 import (
 	"encoding/json"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestPlanExpandedCLI(t *testing.T) {
-	workflowFile := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	read, write, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestStatusJSONCLI(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	workflowFile := filepath.Join(filepath.Dir(source), "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join(filepath.Dir(source), "..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	read, write, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 
 func TestStatusJSONUsesSameTTYPolicyForSingleAndAll(t *testing.T) {
 	repo := newCLIStatusRepo(t)
-	workflowFile := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	originalDetector := statusOutputIsTTY
 	t.Cleanup(func() { statusOutputIsTTY = originalDetector })
 
@@ -202,7 +202,7 @@ func TestStatusAllRejectsWorkflowFileSelector(t *testing.T) {
 }
 
 func TestRepositoryScopedCommandsResolveCurrentDirectoryAndExplicitOverride(t *testing.T) {
-	workflowFile := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	defaultRepo := newCLIStatusRepo(t)
 	explicitRepo := newCLIStatusRepo(t)
 	originalDirectory := currentWorkingDirectory
@@ -282,7 +282,7 @@ func TestPositionalWorkflowSelectorUsesLocalAndHomeScopes(t *testing.T) {
 }
 
 func TestWorkflowSelectorRejectsAmbiguousAndPathForms(t *testing.T) {
-	workflowFile := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	tests := []struct {
 		name string
 		args []string
@@ -303,7 +303,7 @@ func TestWorkflowSelectorRejectsAmbiguousAndPathForms(t *testing.T) {
 }
 
 func TestExplicitWorkflowFileRemainsFileOnly(t *testing.T) {
-	workflowFile := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	originalDirectory := currentWorkingDirectory
 	t.Cleanup(func() { currentWorkingDirectory = originalDirectory })
 	currentWorkingDirectory = func() (string, error) { return t.TempDir(), nil }
@@ -455,7 +455,7 @@ func captureCLIStdout(t *testing.T, fn func() error) string {
 
 func writeCLIWorkflow(t *testing.T, path, name string) {
 	t.Helper()
-	fixture := filepath.Join("internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	fixture := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	body, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
