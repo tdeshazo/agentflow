@@ -41,6 +41,27 @@ Choose the requested mode:
 9. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
 10. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
+## Store and select workflows
+
+To make a workflow selectable by name, save its `.yaml` or `.yml` file in one
+of these directories:
+
+- `<repository>/.agent-workflows/` for a workflow owned by one repository.
+- `~/.agent-workflows/` for a workflow available across the current user's
+  repositories.
+
+Repository-local workflows take precedence when the two directories contain
+the same filename. From the target repository, use the filename without its
+extension as the positional selector, for example:
+
+```sh
+agentflow validate release-check
+agentflow plan --expanded release-check
+```
+
+Use `-f path/to/workflow.yaml` when the workflow is intentionally outside
+these directories. Do not combine `-f` with a positional workflow name.
+
 ## Validate an executable specification
 
 When the AgentFlow CLI is available, author iteratively:
@@ -75,7 +96,7 @@ Do not run a workflow merely to learn whether its YAML is valid.
 
 When asked to create a workflow:
 
-- Return or write one complete `.agent-workflow.yaml` document unless the user asks for fragments.
+- Return or write one complete AgentWorkflow YAML document unless the user asks for fragments. For named discovery, `workflow-name.yaml` or `workflow-name.yml` is sufficient.
 - Use the current `agentflow.dev/v1alpha1` / `AgentWorkflow` identifiers.
 - Prefer concise defaults and runtime-owned safe resume.
 - Include comments only where they explain a non-obvious safety or authority decision.
