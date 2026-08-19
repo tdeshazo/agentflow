@@ -135,6 +135,7 @@ model: "<model-name-or-expression>"
 sandbox: workspace-write
 approval: never
 ephemeral: true
+color: never
 may_commit: true
 output_last_message: true
 ```
@@ -580,6 +581,7 @@ defaults:
     sandbox: workspace-write
     approval: never
     ephemeral: true
+    color: never
     may_commit: true
   lifecycle:
     policy: safe-resume

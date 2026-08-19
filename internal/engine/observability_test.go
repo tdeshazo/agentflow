@@ -75,6 +75,7 @@ printf 'complete\n' > work.txt
 	w := durableWorkflow(repo, "detached-codex-output")
 	agent := w.Spec.Agents["worker"]
 	agent.Runner = "codex"
+	agent.Color = "always"
 	w.Spec.Agents["worker"] = agent
 	e, err := New(w, map[string]provider.Provider{
 		"codex": codexprovider.Provider{
