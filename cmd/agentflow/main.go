@@ -53,6 +53,9 @@ const detachedChildEnv = "AGENTFLOW_DETACHED_CHILD"
 
 var statusOutputIsTTY = clioutput.IsTTY
 
+var currentWorkingDirectory = os.Getwd
+var workflowHomeDirectory = os.UserHomeDir
+
 func main() {
 	if err := run(); err != nil {
 		writeTopLevelError(os.Stderr, clioutput.NewPresenter(os.Stderr), err)
@@ -87,8 +90,30 @@ func runArgs(args []string) error {
 	expanded := fs.Bool("expanded", false, "show resolved executable plan")
 	var overrides sets
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
-	if err := fs.Parse(args[1:]); err != nil {
+	flagArgs, positional := splitCommandArgs(args[1:])
+	if err := fs.Parse(flagArgs); err != nil {
 		return err
+	}
+	if *file != "" && len(positional) > 0 {
+		return fmt.Errorf("-f and a positional workflow selector are mutually exclusive")
+	}
+	if len(positional) > 1 {
+		return fmt.Errorf("expected at most one positional workflow selector, got %d", len(positional))
+	}
+	if len(positional) > 0 {
+		if cmd == "status" && *all {
+			return fmt.Errorf("status --all does not accept a positional workflow selector")
+		}
+		switch cmd {
+		case "run", "status", "reset", "validate", "plan":
+			if err := workflow.ValidateSelector(positional[0]); err != nil {
+				return err
+			}
+		case "logs":
+			return fmt.Errorf("logs does not accept a positional workflow selector; use --workflow")
+		default:
+			return fmt.Errorf("%s does not accept a positional workflow selector", cmd)
+		}
 	}
 	tailProvided := false
 	fs.Visit(func(f *flag.Flag) {
@@ -135,10 +160,39 @@ func runArgs(args []string) error {
 	if cmd == "status" && *all {
 		return runAllStatus(*repo, *jsonOutput)
 	}
-	if *file == "" {
+
+	workflowFile := *file
+	var err error
+	if workflowFile != "" {
+		workflowFile, err = filepath.Abs(workflowFile)
+		if err != nil {
+			return fmt.Errorf("resolve workflow file: %w", err)
+		}
+	}
+	repositoryScoped := cmd == "run" || cmd == "status" || cmd == "reset"
+	repoRoot := *repo
+	if repositoryScoped {
+		repository, err := targetRepo(*repo)
+		if err != nil {
+			return err
+		}
+		repoRoot = repository.Root
+	} else if len(positional) > 0 {
+		repoRoot, err = discoveryRoot(*repo)
+		if err != nil {
+			return err
+		}
+	}
+	if len(positional) == 1 {
+		workflowFile, err = workflow.ResolveFile(repoRoot, positional[0], workflowHomeDirectory)
+		if err != nil {
+			return err
+		}
+	}
+	if workflowFile == "" {
 		return fmt.Errorf("-f workflow YAML is required")
 	}
-	result := workflow.ValidateFile(*file)
+	result := workflow.ValidateFile(workflowFile)
 	if cmd == "validate" {
 		return writeValidationResult(clioutput.NewPresenter(os.Stdout), result)
 	}
@@ -149,7 +203,7 @@ func runArgs(args []string) error {
 		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
 	}
 	if *detach {
-		pid, err := launchDetachedRun(os.Args[0], *file, *repo, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
+		pid, err := launchDetachedRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
 		if err != nil {
 			return err
 		}
@@ -176,7 +230,7 @@ func runArgs(args []string) error {
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
 	stateOnly := cmd == "status" || cmd == "reset"
-	e, err := engine.New(w, providers, engine.Options{RepoRoot: *repo, Overrides: overrides.Map(), StateOnly: stateOnly, Detached: os.Getenv(detachedChildEnv) == "1" && cmd == "run"})
+	e, err := engine.New(w, providers, engine.Options{RepoRoot: repoRoot, Overrides: overrides.Map(), StateOnly: stateOnly, Detached: os.Getenv(detachedChildEnv) == "1" && cmd == "run"})
 	if err != nil {
 		return err
 	}
@@ -204,8 +258,8 @@ func usage() error {
 }
 
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
-	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> -f workflow.yaml [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
-	fmt.Fprintln(out, "       agentflow run --detach -f workflow.yaml [-C repo] [--codex-bin path] [--set key=value]")
+	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
+	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
 }
@@ -304,7 +358,11 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 
 func targetRepo(root string) (gitstate.Repo, error) {
 	if root == "" {
-		root = "."
+		var err error
+		root, err = currentWorkingDirectory()
+		if err != nil {
+			return gitstate.Repo{}, fmt.Errorf("resolve current working directory: %w", err)
+		}
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -315,6 +373,54 @@ func targetRepo(root string) (gitstate.Repo, error) {
 		return gitstate.Repo{}, fmt.Errorf("%s is not a Git repository", abs)
 	}
 	return repo, nil
+}
+
+func discoveryRoot(root string) (string, error) {
+	if root == "" {
+		var err error
+		root, err = currentWorkingDirectory()
+		if err != nil {
+			return "", fmt.Errorf("resolve current working directory: %w", err)
+		}
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workflow discovery root: %w", err)
+	}
+	return abs, nil
+}
+
+func splitCommandArgs(args []string) (flagArgs, positional []string) {
+	valueFlags := map[string]bool{
+		"-f":          true,
+		"-C":          true,
+		"--codex-bin": true,
+		"-codex-bin":  true,
+		"--workflow":  true,
+		"-workflow":   true,
+		"--tail":      true,
+		"-tail":       true,
+		"--set":       true,
+		"-set":        true,
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+		name := strings.SplitN(arg, "=", 2)[0]
+		if valueFlags[name] && !strings.Contains(arg, "=") && i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	return flagArgs, positional
 }
 
 func runLogs(repoRoot, workflowName string, tail int, follow bool) error {

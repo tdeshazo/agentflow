@@ -201,6 +201,152 @@ func TestStatusAllRejectsWorkflowFileSelector(t *testing.T) {
 	}
 }
 
+func TestRepositoryScopedCommandsResolveCurrentDirectoryAndExplicitOverride(t *testing.T) {
+	workflowFile := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	defaultRepo := newCLIStatusRepo(t)
+	explicitRepo := newCLIStatusRepo(t)
+	originalDirectory := currentWorkingDirectory
+	t.Cleanup(func() { currentWorkingDirectory = originalDirectory })
+
+	currentWorkingDirectory = func() (string, error) { return defaultRepo.Root, nil }
+	defaultOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--json", "-f", workflowFile})
+	})
+	var defaultStatus map[string]any
+	if err := json.Unmarshal([]byte(defaultOutput), &defaultStatus); err != nil {
+		t.Fatal(err)
+	}
+	if defaultStatus["repo"] != defaultRepo.Root {
+		t.Fatalf("default repository = %v, want %q", defaultStatus["repo"], defaultRepo.Root)
+	}
+
+	currentWorkingDirectory = func() (string, error) { return t.TempDir(), nil }
+	explicitOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--json", "-f", workflowFile, "-C", explicitRepo.Root})
+	})
+	var explicitStatus map[string]any
+	if err := json.Unmarshal([]byte(explicitOutput), &explicitStatus); err != nil {
+		t.Fatal(err)
+	}
+	if explicitStatus["repo"] != explicitRepo.Root {
+		t.Fatalf("explicit repository = %v, want %q", explicitStatus["repo"], explicitRepo.Root)
+	}
+}
+
+func TestRepositoryDefaultRejectsNonGitBeforeWorkflowRead(t *testing.T) {
+	originalDirectory := currentWorkingDirectory
+	t.Cleanup(func() { currentWorkingDirectory = originalDirectory })
+	nonGit := t.TempDir()
+	currentWorkingDirectory = func() (string, error) { return nonGit, nil }
+
+	err := runArgs([]string{"run", "-f", filepath.Join(nonGit, "missing.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "not a Git repository") || strings.Contains(err.Error(), "missing.yaml") {
+		t.Fatalf("non-Git default error = %v", err)
+	}
+}
+
+func TestPositionalWorkflowSelectorUsesLocalAndHomeScopes(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	localPath := filepath.Join(repo.Root, ".agent-workflows", "code-styling.yaml")
+	globalPath := filepath.Join(home, ".agent-workflows", "code-styling.yaml")
+	writeCLIWorkflow(t, localPath, "local-code-styling")
+	writeCLIWorkflow(t, globalPath, "global-code-styling")
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "code-styling", "--json", "-C", repo.Root})
+	})
+	var status map[string]any
+	if err := json.Unmarshal([]byte(output), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["workflow"] != "local-code-styling" {
+		t.Fatalf("local selector result = %v", status["workflow"])
+	}
+
+	if err := os.Remove(localPath); err != nil {
+		t.Fatal(err)
+	}
+	output = captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "code-styling", "--json", "-C", repo.Root})
+	})
+	if err := json.Unmarshal([]byte(output), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["workflow"] != "global-code-styling" {
+		t.Fatalf("home selector result = %v", status["workflow"])
+	}
+}
+
+func TestWorkflowSelectorRejectsAmbiguousAndPathForms(t *testing.T) {
+	workflowFile := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "file and positional", args: []string{"validate", "named", "-f", workflowFile}, want: "mutually exclusive"},
+		{name: "multiple positional", args: []string{"validate", "one", "two"}, want: "at most one"},
+		{name: "path positional", args: []string{"validate", "nested/name"}, want: "simple basename"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runArgs(tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("selector error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestExplicitWorkflowFileRemainsFileOnly(t *testing.T) {
+	workflowFile := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	originalDirectory := currentWorkingDirectory
+	t.Cleanup(func() { currentWorkingDirectory = originalDirectory })
+	currentWorkingDirectory = func() (string, error) { return t.TempDir(), nil }
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"validate", "-f", workflowFile})
+	})
+	if !strings.Contains(output, "valid and executable") {
+		t.Fatalf("file-only validation output = %q", output)
+	}
+}
+
+func TestDetachedSelectorPassesResolvedFilePath(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	workflowPath := filepath.Join(repo.Root, ".agent-workflows", "code-styling.yaml")
+	writeCLIWorkflow(t, workflowPath, "detached-code-styling")
+	if err := os.MkdirAll(filepath.Join(home, ".agent-workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	originalHome := workflowHomeDirectory
+	originalStart := detachedStart
+	t.Cleanup(func() {
+		workflowHomeDirectory = originalHome
+		detachedStart = originalStart
+	})
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+	var childArgs []string
+	detachedStart = func(cmd *exec.Cmd) error {
+		childArgs = append([]string(nil), cmd.Args[1:]...)
+		cmd.Process = &os.Process{Pid: 12345}
+		return nil
+	}
+
+	if err := runArgs([]string{"run", "code-styling", "--detach", "-C", repo.Root}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run", "-f", workflowPath, "-C", repo.Root, "--codex-bin", "codex"}
+	if !reflect.DeepEqual(childArgs, want) {
+		t.Fatalf("detached child args = %#v, want %#v", childArgs, want)
+	}
+}
+
 func TestDetachAcceptedOnlyForRun(t *testing.T) {
 	for _, command := range []string{"validate", "plan", "status", "logs", "reset"} {
 		t.Run(command, func(t *testing.T) {
@@ -305,6 +451,22 @@ func captureCLIStdout(t *testing.T, fn func() error) string {
 		t.Fatal(readErr)
 	}
 	return string(data)
+}
+
+func writeCLIWorkflow(t *testing.T, path, name string) {
+	t.Helper()
+	fixture := filepath.Join("..", "..", "internal", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	body, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = []byte(strings.Replace(string(body), "conformance-minimal", name, 1))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertJSONFormattingAndEquivalentData(t *testing.T, pretty, compact string) {

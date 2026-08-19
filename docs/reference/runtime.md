@@ -16,6 +16,8 @@ go run ./cmd/agentflow run \
   -f examples/finish-priority-05.agent-workflow.yaml \
   -C /path/to/target/repository
 
+go run ./cmd/agentflow run code-styling
+
 go run ./cmd/agentflow run --detach \
   -f examples/finish-priority-05.agent-workflow.yaml \
   -C /path/to/target/repository
@@ -29,6 +31,14 @@ stdin disconnected and `--detach` removed. Inspect a detached run with
 `status --all -C /path/to/target/repository` and
 `logs --workflow workflow-name -C /path/to/target/repository` (optionally
 using `--tail N` or `--follow`).
+
+`-C` selects the repository explicitly. For repository-scoped commands, its
+default is the current working directory, which must be a Git repository.
+Single-workflow `run`, `status`, `reset`, `validate`, and `plan` commands may
+also take one positional workflow name. Names are looked up as regular
+`.yaml`/`.yml` files in `<repository>/.agent-workflows/` and
+`~/.agent-workflows/`; repository-local files shadow home files. Use `-f` for
+an explicit workflow path. The positional form and `-f` cannot be combined.
 
 State can be inspected or reset independently:
 
