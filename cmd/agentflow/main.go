@@ -287,6 +287,7 @@ func usage() error {
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
+	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
 }

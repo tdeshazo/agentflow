@@ -39,6 +39,10 @@ also take one positional workflow name. Names are looked up as regular
 `.yaml`/`.yml` files in `<repository>/.agent-workflows/` and
 `~/.agent-workflows/`; repository-local files shadow home files. Use `-f` for
 an explicit workflow path. The positional form and `-f` cannot be combined.
+When both selectors are omitted in an interactive terminal, AgentFlow presents
+a sorted numbered workflow picker and accepts one selection line; redirected
+or piped commands instead fail with the selector usage error and never read
+stdin.
 
 State can be inspected or reset independently:
 
