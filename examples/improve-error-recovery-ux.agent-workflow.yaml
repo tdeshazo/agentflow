@@ -1,0 +1,451 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: improve-error-recovery-ux
+  description: >-
+    Repository-owned workflow to make AgentFlow failure recovery actionable for
+    users without changing durable recovery authority. It adds a recovery footer
+    after failed runs when durable state can safely describe the next step, makes
+    status output prescriptive for recoverable and safety failures, and presents
+    safety failures as operator-action-required while preserving the existing
+    machine-readable terminal safety classification.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    canonical_gate: scripts/check.sh
+    ci_policy: .github/workflows/quality.yml
+    workflow_file: examples/improve-error-recovery-ux.agent-workflow.yaml
+    runtime_reference: docs/reference/runtime.md
+
+  state:
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    localControlFiles:
+      ignoredForDirtyState:
+        - "{{ workflow.file | default('') }}"
+      note: >-
+        This workflow changes only operator-facing recovery diagnostics and the
+        non-secret status projection needed to support them. Git-backed workflow
+        evidence remains authoritative and the workflow file itself is protected.
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - internal/agentflowcli/**
+        - internal/engine/**
+        - internal/clioutput/**
+        - internal/gitstate/**
+        - docs/reference/runtime.md
+        - README.md
+        - CHANGELOG.md
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+      integrity:
+        - id: roadmap
+          paths: [ROADMAP.md]
+          mode: exact-hash
+        - id: research-documents
+          paths: [docs/research/**]
+          mode: group-exact-hash
+        - id: specification
+          paths: [spec/**]
+          mode: group-exact-hash
+        - id: authoring-skill
+          paths: [skills/agentflow-spec/**]
+          mode: group-exact-hash
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+        - id: recovery-ux-workflow
+          paths: [examples/improve-error-recovery-ux.agent-workflow.yaml]
+          mode: exact-hash
+        - id: ci-validation-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: gate
+    phases:
+      implementation:
+        actor: luna
+        reasoning: high
+        requiresChange: true
+        validation: implementation-gate
+      audit:
+        actor: terra
+        reasoning: high
+        requiresChange: false
+        validation: audit-gate
+    repair:
+      actor: terra
+      reasoning: high
+      prompt: |
+        The deterministic AgentFlow quality gate failed while implementing the
+        bounded error-recovery UX task.
+
+        Inspect the checkout and repair only the failure required by this task.
+        Preserve the mutation allowlist and protected resources. Do not weaken
+        scripts/check.sh, CI policy, the specification, the authoring skill, the
+        roadmap, research documents, or this workflow.
+
+        Required invariants:
+        - durable Git-backed state remains the only recovery/acceptance authority;
+        - rerunning `run` remains the actual resume mechanism;
+        - recovery guidance never claims work is preserved unless durable state
+          supports that claim;
+        - validation command output remains absent from machine-readable status;
+        - status JSON keeps the existing safety state
+          `safety-failed/terminal` for compatibility;
+        - human-facing safety wording makes clear that automatic repair stopped
+          but operator remediation can make a later rerun safe;
+        - recovery guidance never prints parameter values, environment values,
+          prompts, secrets, or repeated `--set` values;
+        - reset is described as intentional abandonment, not the default fix;
+        - JSON/YAML/log/raw output remains machine-safe and presentation rules
+          continue to respect TTY and NO_COLOR behavior.
+
+        Do not expand this task into run-identity UX, repair-budget reporting,
+        an `agentflow resume` command, or a broad new error taxonomy unless a
+        minimal internal abstraction is strictly necessary for changes 1-3.
+
+        --- gate output ---
+        {{ tail(validation.failure.log, 260) }}
+
+  agents:
+    luna:
+      model: "{{ parameters.luna_model }}"
+    terra:
+      model: "{{ parameters.terra_model }}"
+
+  tools:
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, bash, go, gofmt, rg]
+    - id: required-files
+      type: files-exist
+      paths:
+        - internal/agentflowcli/main.go
+        - internal/agentflowcli/main_test.go
+        - internal/engine/status.go
+        - internal/engine/status_presentation_test.go
+        - internal/engine/runtime_phase.go
+        - internal/gitstate/status_projection.go
+        - internal/clioutput/presenter.go
+        - "{{ spec.paths.runtime_reference }}"
+        - "{{ spec.paths.canonical_gate }}"
+        - "{{ spec.paths.ci_policy }}"
+        - "{{ spec.paths.workflow_file }}"
+    - id: ci-delegates-to-canonical-gate
+      type: file-contains
+      path: "{{ spec.paths.ci_policy }}"
+      text: scripts/check.sh
+
+  validation:
+    gate:
+      steps:
+        - uses: canonical-gate
+    starting-state:
+      steps:
+        - uses: canonical-gate
+    implementation-gate:
+      repair: once
+      steps:
+        - uses: canonical-gate
+    audit-gate:
+      steps:
+        - uses: canonical-gate
+    final-gate:
+      steps:
+        - uses: canonical-gate
+
+  phases:
+    - id: implement-recovery-ux
+      kind: implementation
+      label: implement-actionable-error-recovery
+      prompt: |
+        Implement only these three AgentFlow recovery-UX changes. Inspect the
+        current CLI dispatch/error path, single-workflow status, repository-wide
+        status projection, presenter, recovery behavior, tests, and runtime docs
+        before changing anything. Preserve the existing durable recovery model.
+
+        1. Failed-run recovery footer
+
+           After a `run` failure, when the workflow and repository were resolved
+           and durable status can be inspected safely, append a compact
+           AgentFlow-owned recovery summary after the primary error.
+
+           For a recoverable validation/interruption state, make clear that:
+           - retained phase work/durable state is preserved when status proves it;
+           - rerunning the same `agentflow run ...` invocation is the normal
+             recovery action;
+           - AgentFlow will resume from durable phase state rather than discard
+             accepted work;
+           - `status` and `logs` are available for inspection;
+           - `reset` is only for intentionally abandoning the run.
+
+           For a safety failure, make clear that:
+           - automatic actor/repair recovery is stopped by policy;
+           - the user should repair or revert the workspace-policy violation;
+           - after the workspace is safe again, rerunning the same workflow may
+             resume from durable state;
+           - reset is not required merely because the safety failure occurred.
+
+           Requirements:
+           - keep the original top-level error visible and first;
+           - do not claim preservation/recovery for parse, validation, selector,
+             repository-resolution, initialization, or other errors where durable
+             state cannot establish it;
+           - never echo secret parameters, environment values, prompts, or
+             repeated `--set` values while constructing guidance;
+           - use workflow name/resolved workflow file/repository paths only when
+             already non-secret and useful for `status`/`logs` examples;
+           - do not create a second recovery path: rerun must still enter the
+             existing engine recovery logic;
+           - detached failures should remain useful through the existing durable
+             log path without changing log authority.
+
+        2. Prescriptive status
+
+           Extend both definition-aware `status` and repository-wide
+           `status --all` so failure states answer "what should I do next?"
+           without exposing arbitrary validation output in JSON.
+
+           Preserve existing durable `state` values in machine-readable output.
+           Add stable non-secret recovery metadata for actionable failure states.
+           Prefer small enums/booleans rather than embedding command output or
+           free-form diagnostics in JSON.
+
+           At minimum distinguish:
+           - `validation-failed/recoverable`: recovery occurs on rerun; next
+             action is rerun after any needed deterministic/manual correction;
+           - `safety-failed/terminal`: automatic recovery/repair is not allowed
+             while the safety violation remains; operator remediation is
+             required before rerun.
+
+           Human-readable status should present the recovery classification and
+           next action clearly. Repository-wide status should expose equivalent
+           non-secret semantics without requiring the workflow YAML.
+
+           Preserve:
+           - existing JSON `state`, workflow/repo/base/branch/phase/completion
+             fields and their meanings;
+           - omission of arbitrary validation command output from JSON;
+           - stable plain output for non-TTY destinations except for the
+             intentional new recovery fields;
+           - valid JSON with no ANSI escapes;
+           - status as observational state only, never advancement authority.
+
+        3. Safety-failure presentation
+
+           Keep the existing machine/durable classification
+           `safety-failed/terminal` unless a schema-versioned compatibility
+           change is demonstrably required. Do not weaken safety semantics.
+
+           In human-facing status and failed-run recovery guidance, present the
+           state as operator-action-required rather than implying the durable run
+           is permanently unrecoverable. The wording must communicate both:
+           - automatic agent/repair execution is terminal for the current unsafe
+             workspace condition; and
+           - the operator can restore the workspace to policy compliance and then
+             rerun so the normal recovery checks can decide whether resume is safe.
+
+           Prefer an explicit recovery field/label over silently redefining the
+           existing `state` value. If the human-readable state label is changed,
+           retain the underlying machine state and test the distinction.
+
+        Regression coverage
+
+        Add deterministic tests that exercise the behavior rather than only
+        string helpers:
+
+        - a failed run with a durable recoverable active phase emits the primary
+          error plus recovery guidance that says retained work is preserved and
+          rerun is the normal action;
+        - an error without trustworthy durable recovery state does not emit a
+          misleading preservation/resume footer;
+        - recoverable single-workflow status shows recovery/next-action metadata;
+        - recoverable JSON contains only stable non-secret recovery metadata and
+          no validation output;
+        - `status --all` projects the equivalent recovery metadata;
+        - safety JSON preserves `state: safety-failed/terminal`;
+        - safety human output says operator action/remediation is required and
+          does not imply reset is mandatory;
+        - after a safety violation is manually corrected, existing engine
+          recovery semantics can proceed on rerun without clearing durable state;
+        - reset guidance explicitly describes abandonment;
+        - TTY styling and NO_COLOR remain presentation-only, and JSON/log/raw
+          streams stay unmodified;
+        - existing status, recovery, detached logging, and run-identity tests
+          remain green.
+
+        Update docs/reference/runtime.md with a short operator recovery section
+        showing the normal sequence: read the error/recovery footer, inspect
+        status/logs, remediate if required, rerun; use reset only to abandon the
+        durable run.
+
+        Keep the implementation focused. Do not add `agentflow resume`, change
+        run-identity mismatch behavior, surface repair-budget counts, or broaden
+        the feature beyond the three requested changes. Run focused tests,
+        gofmt, and the canonical gate before returning.
+
+    - id: audit-recovery-ux
+      kind: audit
+      label: audit-actionable-error-recovery
+      prompt: |
+        Independently audit the completed recovery-UX implementation. Do not
+        accept the implementation actor's completion claim as evidence.
+
+        Inspect the diff from the saved base through HEAD, the CLI failure path,
+        status snapshots/projections, presentation code, runtime recovery logic,
+        tests, and docs. Repair a genuine in-scope defect if necessary;
+        otherwise leave the checkout unchanged.
+
+        Verify:
+
+        Recovery authority
+        - the feature only explains/reports existing durable recovery decisions;
+        - rerunning `run` remains the sole ordinary resume path;
+        - no status/footer field can authorize advancement, acceptance, or reset;
+        - safety failures remain terminal to automatic actor/repair execution
+          until workspace policy is restored.
+
+        Failed-run footer
+        - the original error remains first and unhidden;
+        - guidance appears only when durable state safely supports it;
+        - recoverable failures clearly say retained work is preserved and rerun
+          is the normal action;
+        - safety failures require remediation before rerun;
+        - reset is described only as intentional abandonment;
+        - commands/guidance do not disclose secrets, prompts, env values, or
+          `--set` values.
+
+        Status contracts
+        - definition-aware and repository-wide status expose equivalent
+          non-secret recovery semantics;
+        - JSON preserves existing durable state strings, especially
+          `safety-failed/terminal`;
+        - JSON omits validation command output and remains ANSI-free;
+        - human status clearly distinguishes automatic-on-rerun from
+          operator-action-required;
+        - malformed/stale status namespaces still fail closed or report
+          deterministic context rather than fabricating recovery advice.
+
+        Compatibility and presentation
+        - plain/TTY/NO_COLOR behavior remains coherent;
+        - raw logs/provider output are not presentation-filtered;
+        - detached runs still use existing status/log observability behavior;
+        - no unrelated CLI features or schema changes were introduced;
+        - docs accurately describe remediation + rerun versus reset;
+        - focused tests and `scripts/check.sh` pass.
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: "Error-recovery UX workflow already completed at {{ state.workflow_complete.value }}"
+        - stop: success
+    - id: starting-state
+      validate: starting-state
+    - phase: implement-recovery-ux
+    - phase: audit-recovery-ux
+    - id: post-audit
+      validate: audit-gate
+    - human: recovery-ux-review
+    - complete: recovery-ux
+
+  humanGates:
+    - id: recovery-ux-review
+      requires: [audit-recovery-ux]
+      after:
+        - validation: post-audit
+      instructions: >-
+        Review representative final CLI output for one recoverable validation
+        failure and one safety-policy failure. Confirm that a user can tell what
+        happened, whether retained work is preserved, whether operator
+        remediation is required, and that rerun—not reset—is the normal
+        continuation when safe. Also inspect the corresponding JSON to confirm
+        the existing machine state remains stable and no arbitrary failure output
+        is exposed.
+      checklist:
+        - id: recoverable-guidance
+          text: "Recoverable failure output clearly says retained work is preserved and rerun is the normal continuation."
+        - id: safety-guidance
+          text: "Safety failure output requires operator remediation but does not imply the durable run is permanently lost."
+        - id: status-next-action
+          text: "Human status makes the next recovery action clear for both validation and safety failures."
+        - id: json-compatibility
+          text: "JSON preserves existing state values, including safety-failed/terminal, while exposing only non-secret recovery metadata."
+        - id: reset-boundary
+          text: "Reset is presented as intentional abandonment rather than the default recovery step."
+        - id: gate
+          text: "Focused tests and scripts/check.sh pass."
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        value: head_commit
+
+  completion:
+    recovery-ux:
+      assertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+      finalValidation: final-gate
+      afterCheckpointAssertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+      writeMarker:
+        value: head_commit
+      summary:
+        title: "AgentFlow error-recovery UX task complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
