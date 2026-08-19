@@ -70,7 +70,7 @@ organizes the documentation by purpose:
 │   ├── research/
 │   └── reviews/
 ├── skills/
-│   └── agent-workflow-spec-describer/
+│   └── agentflow-spec/
 └── examples/
     └── finish-priority-05.agent-workflow.yaml
 ```
@@ -133,7 +133,7 @@ does not make live model calls. For individual workflow validation, see the
 
 ## Agent skill
 
-The [agent workflow specification skill](skills/agent-workflow-spec-describer/SKILL.md)
+The [AgentFlow specification skill](skills/agentflow-spec/SKILL.md)
 teaches an agent how to create and modify executable workflows from the bundled
 public contract, then validate and inspect their expanded plans without reading
 AgentFlow implementation source. It also explains, reviews, and compares

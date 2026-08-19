@@ -2,6 +2,28 @@
 
 This reference describes the semantics used by the workflow definitions in this conversation. It is a descriptive guide for agents, not a claim of an externally standardized engine implementation.
 
+## Contents
+
+- [Top level](#top-level)
+- [`spec.parameters`](#specparameters)
+- [`spec.defaults`](#specdefaults)
+- [`spec.paths`](#specpaths)
+- [`spec.state`](#specstate)
+- [`spec.workspace`](#specworkspace)
+- [`spec.agents`](#specagents)
+- [`spec.tools`](#spectools)
+- [`spec.preconditions`](#specpreconditions)
+- [`spec.progress`](#specprogress)
+- [`spec.validation`](#specvalidation)
+- [`spec.lifecycle`](#speclifecycle)
+- [`spec.phaseDefaults`](#specphasedefaults)
+- [`spec.phases`](#specphases)
+- [`spec.humanGates`](#spechumangates)
+- [`spec.recovery`](#specrecovery)
+- [`spec.flow`](#specflow)
+- [`spec.completion`](#speccompletion)
+- [Operational invariants](#operational-invariants)
+
 ## Top level
 
 - `apiVersion`: DSL version. Current examples use `agentflow.dev/v1alpha1`.

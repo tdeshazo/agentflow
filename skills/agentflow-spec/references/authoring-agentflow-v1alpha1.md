@@ -7,6 +7,21 @@ AgentFlow implementation source.
 Use this file together with `agentflow-v1alpha1.md`. This file answers
 "what should I write?"; the field guide answers "what does this field mean?".
 
+## Contents
+
+- [Authoring contract](#authoring-contract)
+- [Canonical top level](#canonical-top-level)
+- [Recommended section order](#recommended-section-order)
+- [Supported executable runtime surface](#supported-executable-runtime-surface)
+- [Expressions and conditions](#expressions-and-conditions)
+- [Concise defaults pattern](#concise-defaults-pattern)
+- [Minimal executable workflow](#minimal-executable-workflow)
+- [Robust implementation + audit + completion template](#robust-implementation--audit--completion-template)
+- [Criterion-driven template fragment](#criterion-driven-template-fragment)
+- [Validation loop](#validation-loop)
+- [Common authoring mistakes](#common-authoring-mistakes)
+- [Design heuristic](#design-heuristic)
+
 ## Authoring contract
 
 Follow these rules:

@@ -113,7 +113,7 @@ spec:
         - provider/**
         - spec/**
         - docs/**
-        - skills/agent-workflow-spec-describer/references/**
+        - skills/agentflow-spec/**
         - examples/develop-agentflow.agent-workflow.yaml
         - examples/finish-priority-05.agent-workflow.yaml
         - README.md
@@ -437,7 +437,7 @@ spec:
         different item or manufacture extra progress.
 
         Update specification and runtime documentation, including the local
-        agent-workflow-spec-describer reference when field semantics change.
+        agentflow-spec reference when field semantics change.
 
         Do not yet migrate the benchmark workflows; keep this phase focused on
         the engine primitives and their deterministic authority.

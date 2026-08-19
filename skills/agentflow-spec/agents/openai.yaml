@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentFlow Spec"
+  short_description: "Author and review AgentFlow workflows"
+  default_prompt: "Use $agentflow-spec to author or review an AgentWorkflow YAML specification."
