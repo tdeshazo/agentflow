@@ -72,6 +72,10 @@ func run() error {
 }
 
 func runArgs(args []string) error {
+	return runArgsWithIO(args, os.Stdin, os.Stdout)
+}
+
+func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if len(args) == 0 {
 		return usage()
 	}
@@ -182,6 +186,11 @@ func runArgs(args []string) error {
 		if err != nil {
 			return err
 		}
+	} else if workflowFile == "" && requiresWorkflowSelector(cmd) {
+		repoRoot, err = discoveryRoot(*repo)
+		if err != nil {
+			return err
+		}
 	}
 	if len(positional) == 1 {
 		workflowFile, err = workflow.ResolveFile(repoRoot, positional[0], workflowHomeDirectory)
@@ -190,11 +199,20 @@ func runArgs(args []string) error {
 		}
 	}
 	if workflowFile == "" {
-		return fmt.Errorf("-f workflow YAML is required")
+		if requiresWorkflowSelector(cmd) && workflowPickerInteractive(in, out) {
+			workflowFile, err = pickWorkflow(repoRoot, in, out, workflowHomeDirectory)
+			if err != nil {
+				return err
+			}
+		} else if requiresWorkflowSelector(cmd) {
+			return missingWorkflowSelectorError(cmd)
+		} else {
+			return fmt.Errorf("-f workflow YAML is required")
+		}
 	}
 	result := workflow.ValidateFile(workflowFile)
 	if cmd == "validate" {
-		return writeValidationResult(clioutput.NewPresenter(os.Stdout), result)
+		return writeValidationResult(clioutput.NewPresenter(out), result)
 	}
 	if result.Status == workflow.Invalid {
 		return diagnosticsError(result)
@@ -249,6 +267,15 @@ func runArgs(args []string) error {
 		return e.Reset()
 	default:
 		return usage()
+	}
+}
+
+func requiresWorkflowSelector(cmd string) bool {
+	switch cmd {
+	case "run", "status", "reset", "validate", "plan":
+		return true
+	default:
+		return false
 	}
 }
 
