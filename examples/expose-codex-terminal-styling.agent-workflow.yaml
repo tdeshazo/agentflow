@@ -50,6 +50,7 @@ spec:
         - cmd/agentflow/**
         - internal/clioutput/**
         - internal/engine/**
+        - internal/gitstate/**
         - internal/observability/**
         - internal/workflow/**
         - provider/**
@@ -168,7 +169,7 @@ spec:
     workflow-validation-with-priority5-excluded:
       type: shell
       command: >-
-        bash -lc 'set -euo pipefail; while IFS= read -r workflow; do if [[ "$workflow" == "examples/finish-priority-05.agent-workflow.yaml" ]]; then printf "-- intentionally skipping %s --\n" "$workflow"; continue; fi; printf "-- validating %s --\n" "$workflow"; go run ./cmd/agentflow validate -f "$workflow"; done < <(rg --files spec examples -g "*.yaml" -g "*.yml" | sort)'
+        bash -lc 'set -euo pipefail; while IFS= read -r workflow; do if [[ "$workflow" == "examples/finish-priority-05.agent-workflow.yaml" ]]; then printf -- "-- intentionally skipping %s --\n" "$workflow"; continue; fi; printf -- "-- validating %s --\n" "$workflow"; go run ./cmd/agentflow validate -f "$workflow"; done < <(rg --files spec examples -g "*.yaml" -g "*.yml" | sort)'
 
   preconditions:
     - id: repository-root

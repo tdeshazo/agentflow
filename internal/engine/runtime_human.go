@@ -310,21 +310,21 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 	base, _, _ := e.Store.Resolve(e.baseRecord())
 	var branch string
 	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
-	changed, _ := e.changedImplementationFiles()
+	changed, changedErr := e.changedImplementationFiles()
 	log, _ := e.Repo.LogSince(base)
 	presenter := e.presenter()
 	presenter.Separator()
 	presenter.CompletionSummary(e.Workflow.Metadata.Name)
+	presenter.Metadata("Repository", presenter.Hyperlink(e.Repo.Root, clioutput.FileURL(e.Repo.Root)))
 	presenter.Metadata("Branch", branch)
-	presenter.Metadata("Base", base)
-	presenter.Metadata("Head", head)
+	presenter.Metadata("Base", e.commitLink(presenter, base))
+	presenter.Metadata("Head", e.commitLink(presenter, head))
 	if strings.TrimSpace(log) != "" {
 		presenter.Notice(clioutput.RoleHeading, "Commits since base:")
 		clioutput.NewPresenterWithPresentation(e.Out, clioutput.PresentationRaw).Raw(log)
 	}
-	if len(changed) > 0 {
-		presenter.Notice(clioutput.RoleHeading, "Changed files:")
-		presenter.TextLine("- %s", strings.Join(changed, "\n- "))
+	if changedErr == nil {
+		presenter.GitSummary("since base", changed)
 	}
 	if c.Summary.Title != "" {
 		presenter.MetadataStyled("Summary", c.Summary.Title, clioutput.RoleSuccess)
@@ -358,6 +358,14 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 		}
 	}
 	return nil
+}
+
+func (e *Engine) commitLink(presenter clioutput.Presenter, commit string) string {
+	link, ok := e.Repo.CommitURL(commit)
+	if !ok {
+		return commit
+	}
+	return presenter.Hyperlink(commit, link)
 }
 
 func (e *Engine) runAssertion(a workflow.Assertion) error {

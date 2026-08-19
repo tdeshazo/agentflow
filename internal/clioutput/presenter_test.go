@@ -153,6 +153,84 @@ func TestPresenterSemanticFieldHelpers(t *testing.T) {
 	}
 }
 
+func TestPresenterUsesUnicodeAndASCIIStatusGlyphs(t *testing.T) {
+	tests := []struct {
+		name      string
+		unicode   bool
+		wantGlyph string
+	}{
+		{name: "unicode terminal", unicode: true, wantGlyph: "▸ ==>"},
+		{name: "ascii terminal", unicode: false, wantGlyph: "> ==>"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			p := NewPresenterWithProfile(&output, PresentationRich, TerminalProfile{
+				TTY:     true,
+				Color:   ColorBasic,
+				Unicode: test.unicode,
+			})
+			p.PhaseStart("build", "Build")
+			if !strings.Contains(output.String(), test.wantGlyph) {
+				t.Fatalf("glyph output = %q, want %q", output.String(), test.wantGlyph)
+			}
+		})
+	}
+}
+
+func TestPresenterHyperlinksRequireAnExplicitSafeProfile(t *testing.T) {
+	tests := []struct {
+		name     string
+		safe     bool
+		mode     PresentationMode
+		wantOSC8 bool
+	}{
+		{name: "safe rich terminal", safe: true, mode: PresentationRich, wantOSC8: true},
+		{name: "unknown terminal", safe: false, mode: PresentationRich, wantOSC8: false},
+		{name: "raw boundary", safe: true, mode: PresentationRaw, wantOSC8: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			p := NewPresenterWithProfile(&bytes.Buffer{}, test.mode, TerminalProfile{
+				TTY:        true,
+				Color:      ColorBasic,
+				Hyperlinks: test.safe,
+			})
+			got := p.Hyperlink("repo", "file:///tmp/repo")
+			if strings.Contains(got, "repo") != true || strings.Contains(got, "\x1b]8;;") != test.wantOSC8 {
+				t.Fatalf("hyperlink = %q, wantOSC8=%v", got, test.wantOSC8)
+			}
+		})
+	}
+
+	p := NewPresenterWithProfile(&bytes.Buffer{}, PresentationRich, TerminalProfile{TTY: true, Hyperlinks: true})
+	if got := p.Hyperlink("repo", "file:///tmp/repo\nunsafe"); got != "repo" {
+		t.Fatalf("unsafe hyperlink target was emitted: %q", got)
+	}
+}
+
+func TestPresenterGitSummaryIsCompactAndPortable(t *testing.T) {
+	files := []string{"README.md", "internal/clioutput/presenter.go"}
+
+	var rich bytes.Buffer
+	p := NewPresenterWithProfile(&rich, PresentationRich, TerminalProfile{
+		TTY:     true,
+		Color:   ColorBasic,
+		Unicode: true,
+	})
+	p.GitSummary("since base", files)
+	if got := rich.String(); !strings.Contains(got, "Git since base: 2 files changed") ||
+		strings.Contains(got, "README.md") {
+		t.Fatalf("rich Git summary = %q", got)
+	}
+
+	var plain bytes.Buffer
+	NewPresenterWithProfile(&plain, PresentationPlain, TerminalProfile{}).GitSummary("since base", files)
+	if got := plain.String(); got != "==> Git since base: 2 files changed\n" {
+		t.Fatalf("plain Git summary = %q", got)
+	}
+}
+
 func TestStateRole(t *testing.T) {
 	for state, want := range map[string]Role{
 		"ready":                         RoleSuccess,

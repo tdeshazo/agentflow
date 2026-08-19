@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -63,6 +64,36 @@ func (r Repo) Branch() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+// CommitURL returns a browser URL for a commit when the repository has an
+// HTTP(S) origin that can be converted deterministically. Local-only and
+// opaque remotes intentionally return no link.
+func (r Repo) CommitURL(commit string) (string, bool) {
+	if commit == "" {
+		return "", false
+	}
+	b, err := r.run(nil, "remote", "get-url", "origin")
+	if err != nil {
+		return "", false
+	}
+	remote := strings.TrimSpace(string(b))
+	if strings.HasPrefix(remote, "git@") {
+		parts := strings.SplitN(strings.TrimPrefix(remote, "git@"), ":", 2)
+		if len(parts) != 2 {
+			return "", false
+		}
+		remote = "https://" + parts[0] + "/" + parts[1]
+	}
+	parsed, err := url.Parse(remote)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", false
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	parsed.Path = strings.TrimSuffix(parsed.Path, ".git") + "/commit/" + url.PathEscape(commit)
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), true
 }
 
 func (r Repo) ObjectExists(obj string) bool {
