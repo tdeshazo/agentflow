@@ -49,6 +49,11 @@ type Engine struct {
 	outputBridge       *observability.OutputBridge
 	outputRestore      func()
 	detached           bool
+	// recoveryEligible is set only after this invocation has passed the
+	// run-identity boundary and established or resumed a durable active phase.
+	// It prevents a later invocation that fails during initialization or input
+	// compatibility checks from borrowing an older active record for guidance.
+	recoveryEligible bool
 }
 
 // ActivePhase is the durable record of a phase's current execution state,
@@ -310,6 +315,7 @@ func coerce(kind string, v any) (any, error) {
 // Run executes the workflow, orchestrating phases, managing durability, and coordinating
 // with providers. It returns an error if the workflow fails.
 func (e *Engine) Run(ctx context.Context) (runErr error) {
+	e.recoveryEligible = false
 	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
 		defer os.RemoveAll(e.tempDirectory)
 	}
@@ -390,6 +396,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		if !e.resumeEnabled() {
 			return fmt.Errorf("workflow has an interrupted active phase but resume is disabled")
 		}
+		e.recoveryEligible = true
 		// Resume is a runtime safety invariant. A flow-level recover action is
 		// still accepted for clarity, but an active record must never be bypassed
 		// merely because a workflow places that action after a phase step.
