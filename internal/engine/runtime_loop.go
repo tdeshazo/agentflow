@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 func (e *Engine) runLoop(ctx context.Context, loop workflow.Loop) error {

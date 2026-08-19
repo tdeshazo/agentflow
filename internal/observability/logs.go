@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 )
 
 // LogStore is one workflow's append-only local runtime log. The file is

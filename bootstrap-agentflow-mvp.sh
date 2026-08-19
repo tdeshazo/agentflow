@@ -63,7 +63,7 @@ if [[ -z "$ROOT" ]]; then
 fi
 
 [[ -n "$ROOT" && -d "$ROOT/.git" ]] \
-  || die "run inside agentflow-spec or pass its repository root"
+  || die "run inside agentflow or pass its repository root"
 
 ROOT="$(cd "$ROOT" && pwd)"
 cd "$ROOT"
@@ -393,8 +393,8 @@ fallback_gate() {
     return 1
   fi
 
-  go test ./...
-  go vet ./...
+  go test ...
+  go vet ...
 }
 
 bootstrap_gate() {
@@ -1104,7 +1104,7 @@ BIN="$STATE_DIR/agentflow-bootstrap-bin"
 
 note "Building AgentFlow for cutover"
 
-go build -o "$BIN" ./cmd/agentflow
+go build -o "$BIN" .
 
 "$BIN" validate \
   -f "$SELFHOST_WORKFLOW" \
@@ -1320,7 +1320,7 @@ has_dirty_files \
 
 FRESH_BIN="$STATE_DIR/agentflow-post-selfhost-bin"
 
-go build -o "$FRESH_BIN" ./cmd/agentflow
+go build -o "$FRESH_BIN" .
 
 "$FRESH_BIN" validate \
   -f "$SELFHOST_WORKFLOW" \
@@ -1399,7 +1399,7 @@ printf '  [x] clean working tree\n'
 printf '\nThe bootstrap shell is no longer required to orchestrate subsequent\n'
 printf 'AgentFlow development. Future bounded work can start with:\n\n'
 
-printf '  go run ./cmd/agentflow run \\\n'
+printf '  go run . run \\\n'
 printf '    -f examples/develop-agentflow.agent-workflow.yaml \\\n'
 printf '    -C . \\\n'
 printf '    --set "task=<development task>"\n\n'

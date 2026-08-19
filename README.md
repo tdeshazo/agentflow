@@ -48,7 +48,7 @@ organizes the documentation by purpose:
 ├── .gitignore
 ├── go.mod
 ├── go.sum
-├── cmd/agentflow/
+├── main.go
 ├── provider/
 │   ├── provider.go
 │   └── codex/
@@ -73,6 +73,17 @@ organizes the documentation by purpose:
 └── examples/
     └── finish-priority-05.agent-workflow.yaml
 ```
+
+## Install
+
+Install the CLI from the module root:
+
+```sh
+go install github.com/tdeshazo/agentflow@latest
+```
+
+Then run `agentflow` with a workflow command, for example
+`agentflow validate -f workflow.yaml`.
 
 ## What the specification models
 

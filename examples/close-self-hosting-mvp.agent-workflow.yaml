@@ -278,7 +278,7 @@ spec:
         # The current interpreter must independently see the same durable
         # develop-agentflow run as complete.
         current_status="$(
-          go run ./cmd/agentflow status \
+          go run . status \
             --json \
             -f examples/develop-agentflow.agent-workflow.yaml \
             -C .

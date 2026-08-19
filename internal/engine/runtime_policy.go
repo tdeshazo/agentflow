@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 func (e *Engine) phaseByID(id string) (*workflow.Phase, error) {

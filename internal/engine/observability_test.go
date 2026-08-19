@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
-	"github.com/tdeshazo/agentflow-spec/internal/observability"
-	"github.com/tdeshazo/agentflow-spec/provider"
-	codexprovider "github.com/tdeshazo/agentflow-spec/provider/codex"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/observability"
+	"github.com/tdeshazo/agentflow/provider"
+	codexprovider "github.com/tdeshazo/agentflow/provider/codex"
 )
 
 func TestRunCreatesDescriptorAndDurableOperationalLog(t *testing.T) {

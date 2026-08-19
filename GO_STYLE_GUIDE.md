@@ -78,8 +78,8 @@ import (
     "gopkg.in/yaml.v3"
     
     // Internal
-    "github.com/tdeshazo/agentflow-spec/internal/engine"
-    "github.com/tdeshazo/agentflow-spec/provider"
+    "github.com/tdeshazo/agentflow/internal/engine"
+    "github.com/tdeshazo/agentflow/provider"
 )
 ```
 
@@ -247,4 +247,3 @@ Current testing appears comprehensive. Maintain/improve with:
 - Unit tests for all public functions
 - Integration tests for package interactions
 - Benchmark tests for performance-critical code
-

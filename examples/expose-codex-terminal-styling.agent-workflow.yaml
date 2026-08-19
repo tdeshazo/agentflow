@@ -47,7 +47,7 @@ spec:
       after_checkpoint: required
     mutationPolicy:
       allowed:
-        - cmd/agentflow/**
+        - '*.go'
         - internal/clioutput/**
         - internal/engine/**
         - internal/gitstate/**
@@ -157,19 +157,19 @@ spec:
     focused-go-tests:
       type: shell
       command: >-
-        go test ./cmd/agentflow ./internal/clioutput ./internal/engine ./internal/observability ./internal/workflow ./provider/...
+        go test . ./internal/clioutput ./internal/engine ./internal/observability ./internal/workflow ./provider/...
     focused-go-vet:
       type: shell
       command: >-
-        go vet ./cmd/agentflow ./internal/clioutput ./internal/engine ./internal/observability ./internal/workflow ./provider/...
+        go vet . ./internal/clioutput ./internal/engine ./internal/observability ./internal/workflow ./provider/...
     focused-race-tests:
       type: shell
       command: >-
-        go test -race ./cmd/agentflow ./internal/clioutput ./internal/engine ./internal/observability ./provider/...
+        go test -race . ./internal/clioutput ./internal/engine ./internal/observability ./provider/...
     workflow-validation-with-priority5-excluded:
       type: shell
       command: >-
-        bash -lc 'set -euo pipefail; while IFS= read -r workflow; do if [[ "$workflow" == "examples/finish-priority-05.agent-workflow.yaml" ]]; then printf -- "-- intentionally skipping %s --\n" "$workflow"; continue; fi; printf -- "-- validating %s --\n" "$workflow"; go run ./cmd/agentflow validate -f "$workflow"; done < <(rg --files spec examples -g "*.yaml" -g "*.yml" | sort)'
+        bash -lc 'set -euo pipefail; while IFS= read -r workflow; do if [[ "$workflow" == "examples/finish-priority-05.agent-workflow.yaml" ]]; then printf -- "-- intentionally skipping %s --\n" "$workflow"; continue; fi; printf -- "-- validating %s --\n" "$workflow"; go run . validate -f "$workflow"; done < <(rg --files spec examples -g "*.yaml" -g "*.yml" | sort)'
 
   preconditions:
     - id: repository-root
@@ -181,7 +181,7 @@ spec:
     - id: required-files
       type: files-exist
       paths:
-        - cmd/agentflow/main.go
+        - main.go
         - internal/clioutput/presenter.go
         - internal/engine/runtime_phase.go
         - internal/engine/runtime_human.go

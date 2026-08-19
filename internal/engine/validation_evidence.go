@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 const (

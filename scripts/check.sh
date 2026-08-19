@@ -30,25 +30,25 @@ git diff --check
 git diff --cached --check
 
 step "Go tests"
-go test ./...
+go test ...
 
 step "Go vet"
-go vet ./...
+go vet ...
 
 step "Race-enabled Go tests"
-go test -race ./...
+go test -race ...
 
 step "Deterministic self-hosting runtime"
 go test ./internal/engine -run '^TestSelfHosting' -count=1
 
 step "Self-hosting definition"
-go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml
+go run . validate -f examples/develop-agentflow.agent-workflow.yaml
 
 step "Shipped AgentWorkflow definitions"
 mapfile -t WORKFLOW_FILES < <(rg --files spec examples -g '*.yaml' -g '*.yml' | sort)
 for workflow in "${WORKFLOW_FILES[@]}"; do
   printf '\n-- validating %s --\n' "$workflow"
-  go run ./cmd/agentflow validate -f "$workflow"
+  go run . validate -f "$workflow"
 done
 
 printf '\nAgentFlow quality gate passed.\n'

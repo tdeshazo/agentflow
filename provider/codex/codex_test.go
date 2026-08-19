@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/provider"
+	"github.com/tdeshazo/agentflow/provider"
 )
 
 func TestBuildArgs(t *testing.T) {

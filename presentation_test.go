@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 func TestValidationPresentationUsesSemanticOutcomeRoles(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"reflect"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 const runIdentityVersion = 1

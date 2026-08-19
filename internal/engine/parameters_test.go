@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 func TestResolveParameters(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 // StatusSnapshot is the stable, non-secret view of durable workflow state.

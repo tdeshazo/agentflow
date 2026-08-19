@@ -13,13 +13,13 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/engine"
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
-	"github.com/tdeshazo/agentflow-spec/internal/observability"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
-	"github.com/tdeshazo/agentflow-spec/provider"
-	codexprovider "github.com/tdeshazo/agentflow-spec/provider/codex"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/engine"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/observability"
+	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/provider"
+	codexprovider "github.com/tdeshazo/agentflow/provider/codex"
 )
 
 type sets struct {

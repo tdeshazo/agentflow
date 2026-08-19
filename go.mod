@@ -1,4 +1,4 @@
-module github.com/tdeshazo/agentflow-spec
+module github.com/tdeshazo/agentflow
 
 go 1.24.0
 
@@ -16,5 +16,5 @@ require github.com/mattn/go-isatty v0.0.20
 
 tool (
 	github.com/itchyny/gojq/cmd/gojq
-	github.com/tdeshazo/agentflow-spec/cmd/jq
+	github.com/tdeshazo/agentflow/cmd/jq
 )

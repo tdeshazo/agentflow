@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 )
 
 func TestWorkflowLogsUseGitDirectoryAndRemainIsolated(t *testing.T) {

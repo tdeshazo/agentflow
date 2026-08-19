@@ -200,9 +200,9 @@ spec:
     priority4-contract:
       type: shell
       command: >-
-        go test ./internal/workflow ./internal/engine ./cmd/agentflow &&
-        go run ./cmd/agentflow plan --expanded -f {{ spec.paths.self_host_workflow }} >/dev/null &&
-        go run ./cmd/agentflow plan --expanded -f {{ spec.paths.priority5_workflow }} >/dev/null
+        go test ./internal/workflow ./internal/engine ./. &&
+        go run . plan --expanded -f {{ spec.paths.self_host_workflow }} >/dev/null &&
+        go run . plan --expanded -f {{ spec.paths.priority5_workflow }} >/dev/null
       mutates_workspace: false
       capture:
         stdout: true

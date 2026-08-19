@@ -289,7 +289,7 @@ func TestSelfHostingCutoverContract(t *testing.T) {
 	}
 	for _, duplicate := range []string{
 		"go test ./internal/engine -run '^TestSelfHosting'",
-		"go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml",
+		"go run . validate -f examples/develop-agentflow.agent-workflow.yaml",
 	} {
 		if strings.Contains(string(ci), duplicate) {
 			t.Fatalf("CI repeats canonical-gate-owned check %q", duplicate)

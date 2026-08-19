@@ -12,13 +12,13 @@ This prevents descriptive fields from being silently treated as enforcement.
 ## CLI
 
 ```sh
-go run ./cmd/agentflow run \
+go run . run \
   -f examples/finish-priority-05.agent-workflow.yaml \
   -C /path/to/target/repository
 
-go run ./cmd/agentflow run code-styling
+go run . run code-styling
 
-go run ./cmd/agentflow run --detach \
+go run . run --detach \
   -f examples/finish-priority-05.agent-workflow.yaml \
   -C /path/to/target/repository
 ```
@@ -47,15 +47,15 @@ stdin.
 State can be inspected or reset independently:
 
 ```sh
-go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo
-go run ./cmd/agentflow status -f workflow.yaml -C /path/to/repo --json
-go run ./cmd/agentflow status --all -C /path/to/repo
-go run ./cmd/agentflow status --all -C /path/to/repo --json
-go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo
-go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo --tail 100
-go run ./cmd/agentflow logs --workflow workflow-name -C /path/to/repo --follow
-go run ./cmd/agentflow reset  -f workflow.yaml -C /path/to/repo
-go run ./cmd/agentflow plan --expanded -f workflow.yaml
+go run . status -f workflow.yaml -C /path/to/repo
+go run . status -f workflow.yaml -C /path/to/repo --json
+go run . status --all -C /path/to/repo
+go run . status --all -C /path/to/repo --json
+go run . logs --workflow workflow-name -C /path/to/repo
+go run . logs --workflow workflow-name -C /path/to/repo --tail 100
+go run . logs --workflow workflow-name -C /path/to/repo --follow
+go run . reset  -f workflow.yaml -C /path/to/repo
+go run . plan --expanded -f workflow.yaml
 ```
 
 Runtime parameters can be overridden with repeated `--set key=value` flags.
@@ -287,7 +287,7 @@ Before running a workflow, validate its document without opening a repository,
 creating Git state, or starting a provider:
 
 ```sh
-go run ./cmd/agentflow validate -f workflow.yaml
+go run . validate -f workflow.yaml
 ```
 
 Validation reports one of three outcomes: `invalid` for YAML/schema/reference

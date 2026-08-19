@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
-	"github.com/tdeshazo/agentflow-spec/provider"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/provider"
 )
 
 type writeProvider struct {

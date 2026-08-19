@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
-	"github.com/tdeshazo/agentflow-spec/provider"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/provider"
 )
 
 // phaseValidationFailure distinguishes an unsuccessful deterministic gate from

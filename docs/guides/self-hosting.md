@@ -17,7 +17,7 @@ accepted.
 From the repository root, validate the shipped workflow before starting a run:
 
 ```sh
-go run ./cmd/agentflow validate \
+go run . validate \
   -f examples/develop-agentflow.agent-workflow.yaml
 ```
 
@@ -38,7 +38,7 @@ passed to the Luna/high implementation phase; it must describe a specific
 change, not an open-ended development program.
 
 ```sh
-go run ./cmd/agentflow run \
+go run . run \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C . \
   --set "task=Add focused regression coverage for <bounded behavior>."
@@ -62,7 +62,7 @@ works before any later status-output enhancements and is safe to run at any
 time, including before the workflow has started:
 
 ```sh
-go run ./cmd/agentflow status \
+go run . status \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C .
 ```
@@ -70,7 +70,7 @@ go run ./cmd/agentflow status \
 Automation can request the same durable view as one JSON object:
 
 ```sh
-go run ./cmd/agentflow status --json \
+go run . status --json \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C .
 ```
@@ -89,7 +89,7 @@ If the interpreter is interrupted, rerun the same command with the exact same
 task, model/runtime inputs, and executable workflow definition:
 
 ```sh
-go run ./cmd/agentflow run \
+go run . run \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C . \
   --set "task=Add focused regression coverage for <bounded behavior>."
@@ -111,7 +111,7 @@ Git history or cleans up source changes. It requires a clean implementation
 workspace, so partial work must be handled or committed before resetting:
 
 ```sh
-go run ./cmd/agentflow reset \
+go run . reset \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C .
 ```

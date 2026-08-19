@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
-	"github.com/tdeshazo/agentflow-spec/provider"
+	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/provider"
 )
 
 type durableProvider struct {

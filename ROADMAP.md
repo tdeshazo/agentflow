@@ -42,7 +42,7 @@ At minimum, that self-hosting workflow must exercise:
 - interruption and resume without discarding accepted work;
 - durable phase/completion evidence;
 - completion assertions owned by the workflow engine; and
-- a real change to `agentflow-spec`, not a synthetic fixture repository.
+- a real change to `agentflow`, not a synthetic fixture repository.
 
 A shell command may launch AgentFlow, but a bespoke shell orchestrator must not own the phase sequence, repair loop, progress decisions, checkpoint policy, or completion transition. Those responsibilities must be expressed in the AgentFlow YAML and executed by the Go interpreter.
 
@@ -126,7 +126,7 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 ### Scope
 
-- Add a repository-owned AgentFlow workflow for development of `agentflow-spec`, for example `examples/develop-agentflow.agent-workflow.yaml`.
+- Add a repository-owned AgentFlow workflow for development of `agentflow`, for example `examples/develop-agentflow.agent-workflow.yaml`.
 - Use the normal Go interpreter entry point to execute that workflow against the repository itself.
 - Encode repository mutation policy, protected resources, validation, repair budget, checkpointing, recovery, and completion in YAML rather than a coordinating shell script.
 - Use at least one real AI implementation phase and one independent audit/review phase with intentionally chosen model/reasoning assignments.
@@ -135,12 +135,12 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 - Prove interruption/restart behavior on a real self-development run.
 - Make self-hosting workflow state namespaced so repeated development workflows cannot collide with ordinary Git refs or other AgentFlow runs.
 - Produce useful `status` output while a self-hosted run is active, failed, recoverable, or complete.
-- Use the self-hosting workflow to complete at least one real subsequent `agentflow-spec` change and retain that run as documented evidence of dogfooding.
+- Use the self-hosting workflow to complete at least one real subsequent `agentflow` change and retain that run as documented evidence of dogfooding.
 - Add CI coverage that validates the self-hosting workflow definition and tests its deterministic/runtime semantics without requiring live model calls.
 
 ### Exit criteria
 
-- From a clean `agentflow-spec` checkout, a developer can launch a self-development run with the AgentFlow CLI and a repository-owned YAML workflow.
+- From a clean `agentflow` checkout, a developer can launch a self-development run with the AgentFlow CLI and a repository-owned YAML workflow.
 - The Go interpreter, not a bespoke shell wrapper, owns phase advancement, validation/repair, checkpointing, recovery, and completion.
 - A real AgentFlow source/specification change has been implemented and accepted through that workflow.
 - Killing the interpreter after a durable checkpoint and rerunning it resumes from persisted AgentFlow state rather than replaying accepted work.

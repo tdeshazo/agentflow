@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 // workflowPickerInteractive is a seam for command tests. The production

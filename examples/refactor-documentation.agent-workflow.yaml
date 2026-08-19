@@ -274,7 +274,7 @@ spec:
         # scattering it through the root README and runtime reference.
         grep -Fq './scripts/check.sh' docs/guides/development.md || \
           grep -Fq 'scripts/check.sh' docs/guides/development.md
-        grep -Fq 'go run ./cmd/agentflow validate' docs/guides/development.md
+        grep -Fq 'go run . validate' docs/guides/development.md
         grep -Fq 'examples/develop-agentflow.agent-workflow.yaml' \
           docs/guides/development.md
 

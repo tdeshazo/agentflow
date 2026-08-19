@@ -37,16 +37,16 @@ Use focused checks while iterating:
 gofmt -w path/to/file.go
 go test ./internal/engine -run TestName -count=1
 go test ./internal/workflow -run TestName -count=1
-go test ./...
-go test -race ./...
-go vet ./...
+go test ...
+go test -race ...
+go vet ...
 ```
 
 Validate a workflow without opening a repository or invoking a provider:
 
 ```sh
-go run ./cmd/agentflow validate -f examples/develop-agentflow.agent-workflow.yaml
-go run ./cmd/agentflow plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
+go run . validate -f examples/develop-agentflow.agent-workflow.yaml
+go run . plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
 ```
 
 The validator distinguishes invalid documents from documents that are valid but
@@ -63,7 +63,7 @@ Use the repository-owned workflow for one specific task, starting from a clean
 named branch:
 
 ```sh
-go run ./cmd/agentflow run \
+go run . run \
   -f examples/develop-agentflow.agent-workflow.yaml \
   -C . \
   --set "task=Add focused regression coverage for <bounded behavior>."

@@ -86,8 +86,8 @@ full domain prompts and policy declarations.
 Both plans were generated without actor or mutable-tool execution:
 
 ```sh
-go run ./cmd/agentflow plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
-go run ./cmd/agentflow plan --expanded -f examples/finish-priority-05.agent-workflow.yaml
+go run . plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
+go run . plan --expanded -f examples/finish-priority-05.agent-workflow.yaml
 ```
 
 Each plan exposes:

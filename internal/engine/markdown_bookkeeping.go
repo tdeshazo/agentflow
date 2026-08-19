@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 var markdownChecklistLine = regexp.MustCompile(`^(\s*(?:[-+*]|\d+[.)])\s+\[)( |x|X)(\]\s+)(.*)$`)

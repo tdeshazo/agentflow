@@ -16,11 +16,11 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
-	"github.com/tdeshazo/agentflow-spec/internal/gitstate"
-	"github.com/tdeshazo/agentflow-spec/internal/observability"
-	"github.com/tdeshazo/agentflow-spec/internal/workflow"
-	"github.com/tdeshazo/agentflow-spec/provider"
+	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/observability"
+	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/provider"
 )
 
 // Engine orchestrates workflow execution, managing durability, phase lifecycle,
