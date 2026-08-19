@@ -26,9 +26,14 @@ type StatusSnapshot struct {
 	ActorCompleted   bool   `json:"actor_completed"`
 	FailureKind      string `json:"failure_kind,omitempty"`
 	ValidationFailed string `json:"validation_failed,omitempty"`
-	Complete         bool   `json:"complete"`
-	CompleteCommit   string `json:"complete_commit,omitempty"`
-	validationError  string
+	// Recovery and NextAction are stable, non-secret classifications. They
+	// describe how the existing runtime will evaluate a later run; they never
+	// authorize recovery or expose validation command output.
+	Recovery        string `json:"recovery,omitempty"`
+	NextAction      string `json:"next_action,omitempty"`
+	Complete        bool   `json:"complete"`
+	CompleteCommit  string `json:"complete_commit,omitempty"`
+	validationError string
 }
 
 func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
@@ -105,7 +110,19 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		snapshot.ValidationFailed = active.Validation
 		snapshot.validationError = active.ValidationError
 	}
+	setRecoveryMetadata(&snapshot)
 	return snapshot, nil
+}
+
+func setRecoveryMetadata(snapshot *StatusSnapshot) {
+	switch snapshot.State {
+	case "validation-failed/recoverable":
+		snapshot.Recovery = "automatic-on-rerun"
+		snapshot.NextAction = "rerun"
+	case "safety-failed/terminal":
+		snapshot.Recovery = "operator-action-required"
+		snapshot.NextAction = "remediate-then-rerun"
+	}
 }
 
 // Status writes the human-readable status form. Redirected and buffered output
@@ -159,6 +176,16 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 			p.MetadataStyled("validation_error", snapshot.validationError, clioutput.RoleError)
 		}
 	}
+	if snapshot.Recovery != "" {
+		p.MetadataStyled("recovery", snapshot.Recovery, clioutput.StateRole(snapshot.Recovery))
+		p.MetadataStyled("next_action", snapshot.NextAction, clioutput.StateRole(snapshot.NextAction))
+		switch snapshot.Recovery {
+		case "automatic-on-rerun":
+			p.Line(clioutput.RoleWarning, "recovery guidance: correct the validation failure if needed, then rerun; durable phase state will be used")
+		case "operator-action-required":
+			p.Line(clioutput.RoleError, "recovery guidance: automatic actor and repair execution stopped; repair or revert the workspace-policy violation, then rerun")
+		}
+	}
 	completeRole := clioutput.RoleMuted
 	if snapshot.Complete {
 		completeRole = clioutput.RoleSuccess
@@ -169,6 +196,28 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	}
 	p.MetadataStyled("complete", completeValue, completeRole)
 	return nil
+}
+
+// FailureRecoveryGuidance reports durable recovery advice for a failed run.
+// An empty result means durable state cannot safely support recovery advice.
+func (e *Engine) FailureRecoveryGuidance() string {
+	snapshot, err := e.statusSnapshot()
+	if err != nil {
+		return ""
+	}
+
+	switch snapshot.State {
+	case "validation-failed/recoverable":
+		return "AgentFlow recovery: retained phase work is preserved in durable state. " +
+			"Inspect status and logs, then rerun the same agentflow run command; AgentFlow will resume from durable phase state without discarding accepted work. " +
+			"Use reset only to intentionally abandon this durable run."
+	case "safety-failed/terminal":
+		return "AgentFlow recovery: operator action is required. Automatic actor and repair recovery stopped for the current workspace-policy violation. " +
+			"Repair or revert the violation, inspect status and logs, then rerun the same agentflow run command so normal durable recovery checks can decide whether to resume. " +
+			"Use reset only to intentionally abandon this durable run."
+	default:
+		return ""
+	}
 }
 
 // StatusJSON writes one JSON object describing the durable workflow state.

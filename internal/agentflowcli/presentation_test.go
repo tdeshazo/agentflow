@@ -75,6 +75,17 @@ func TestUsageAndTopLevelErrorPresentation(t *testing.T) {
 	}
 }
 
+func TestAppendRecoveryGuidanceKeepsPrimaryErrorFirst(t *testing.T) {
+	primary := errors.New("deterministic gate failed")
+	err := appendRecoveryGuidance(primary, "AgentFlow recovery: rerun after inspection.")
+	if !errors.Is(err, primary) || err.Error() != "deterministic gate failed\n\nAgentFlow recovery: rerun after inspection." {
+		t.Fatalf("recovery error = %q", err)
+	}
+	if unchanged := appendRecoveryGuidance(primary, ""); unchanged != primary {
+		t.Fatalf("empty guidance changed error: %v", unchanged)
+	}
+}
+
 func TestStatusAllTextTTYStylingPreservesNoColorText(t *testing.T) {
 	repo := newCLIStatusRepo(t)
 
