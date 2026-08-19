@@ -36,13 +36,13 @@ func TestBuildArgsResolvesPresentationAtOutputBoundary(t *testing.T) {
 		outputTTY bool
 		want      string
 	}{
-		{name: "attached auto", intent: provider.PresentationAuto, outputTTY: true, want: "auto"},
-		{name: "attached always", intent: provider.PresentationAlways, outputTTY: true, want: "always"},
-		{name: "attached never", intent: provider.PresentationNever, outputTTY: true, want: "never"},
-		{name: "redirected auto", intent: provider.PresentationAuto, want: "never"},
-		{name: "redirected always is plain", intent: provider.PresentationAlways, want: "never"},
-		{name: "redirected never", intent: provider.PresentationNever, want: "never"},
-		{name: "omitted attached defaults to auto", outputTTY: true, want: "auto"},
+		{name: "attached automatic", intent: provider.PresentationAutomatic, outputTTY: true, want: "auto"},
+		{name: "attached rich", intent: provider.PresentationRich, outputTTY: true, want: "always"},
+		{name: "attached plain", intent: provider.PresentationPlain, outputTTY: true, want: "never"},
+		{name: "redirected automatic", intent: provider.PresentationAutomatic, want: "never"},
+		{name: "redirected rich is plain", intent: provider.PresentationRich, want: "never"},
+		{name: "redirected plain", intent: provider.PresentationPlain, want: "never"},
+		{name: "omitted attached defaults to automatic", outputTTY: true, want: "auto"},
 		{name: "omitted redirected defaults to never", want: "never"},
 	}
 	for _, tt := range tests {
@@ -123,7 +123,7 @@ done
 	}
 	for i := range got {
 		if got[i] == "--color" {
-			if i+1 >= len(got) || got[i+1] != string(provider.PresentationNever) {
+			if i+1 >= len(got) || got[i+1] != "never" {
 				t.Fatalf("redirected Codex color = %#v, want never", got[i:])
 			}
 			return
@@ -184,7 +184,7 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read redirected args: %v", err)
 	}
-	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, string(provider.PresentationNever)) {
+	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, "never") {
 		t.Fatalf("redirected Codex args = %#v, want --color never", got)
 	}
 }
@@ -234,7 +234,7 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read attached args: %v", err)
 	}
-	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, string(provider.PresentationAuto)) {
+	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, "auto") {
 		t.Fatalf("attached Codex args = %#v, want --color auto", got)
 	}
 }

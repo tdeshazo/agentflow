@@ -21,13 +21,15 @@ func (p *presentationRecordingProvider) Run(_ context.Context, request provider.
 
 func TestRunAgentPassesProviderNeutralPresentationIntent(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		color string
-		want  provider.PresentationIntent
+		name     string
+		color    string
+		detached bool
+		want     provider.PresentationIntent
 	}{
 		{name: "explicit always", color: "always", want: provider.PresentationAlways},
 		{name: "omitted defaults to auto", want: provider.PresentationAuto},
 		{name: "unknown defaults to auto", color: "unsupported", want: provider.PresentationAuto},
+		{name: "detached is always plain", color: "always", detached: true, want: provider.PresentationPlain},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			providerImpl := &presentationRecordingProvider{}
@@ -40,6 +42,7 @@ func TestRunAgentPassesProviderNeutralPresentationIntent(t *testing.T) {
 					},
 				},
 				Providers: map[string]provider.Provider{"test": providerImpl},
+				detached:  test.detached,
 			}
 
 			if err := e.runAgent(context.Background(), "worker", "high", "do work", nil); err != nil {
