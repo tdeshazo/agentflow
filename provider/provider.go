@@ -17,27 +17,36 @@ type Provider interface {
 type PresentationIntent string
 
 const (
-	// PresentationAuto lets the provider choose its native terminal policy.
-	PresentationAuto PresentationIntent = "auto"
-	// PresentationAlways requests presentation when the destination supports it.
-	PresentationAlways PresentationIntent = "always"
-	// PresentationNever keeps provider output suitable for captured or machine-facing streams.
-	PresentationNever PresentationIntent = "never"
+	// PresentationAutomatic lets the provider choose its native terminal
+	// policy.
+	PresentationAutomatic PresentationIntent = "automatic"
+	// PresentationRich requests human-facing presentation when the destination
+	// supports it. Providers translate this semantic request into their own
+	// native option vocabulary.
+	PresentationRich PresentationIntent = "rich"
+	// PresentationPlain keeps provider output suitable for captured or
+	// machine-facing streams.
+	PresentationPlain PresentationIntent = "plain"
+
+	// These aliases preserve source compatibility with the earlier intent API.
+	PresentationAuto   = PresentationAutomatic
+	PresentationAlways = PresentationRich
+	PresentationNever  = PresentationPlain
 )
 
 // ResolvePresentationIntent converts a workflow-facing presentation value into
 // a known provider intent. An omitted or unknown value uses the safe native
 // default; each provider still resolves that intent against its output sink.
 func ResolvePresentationIntent(value string) PresentationIntent {
-	switch PresentationIntent(value) {
-	case PresentationAlways:
-		return PresentationAlways
-	case PresentationNever:
-		return PresentationNever
-	case PresentationAuto:
-		return PresentationAuto
+	switch value {
+	case "always":
+		return PresentationRich
+	case "never":
+		return PresentationPlain
+	case "auto", string(PresentationAutomatic):
+		return PresentationAutomatic
 	default:
-		return PresentationAuto
+		return PresentationAutomatic
 	}
 }
 

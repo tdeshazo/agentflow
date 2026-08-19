@@ -364,6 +364,13 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 	}
 	e.presenter().ProviderIdentity(prov.Name(), actorName)
 	e.logEvent("provider_start", map[string]string{"provider": prov.Name(), "actor": actorName})
+	presentation := provider.ResolvePresentationIntent(a.Color)
+	if e.detached {
+		// Detached stdout and stderr are durable diagnostic streams. Keep this
+		// boundary explicit so a provider cannot infer terminal presentation from
+		// an adapter-specific or test-supplied TTY signal.
+		presentation = provider.PresentationPlain
+	}
 	_, err = prov.Run(ctx, provider.Request{
 		Workspace:    e.Repo.Root,
 		Model:        model,
@@ -372,7 +379,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		Sandbox:      a.Sandbox,
 		Approval:     a.Approval,
 		Ephemeral:    a.Ephemeral,
-		Presentation: provider.ResolvePresentationIntent(a.Color),
+		Presentation: presentation,
 		Metadata:     metadata,
 	})
 	if err != nil {

@@ -78,7 +78,14 @@ printf 'complete\n' > work.txt
 	agent.Color = "always"
 	w.Spec.Agents["worker"] = agent
 	e, err := New(w, map[string]provider.Provider{
-		"codex": codexprovider.Provider{Binary: fake},
+		"codex": codexprovider.Provider{
+			Binary: fake,
+			OutputTTY: func(io.Writer) bool {
+				// Exercise the engine-owned detached boundary even if an adapter
+				// reports a terminal-like destination.
+				return true
+			},
+		},
 	}, Options{Detached: true})
 	if err != nil {
 		t.Fatal(err)

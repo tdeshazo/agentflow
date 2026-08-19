@@ -80,7 +80,7 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	if req.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
-	args = append(args, "--color", colorPolicy(req, outputTTY))
+	args = append(args, "--color", colorPolicy(req.Presentation, outputTTY))
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
@@ -98,27 +98,25 @@ func (p Provider) outputIsTTY(out io.Writer) bool {
 	return clioutput.IsTTY(out)
 }
 
-func colorPolicy(req provider.Request, outputTTY bool) string {
-	intent := req.Presentation
-
+func colorPolicy(intent provider.PresentationIntent, outputTTY bool) string {
 	switch intent {
-	case provider.PresentationNever:
-		return string(provider.PresentationNever)
-	case provider.PresentationAlways:
+	case provider.PresentationPlain:
+		return "never"
+	case provider.PresentationRich:
 		if outputTTY {
-			return string(provider.PresentationAlways)
+			return "always"
 		}
-		return string(provider.PresentationNever)
-	case "", provider.PresentationAuto:
+		return "never"
+	case "", provider.PresentationAutomatic:
 		if outputTTY {
-			return string(provider.PresentationAuto)
+			return "auto"
 		}
-		return string(provider.PresentationNever)
+		return "never"
 	default:
 		// Preserve the safe boundary for unknown or future intent values.
 		if outputTTY {
-			return string(provider.PresentationAuto)
+			return "auto"
 		}
-		return string(provider.PresentationNever)
+		return "never"
 	}
 }
