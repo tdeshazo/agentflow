@@ -71,9 +71,7 @@ func NewPresenter(out io.Writer) Presenter {
 // terminal mode. It is useful when the terminal state is supplied by a caller
 // or test rather than inferred from the writer itself.
 func NewPresenterWithTTY(out io.Writer, tty bool) Presenter {
-	profile := DetectTerminal(out)
-	profile.TTY = tty
-	profile.Interactive = tty
+	profile := terminalProfileForTTY(tty)
 	if !tty || !colorAllowed() {
 		profile.Color = ColorNone
 	}
@@ -87,16 +85,13 @@ func colorAllowed() bool {
 
 // NewPresenterWithMode is the deterministic presentation seam used by tests.
 func NewPresenterWithMode(out io.Writer, tty, color bool) Presenter {
-	level := ColorNone
+	profile := terminalProfileForTTY(tty)
 	if tty && color {
-		level = ColorBasic
+		profile.Color = ColorBasic
+	} else {
+		profile.Color = ColorNone
 	}
-	return NewPresenterWithProfile(out, presentationMode(tty), TerminalProfile{
-		TTY:         tty,
-		Interactive: tty,
-		Color:       level,
-		Unicode:     tty && color && detectUnicode(tty),
-	})
+	return NewPresenterWithProfile(out, presentationMode(tty), profile)
 }
 
 // NewPresenterWithPresentation constructs a presenter for an explicit
@@ -111,16 +106,13 @@ func NewPresenterWithPresentation(out io.Writer, mode PresentationMode) Presente
 // NewPresenterWithCapabilities is the deterministic seam for callers and
 // tests that know both the presentation mode and terminal capabilities.
 func NewPresenterWithCapabilities(out io.Writer, mode PresentationMode, tty, color bool) Presenter {
-	level := ColorNone
+	profile := terminalProfileForTTY(tty)
 	if tty && color {
-		level = ColorBasic
+		profile.Color = ColorBasic
+	} else {
+		profile.Color = ColorNone
 	}
-	return NewPresenterWithProfile(out, mode, TerminalProfile{
-		TTY:         tty,
-		Interactive: tty,
-		Color:       level,
-		Unicode:     tty && color && detectUnicode(tty),
-	})
+	return NewPresenterWithProfile(out, mode, profile)
 }
 
 // NewPresenterWithProfile is the explicit capability seam for callers and
@@ -153,16 +145,11 @@ func newPresenterWithPolicy(out io.Writer, tty, color, noColor bool) Presenter {
 }
 
 func newPresenterWithPresentationPolicy(out io.Writer, mode PresentationMode, tty, color, noColor bool) Presenter {
-	level := ColorNone
-	if tty && color && !noColor {
-		level = ColorBasic
+	profile := terminalProfileForTTY(tty)
+	if !color || noColor {
+		profile.Color = ColorNone
 	}
-	return NewPresenterWithProfile(out, mode, TerminalProfile{
-		TTY:         tty,
-		Interactive: tty,
-		Color:       level,
-		Unicode:     tty && color && !noColor && detectUnicode(tty),
-	})
+	return NewPresenterWithProfile(out, mode, profile)
 }
 
 // ColorEnabled reports whether ANSI styling should be used for out.
@@ -198,14 +185,11 @@ func (p Presenter) Style(role Role, text string) string {
 		code = "\x1b[1m"
 	case RoleLabel:
 		code = "\x1b[2m"
-	case RoleSuccess:
-		code = "\x1b[32m"
-	case RoleWarning:
-		code = "\x1b[33m"
-	case RoleError:
-		code = "\x1b[31m"
-	case RoleAccent:
-		code = "\x1b[36m"
+	case RoleSuccess, RoleWarning, RoleError, RoleAccent:
+		// Keep the terminal's foreground color. Status glyphs and wording carry
+		// the meaning, while a small emphasis attribute remains useful on both
+		// light and dark themes.
+		code = "\x1b[1m"
 	case RoleMuted:
 		code = "\x1b[2m"
 	}
@@ -238,16 +222,39 @@ func (p Presenter) eventLine(unicodeGlyph, asciiGlyph, indent string, role Role,
 }
 
 // Hyperlink wraps visible text in an OSC-8 hyperlink only when the profile
-// explicitly established support. Invalid control-containing URLs are left
-// visible and unlinked.
+// explicitly established support. Unsupported schemes and control-containing
+// labels or targets are left visible and unlinked.
 func (p Presenter) Hyperlink(text, target string) string {
-	if p.Mode == PresentationRaw || !p.Profile.Hyperlinks || text == "" || target == "" {
+	if p.Mode != PresentationRich || !p.Profile.TTY || !p.Profile.Color.Enabled() ||
+		!p.Profile.Hyperlinks || text == "" || target == "" {
 		return text
 	}
-	if strings.ContainsAny(target, "\x00\x1b\r\n") {
+	if !safeHyperlinkText(text) || !safeHyperlinkTarget(target) {
 		return text
 	}
 	return "\x1b]8;;" + target + "\x1b\\" + text + "\x1b]8;;\x1b\\"
+}
+
+func safeHyperlinkText(text string) bool {
+	return !strings.ContainsAny(text, "\x00\x1b\r\n")
+}
+
+func safeHyperlinkTarget(target string) bool {
+	if strings.ContainsAny(target, "\x00\x1b\r\n") {
+		return false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "file":
+		return true
+	case "http", "https":
+		return parsed.Host != ""
+	default:
+		return false
+	}
 }
 
 // FileURL returns a local file URL suitable for an OSC-8 target.
