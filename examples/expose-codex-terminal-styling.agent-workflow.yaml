@@ -88,7 +88,6 @@ spec:
       sandbox: workspace-write
       approval: never
       ephemeral: true
-      color: auto
       may_commit: true
       output_last_message: true
     lifecycle:
@@ -129,8 +128,8 @@ spec:
         - detached provider capture, logs, pipes, redirection, JSON, and YAML stay
           plain and free of presentation escapes;
         - AgentFlow never parses or recolors Codex's textual output;
-        - the provider boundary remains provider-neutral and preserves v1alpha1
-          compatibility for existing agent color declarations;
+        - the provider boundary remains provider-neutral and terminal styling is
+          selected by the application, never by the workflow;
         - `NO_COLOR` removes AgentFlow ANSI styling without changing text or
           execution semantics;
         - terminal capability detection degrades safely when information is
@@ -246,17 +245,16 @@ spec:
         2. Raw/captured boundaries
            - Detached child output and provider output captured into durable logs
              must remain plain and free of terminal presentation escapes.
-           - Pipes and redirection must not gain ANSI merely because the workflow
-             agent declaration requests color.
+           - Pipes and redirection must not gain ANSI merely because the
+             application is attached to an interactive terminal.
            - Preserve raw stdout/stderr ordering and diagnostic behavior.
 
         3. Provider-neutral intent
            - Introduce a provider-neutral presentation intent only if it makes the
              boundary clearer; keep the public provider request independent of
              Codex-specific option names.
-           - Preserve v1alpha1 compatibility for existing `spec.agents[].color`
-             values and defaults. Existing workflows must continue to load and
-             normalize deterministically.
+           - Workflow agent declarations must not select presentation. Existing
+             workflows must continue to load and normalize deterministically.
            - Map the resolved presentation intent to Codex's supported
              `--color always|never|auto` behavior in the Codex adapter.
 
@@ -396,8 +394,7 @@ spec:
         - tests exercise TTY/non-TTY, rich/plain/raw, detached capture, provider
           color mapping, capability fallback, and structured-output boundaries
           without requiring a live PTY;
-        - provider/workflow compatibility remains intact for existing v1alpha1
-          `color` declarations;
+        - provider presentation remains application-owned and workflow-neutral;
         - no protected or unrelated file changed.
 
         Verification for this audit intentionally excludes

@@ -364,7 +364,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 	}
 	e.presenter().ProviderIdentity(prov.Name(), actorName)
 	e.logEvent("provider_start", map[string]string{"provider": prov.Name(), "actor": actorName})
-	presentation := provider.ResolvePresentationIntent(a.Color)
+	presentation := provider.PresentationAutomatic
 	if e.detached {
 		// Detached stdout and stderr are durable diagnostic streams. Keep this
 		// boundary explicit so a provider cannot infer terminal presentation from
