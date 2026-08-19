@@ -232,10 +232,12 @@ This gives the runtime several useful Git properties for free:
 `uninitialized` workflow, an initialized `ready` workflow, an `active` phase, a
 recoverable `validation-failed/recoverable` phase, terminal
 `safety-failed/terminal`, a pending `human-gated` review, and a `completed`
-workflow. Stale completion markers are not reported as completed when their
-commit is no longer an ancestor of `HEAD`. Status only needs the workspace
-location; it does not require the original task, model values, or other run
-parameters.
+workflow. An active record without a durable initialization base is reported as
+`stale` and carries no recovery instruction. Malformed active records fail
+closed rather than producing recovery advice. Stale completion markers are not
+reported as completed when their commit is no longer an ancestor of `HEAD`.
+Status only needs the workspace location; it does not require the original
+task, model values, or other run parameters.
 
 ## Recovering from a failed run
 

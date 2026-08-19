@@ -37,3 +37,45 @@ func TestStatusToTTYStylesHumanOutputWithoutChangingPlainText(t *testing.T) {
 		t.Fatalf("TTY no-color status changed text contract:\nplain=%q\nno-color=%q", plain.String(), got)
 	}
 }
+
+func TestStatusSnapshotFailsClosedForStaleAndMalformedActiveState(t *testing.T) {
+	t.Run("stale active state has no recovery advice", func(t *testing.T) {
+		repo := newSelfHostingRepo(t)
+		e := newSelfHostingEngine(t, selfHostingWorkflow(t, repo), &selfHostingFakeProvider{})
+		head, err := e.Repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := e.Store.SetJSON(e.activeRecord(), ActivePhase{
+			PhaseID:     "implement",
+			StartCommit: head,
+			FailureKind: PhaseFailureSafety,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		snapshot, err := e.statusSnapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.State != "stale" || snapshot.Recovery != "" || snapshot.NextAction != "" {
+			t.Fatalf("stale status fabricated recovery advice: %+v", snapshot)
+		}
+	})
+
+	t.Run("missing active start commit is rejected", func(t *testing.T) {
+		repo := newSelfHostingRepo(t)
+		e := newSelfHostingEngine(t, selfHostingWorkflow(t, repo), &selfHostingFakeProvider{})
+		if err := e.Store.SetJSON(e.activeRecord(), ActivePhase{PhaseID: "implement", FailureKind: PhaseFailureSafety}); err != nil {
+			t.Fatal(err)
+		}
+		e.recoveryEligible = true
+
+		if _, err := e.statusSnapshot(); err == nil || !strings.Contains(err.Error(), "has no start commit") {
+			t.Fatalf("malformed active state error = %v", err)
+		}
+		if guidance := e.FailureRecoveryGuidance(); guidance != "" {
+			t.Fatalf("malformed active state guidance = %q", guidance)
+		}
+	})
+}

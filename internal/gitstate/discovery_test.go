@@ -212,6 +212,13 @@ func TestStatusProjectionRejectsNonAuthoritativeAcceptanceShapes(t *testing.T) {
 	if _, err := item.Descriptor.ProjectStatus(repo, item.Namespace); err == nil {
 		t.Fatal("status projected an active record without a phase id")
 	}
+
+	if err := store.SetJSON("active", map[string]any{"phase_id": "implement"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := item.Descriptor.ProjectStatus(repo, item.Namespace); err == nil {
+		t.Fatal("status projected an active record without a start commit")
+	}
 }
 
 func TestProcessLivenessRequiresVerifiedStartMetadata(t *testing.T) {
