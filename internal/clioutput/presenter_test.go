@@ -93,6 +93,136 @@ func TestPresenterPresentationModes(t *testing.T) {
 	}
 }
 
+func TestPresenterSemanticPrimitivesRespectPresentationModes(t *testing.T) {
+	tests := []struct {
+		name          string
+		mode          PresentationMode
+		profile       TerminalProfile
+		wantANSI      bool
+		wantRichGlyph bool
+		wantRaw       string
+	}{
+		{
+			name: "rich injected terminal",
+			mode: PresentationRich,
+			profile: TerminalProfile{
+				TTY:         true,
+				Interactive: true,
+				Color:       ColorBasic,
+				Unicode:     true,
+			},
+			wantANSI:      true,
+			wantRichGlyph: true,
+		},
+		{
+			name:    "plain ordinary buffer",
+			mode:    PresentationPlain,
+			profile: TerminalProfile{},
+		},
+		{
+			name: "rich ordinary buffer is not interactive",
+			mode: PresentationRich,
+			profile: TerminalProfile{
+				TTY:   true,
+				Color: ColorBasic,
+			},
+		},
+		{
+			name: "raw boundary",
+			mode: PresentationRaw,
+			profile: TerminalProfile{
+				TTY:         true,
+				Interactive: true,
+				Color:       ColorTrueColor,
+				Unicode:     true,
+			},
+			wantRaw: "provider output\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			p := NewPresenterWithProfile(&output, test.mode, test.profile)
+			writeSemanticLifecycle(p, test.wantRaw)
+
+			got := output.String()
+			if test.mode == PresentationRaw {
+				if got != test.wantRaw {
+					t.Fatalf("raw output = %q, want %q", got, test.wantRaw)
+				}
+				if strings.Contains(got, "==>") || strings.Contains(got, "===") || strings.Contains(got, "\x1b[") {
+					t.Fatalf("raw boundary contains AgentFlow framing: %q", got)
+				}
+				return
+			}
+			if strings.Contains(got, "\x1b[") != test.wantANSI {
+				t.Fatalf("ANSI=%v output = %q", test.wantANSI, got)
+			}
+			if !strings.Contains(got, "Phase build: Build") ||
+				!strings.Contains(got, "Validation gate passed") ||
+				!strings.Contains(got, "Workflow demo complete.") {
+				t.Fatalf("semantic output missing lifecycle content: %q", got)
+			}
+			if test.wantRichGlyph != strings.Contains(got, "▸ ==>") {
+				t.Fatalf("rich glyph=%v output = %q", test.wantRichGlyph, got)
+			}
+		})
+	}
+}
+
+func TestPresenterNoColorKeepsRichInteractivity(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	var output bytes.Buffer
+	p := newPresenterWithPresentationPolicy(&output, PresentationRich, true, true, true)
+	p.PhaseStart("build", "Build")
+	p.Prompt("Continue? ")
+
+	got := output.String()
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("NO_COLOR output contains ANSI: %q", got)
+	}
+	if !strings.Contains(got, "==> Phase build: Build") || !strings.Contains(got, "Continue? ") {
+		t.Fatalf("NO_COLOR removed Rich interaction or framing: %q", got)
+	}
+}
+
+func TestPresenterRichModeDoesNotPromoteAnOrdinaryBuffer(t *testing.T) {
+	var output bytes.Buffer
+	p := NewPresenterWithPresentation(&output, PresentationRich)
+	p.PhaseStart("build", "Build")
+
+	if p.TTY || p.Color {
+		t.Fatalf("ordinary buffer acquired terminal capabilities: TTY=%v Color=%v", p.TTY, p.Color)
+	}
+	if got := output.String(); strings.Contains(got, "\x1b[") || strings.Contains(got, "▸ ==>") {
+		t.Fatalf("ordinary buffer received Rich decoration: %q", got)
+	}
+}
+
+func writeSemanticLifecycle(p Presenter, raw string) {
+	p.PhaseStart("build", "Build")
+	p.PhaseSkip("lint", "condition is false")
+	p.CompletedPhaseSkip("docs", "Docs", "abc123")
+	p.PhaseResume("test", "Tests")
+	p.ProviderIdentity("codex", "worker")
+	p.ValidationSuccess("gate")
+	p.ValidationFailure("audit")
+	p.ValidationReuse("cached")
+	p.RepairAttempt("gate")
+	p.CheckpointSummary("build", "abc123")
+	p.PhaseComplete("build", "abc123")
+	p.CompletionSummary("demo")
+	p.Notice(RoleWarning, "notice")
+	p.KeyValue("state", "active")
+	p.Rule("Lifecycle")
+	p.Separator()
+	if raw != "" {
+		p.Raw(raw)
+	}
+}
+
 func TestPresenterRichModeKeepsInteractivityWhenNoColorIsSet(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	var output bytes.Buffer
@@ -166,9 +296,10 @@ func TestPresenterUsesUnicodeAndASCIIStatusGlyphs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
 			p := NewPresenterWithProfile(&output, PresentationRich, TerminalProfile{
-				TTY:     true,
-				Color:   ColorBasic,
-				Unicode: test.unicode,
+				TTY:         true,
+				Interactive: true,
+				Color:       ColorBasic,
+				Unicode:     test.unicode,
 			})
 			p.PhaseStart("build", "Build")
 			if !strings.Contains(output.String(), test.wantGlyph) {

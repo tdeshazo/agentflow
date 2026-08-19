@@ -100,17 +100,11 @@ func NewPresenterWithMode(out io.Writer, tty, color bool) Presenter {
 }
 
 // NewPresenterWithPresentation constructs a presenter for an explicit
-// semantic mode. Rich implies an interactive terminal capability; use
-// NewPresenterWithCapabilities when those capabilities need to be injected.
+// semantic mode. Rich is honored only when the destination is detected as an
+// interactive terminal; use NewPresenterWithProfile when capabilities need to
+// be injected.
 func NewPresenterWithPresentation(out io.Writer, mode PresentationMode) Presenter {
 	profile := DetectTerminal(out)
-	if mode == PresentationRich {
-		profile.TTY = true
-		profile.Interactive = true
-		if profile.Color == ColorUnknown || profile.Color == ColorNone {
-			profile.Color = ColorBasic
-		}
-	}
 	return NewPresenterWithProfile(out, mode, profile)
 }
 
@@ -141,7 +135,7 @@ func NewPresenterWithProfile(out io.Writer, mode PresentationMode, profile Termi
 	return Presenter{
 		Out:     out,
 		TTY:     profile.TTY,
-		Color:   mode == PresentationRich && profile.TTY && profile.Color.Enabled(),
+		Color:   mode == PresentationRich && profile.Interactive && profile.Color.Enabled(),
 		Mode:    mode,
 		Profile: profile,
 	}
@@ -222,7 +216,10 @@ func (p Presenter) Style(role Role, text string) string {
 }
 
 func (p Presenter) richVisuals() bool {
-	return p.Mode == PresentationRich && p.Color
+	// NO_COLOR disables ANSI styling, not the interactive layout. Keeping this
+	// distinction means prompts and Rich's stable visual framing remain usable
+	// without color.
+	return p.Mode == PresentationRich && p.Profile.Interactive
 }
 
 func (p Presenter) glyph(unicode, ascii string) string {
@@ -301,7 +298,24 @@ func (p Presenter) Print(role Role, format string, args ...any) {
 // the explicit boundary for provider output, logs, JSON, YAML, and detached
 // capture.
 func (p Presenter) Raw(text string) {
-	fmt.Fprint(p.Out, text)
+	_, _ = io.WriteString(p.Out, text)
+}
+
+// RawBytes writes an already-owned byte stream without styling or framing.
+// Unlike Raw, it returns write failures so machine-facing callers can preserve
+// their normal error contract.
+func (p Presenter) RawBytes(data []byte) error {
+	for len(data) > 0 {
+		n, err := p.Out.Write(data)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }
 
 // RawLine writes one already-owned line without styling or framing.
