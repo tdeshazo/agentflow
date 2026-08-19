@@ -1,0 +1,435 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: improve-workflow-initialization
+  description: >-
+    Repository-owned workflow to make AgentFlow invocation ergonomic from a Git
+    working directory. Repository-scoped commands default to the current working
+    directory, workflow files may be selected by basename from repository-local
+    or user-global .agent-workflows directories, and an interactive terminal can
+    choose from discovered workflows when no selector is supplied. Explicit file
+    selection remains supported and non-interactive behavior stays deterministic.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    reset_workflow_state:
+      type: boolean
+      default: false
+      env: RESET_WORKFLOW_STATE
+
+  paths:
+    canonical_gate: scripts/check.sh
+    ci_policy: .github/workflows/quality.yml
+    workflow_file: examples/improve-workflow-initialization.agent-workflow.yaml
+    runtime_reference: docs/reference/runtime.md
+
+  state:
+    reset:
+      when: "{{ parameters.reset_workflow_state }}"
+      require_clean_implementation_workspace: true
+      delete_state_directory: true
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    localControlFiles:
+      ignoredForDirtyState:
+        - "{{ workflow.file | default('') }}"
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - cmd/agentflow/**
+        - internal/clioutput/**
+        - internal/workflow/**
+        - docs/reference/runtime.md
+        - README.md
+        - CHANGELOG.md
+        - go.mod
+        - go.sum
+      lineage:
+        require_base_is_ancestor_of_head: true
+        require_same_branch_as_state: true
+      integrity:
+        - id: roadmap
+          paths: [ROADMAP.md]
+          mode: exact-hash
+        - id: research-documents
+          paths: [docs/research/**]
+          mode: group-exact-hash
+        - id: canonical-quality-gate
+          paths: [scripts/check.sh]
+          mode: exact-hash
+        - id: workflow-initialization-workflow
+          paths: [examples/improve-workflow-initialization.agent-workflow.yaml]
+          mode: exact-hash
+        - id: existing-workflow-examples
+          paths:
+            - examples/develop-agentflow.agent-workflow.yaml
+            - examples/add-tty-pretty-printing.agent-workflow.yaml
+          mode: group-exact-hash
+        - id: ci-validation-policy
+          paths: [.github/workflows/quality.yml]
+          mode: exact-hash
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      color: never
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: gate
+    phases:
+      implementation:
+        actor: luna
+        reasoning: high
+        requiresChange: true
+        validation: implementation-gate
+      audit:
+        actor: terra
+        reasoning: high
+        requiresChange: false
+        validation: audit-gate
+    repair:
+      actor: terra
+      reasoning: high
+      prompt: |
+        The deterministic AgentFlow quality gate failed while implementing
+        ergonomic repository and workflow initialization.
+
+        Inspect the actual checkout and repair only the in-scope CLI/discovery
+        defect. Preserve scripts/check.sh, CI policy, the roadmap, research
+        documents, existing protected workflows, and this workflow definition.
+
+        Required invariants:
+        - repository-scoped commands default to the current working directory
+          when -C is omitted;
+        - repository-scoped execution fails clearly when the selected/default
+          directory is not a Git repository;
+        - explicit -C continues to override the working-directory default;
+        - explicit -f workflow paths remain supported and are never silently
+          replaced by discovery;
+        - a positional workflow name resolves only .yaml/.yml files from
+          <repo>/.agent-workflows and ~/.agent-workflows;
+        - repository-local workflow names take precedence over matching global
+          names;
+        - discovery ordering and ambiguity/error behavior are deterministic;
+        - interactive workflow selection occurs only when both stdin and stdout
+          are terminals;
+        - non-interactive invocations without a workflow fail instead of
+          prompting or hanging;
+        - structured output, raw logs, durable state authority, validation
+          authority, and provider behavior are unchanged;
+        - tests do not require a real PTY or depend on the developer's actual
+          home directory.
+
+        --- gate output ---
+        {{ tail(validation.failure.log, 260) }}
+
+  agents:
+    luna:
+      model: "{{ parameters.luna_model }}"
+    terra:
+      model: "{{ parameters.terra_model }}"
+
+  tools:
+    canonical-gate:
+      type: shell
+      command: "./{{ spec.paths.canonical_gate }}"
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, bash, go, gofmt, rg]
+    - id: required-files
+      type: files-exist
+      paths:
+        - cmd/agentflow/main.go
+        - cmd/agentflow/main_test.go
+        - internal/clioutput/presenter.go
+        - internal/workflow/load.go
+        - go.mod
+        - "{{ spec.paths.runtime_reference }}"
+        - "{{ spec.paths.canonical_gate }}"
+        - "{{ spec.paths.ci_policy }}"
+        - "{{ spec.paths.workflow_file }}"
+    - id: ci-delegates-to-canonical-gate
+      type: file-contains
+      path: "{{ spec.paths.ci_policy }}"
+      text: scripts/check.sh
+
+  validation:
+    gate:
+      steps:
+        - uses: canonical-gate
+    starting-state:
+      steps:
+        - uses: canonical-gate
+    implementation-gate:
+      steps:
+        - uses: canonical-gate
+      repair: once
+    audit-gate:
+      steps:
+        - uses: canonical-gate
+    final-gate:
+      steps:
+        - uses: canonical-gate
+
+  phases:
+    - id: implement-workflow-resolution
+      kind: implementation
+      label: implement-repository-default-and-workflow-name-resolution
+      prompt: |
+        Make repository and workflow selection ergonomic while keeping current
+        explicit CLI forms compatible.
+
+        Inspect `cmd/agentflow/main.go`, CLI tests, `internal/workflow/**`,
+        `internal/clioutput/**`, and runtime documentation before changing
+        anything. Reuse existing repo/TTY helpers when appropriate instead of
+        creating parallel policy.
+
+        Required behavior:
+
+        1. Repository default
+           - For repository-scoped commands, when `-C` is omitted, use the
+             current working directory as the repository root.
+           - Resolve that directory explicitly and fail with a clear error if it
+             is not a Git repository. Do not continue into workflow execution,
+             discovery, state creation, or provider invocation.
+           - Preserve explicit `-C <repo>` behavior as an override.
+           - Keep file-only operations that intentionally do not require a
+             repository independent where existing semantics require that.
+
+        2. Workflow selector syntax
+           - Keep `-f <path>` as the explicit workflow-file form.
+           - For commands that operate on one workflow, accept one positional
+             workflow selector after the command, e.g. `agentflow run
+             code-styling`.
+           - Reject ambiguous combinations such as both `-f` and a positional
+             selector, or more than one positional selector.
+           - A positional selector is a workflow name, not an arbitrary path.
+             Require a simple basename without path separators. Explicit paths
+             continue to use `-f`.
+
+        3. Discovery locations and names
+           - Discover regular files ending in `.yaml` or `.yml` from:
+               a. `<repo>/.agent-workflows/`
+               b. `~/.agent-workflows/`
+           - The selector is the filename basename without `.yaml`/`.yml`.
+             For example `.agent-workflows/code-styling.yaml` resolves from
+             `agentflow run code-styling`.
+           - Ignore directories and unrelated extensions.
+           - Missing discovery directories are normal and are not errors.
+           - Resolve the home directory through an injectable/testable seam; do
+             not make tests depend on the real user's home directory.
+
+        4. Precedence and determinism
+           - Repository-local names shadow matching names from the home
+             directory.
+           - If duplicate files inside the same scope would produce the same
+             logical selector (for example both `foo.yaml` and `foo.yml`), fail
+             deterministically rather than choosing based on filesystem order.
+           - Sort available logical names lexicographically for diagnostics and
+             later interactive selection.
+           - Unknown named selectors return an error that names the selector and
+             identifies the searched discovery locations without leaking
+             unrelated environment data.
+
+        5. Command compatibility
+           - Apply the workflow selector consistently to single-workflow
+             `run`, `status`, `reset`, `validate`, and `plan` forms where that
+             makes semantic sense.
+           - Preserve `status --all` and logs selector semantics; do not overload
+             them accidentally.
+           - Detached run must resolve the selected workflow before spawning and
+             pass an explicit resolved file path to the child so child execution
+             does not depend on a second discovery result.
+           - Preserve parameter overrides, JSON/status contracts, expanded-plan
+             YAML, exit behavior, and workflow validation authority.
+
+        Add deterministic tests for current-directory repository defaulting,
+        non-Git failure before execution, explicit -C behavior, `-f`
+        compatibility, positional selection, local/global discovery,
+        local-over-global precedence, duplicate logical names, unknown names,
+        and detached resolved-path behavior.
+
+    - id: implement-interactive-selection
+      kind: implementation
+      label: implement-tty-workflow-picker
+      prompt: |
+        Add a bounded interactive workflow picker for commands that need one
+        workflow when the user supplied neither `-f` nor a positional selector.
+
+        Build on the resolver from the previous phase and the existing
+        `internal/clioutput` terminal policy.
+
+        Required behavior:
+
+        1. When to prompt
+           - Prompt only when both stdin and stdout are terminal-backed.
+           - Do not prompt for commands whose selector semantics are already
+             explicit and different, such as `status --all` or `logs`.
+           - In non-TTY mode, a missing required workflow selector returns a
+             concise deterministic error with examples of `-f` and positional
+             name usage. It must never block reading stdin.
+
+        2. Available workflows
+           - Use the same combined discovery result as positional resolution:
+             repository-local plus user-global workflows, with local precedence.
+           - Present one entry per logical workflow name in stable
+             lexicographic order.
+           - Make the source understandable when useful (repository vs global)
+             without exposing unnecessary absolute home-directory details.
+           - If no workflows are available, return a clear error naming
+             `.agent-workflows/` as the place to add one instead of presenting an
+             empty prompt.
+
+        3. Selection interaction
+           - Render a simple numbered list through the existing presenter.
+           - Read one line and accept only an integer in range.
+           - Invalid, empty, or out-of-range selection fails clearly; do not
+             spin in an unbounded reprompt loop.
+           - Selection is presentation/input behavior only. Once selected, pass
+             the same resolved explicit file path through validation and runtime
+             initialization as an explicitly named workflow.
+
+        4. Testability and safety
+           - Factor TTY/interactivity and input so tests use buffers/readers and
+             deterministic temporary home/repo directories without a real PTY.
+           - `NO_COLOR` changes styling only, not whether interactive selection
+             is available.
+           - The picker must not mutate the repository, workflow file, user home
+             directory, or AgentFlow durable state merely by listing/selecting.
+           - Do not add fuzzy matching, recursive directory search, shell
+             completion, or full-screen terminal UI in this task.
+
+        Add focused tests for sorted rendering, source precedence, selected-path
+        resolution, no-workflow behavior, invalid selection, non-TTY missing
+        selector failure, and NO_COLOR terminal selection.
+
+    - id: audit-workflow-initialization
+      kind: audit
+      label: independently-audit-workflow-initialization-ergonomics
+      validation: audit-gate
+      prompt: |
+        Independently audit the final checkout for ergonomic repository and
+        workflow initialization.
+
+        Do not accept implementation-phase claims as evidence. Inspect code,
+        tests, and documentation, and compare the saved base through HEAD.
+
+        Verify all of the following:
+
+        - repository-scoped commands default to cwd and fail before side effects
+          when that directory is not a Git repository;
+        - explicit -C remains authoritative;
+        - explicit -f remains compatible and cannot be combined ambiguously with
+          a positional selector;
+        - `agentflow run <name>` resolves `.yaml`/`.yml` by filename stem from
+          repo-local and user-global `.agent-workflows` directories;
+        - repo-local names shadow global names;
+        - same-scope duplicate logical names fail deterministically;
+        - unknown names and missing workflow selectors produce useful stable
+          errors;
+        - interactive selection requires terminal stdin and stdout, uses sorted
+          combined discovery, and performs at most one bounded selection read;
+        - non-TTY commands never prompt or hang;
+        - detached execution receives the already-resolved explicit workflow
+          path;
+        - status --all, logs, JSON, YAML plan output, durable state, providers,
+          validation authority, and raw streams retain their existing contracts;
+        - tests use temporary/injected home and TTY seams rather than the actual
+          operator environment;
+        - documentation and usage examples describe the new positional and
+          interactive forms;
+        - no protected or unrelated resource changed.
+
+        Run focused tests and the canonical gate. Repair genuine in-scope
+        defects if necessary; otherwise leave the checkout unchanged. Do not
+        broaden this task into shell completion, recursive discovery, workflow
+        installation/synchronization, or a full-screen TUI.
+
+  flow:
+    - id: already-complete
+      if: "{{ state.workflow_complete.exists }}"
+      then:
+        - report: "Workflow initialization ergonomics already completed at {{ state.workflow_complete.value }}"
+        - stop: success
+    - id: starting-state
+      validate: starting-state
+    - phase: implement-workflow-resolution
+    - phase: implement-interactive-selection
+    - phase: audit-workflow-initialization
+    - id: post-audit
+      validate: audit-gate
+    - human: workflow-selection-review
+    - complete: workflow-initialization-ergonomics
+
+  humanGates:
+    - id: workflow-selection-review
+      requires: [audit-workflow-initialization]
+      after:
+        - validation: post-audit
+      instructions: >-
+        Exercise the final CLI in a real terminal from a Git repository and
+        outside one. Verify positional workflow-name resolution from repository
+        and home .agent-workflows directories, repository-local precedence,
+        interactive selection with no explicit workflow, explicit -f and -C
+        compatibility, and deterministic non-TTY failure without prompting.
+      checklist:
+        - id: cwd-repository-default
+          text: "Repository-scoped commands use the current Git working directory when -C is omitted and fail clearly outside Git."
+        - id: named-workflow-resolution
+          text: "A workflow file such as .agent-workflows/code-styling.yaml can be invoked by the positional name code-styling, with repository-local precedence over the home directory."
+        - id: interactive-picker
+          text: "With no workflow selector in a real terminal, AgentFlow lists available workflows in stable order and accepts one bounded numbered selection."
+        - id: noninteractive-and-explicit
+          text: "Piped/non-TTY invocation without a workflow fails without prompting, while explicit -f and -C forms continue to work."
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        value: head_commit
+
+  completion:
+    workflow-initialization-ergonomics:
+      assertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+      finalValidation: final-gate
+      afterCheckpointAssertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+      writeMarker:
+        value: head_commit
+      summary:
+        title: "Workflow initialization ergonomics complete."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+          - canonical_gate_green
