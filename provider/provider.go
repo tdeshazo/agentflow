@@ -11,19 +11,36 @@ type Provider interface {
 	Run(context.Context, Request) (Result, error)
 }
 
+// PresentationIntent describes the caller's desired human-facing presentation
+// without naming a provider's command-line flags. Providers resolve it against
+// their actual output destination.
+type PresentationIntent string
+
+const (
+	// PresentationAuto lets the provider choose its native terminal policy.
+	PresentationAuto PresentationIntent = "auto"
+	// PresentationAlways requests presentation when the destination supports it.
+	PresentationAlways PresentationIntent = "always"
+	// PresentationNever keeps provider output suitable for captured or machine-facing streams.
+	PresentationNever PresentationIntent = "never"
+)
+
 // Request specifies work to be performed by a provider.
 // It is intentionally provider-neutral. Provider-specific adapters translate
 // these capabilities into their native CLI/API options.
 type Request struct {
-	Workspace string
-	Model     string
-	Reasoning string
-	Prompt    string
-	Sandbox   string
-	Approval  string
-	Ephemeral bool
-	Color     string
-	Metadata  map[string]string
+	Workspace    string
+	Model        string
+	Reasoning    string
+	Prompt       string
+	Sandbox      string
+	Approval     string
+	Ephemeral    bool
+	Presentation PresentationIntent
+	// Color is retained as a compatibility alias for callers using the
+	// pre-presentation request field. New callers should use Presentation.
+	Color    string
+	Metadata map[string]string
 }
 
 // Result contains provider output useful for audit and debugging purposes.

@@ -39,4 +39,7 @@ func TestOutputBridgeWritesDetachedOutputToNormalLogStore(t *testing.T) {
 			t.Fatalf("durable detached output missing %q: %s", want, text)
 		}
 	}
+	if strings.Contains(text, "\x1b[") {
+		t.Fatalf("durable detached output contains terminal presentation escapes: %s", text)
+	}
 }

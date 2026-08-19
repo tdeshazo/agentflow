@@ -9,14 +9,16 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/tdeshazo/agentflow-spec/internal/clioutput"
 	"github.com/tdeshazo/agentflow-spec/provider"
 )
 
 // Provider implements provider.Provider using the Codex CLI in non-interactive mode.
 type Provider struct {
-	Binary string
-	Stdout io.Writer
-	Stderr io.Writer
+	Binary    string
+	Stdout    io.Writer
+	Stderr    io.Writer
+	OutputTTY func(io.Writer) bool
 }
 
 func (p Provider) Name() string { return "codex" }
@@ -38,20 +40,20 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 	}
 
 	last := filepath.Join(tmp, "last-message.txt")
-	args := buildArgs(req, last)
+	stdout := p.Stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	args := buildArgsForOutput(req, last, p.outputIsTTY(stdout))
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = req.Workspace
 	cmd.Stdin = bytes.NewBufferString(req.Prompt)
-	if p.Stdout != nil {
-		cmd.Stdout = p.Stdout
-	} else {
-		cmd.Stdout = os.Stdout
-	}
-	if p.Stderr != nil {
-		cmd.Stderr = p.Stderr
-	} else {
-		cmd.Stderr = os.Stderr
-	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
 		return provider.Result{}, fmt.Errorf("codex exec: %w", err)
@@ -64,6 +66,10 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 }
 
 func buildArgs(req provider.Request, lastMessage string) []string {
+	return buildArgsForOutput(req, lastMessage, true)
+}
+
+func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool) []string {
 	args := []string{"exec", "--cd", req.Workspace}
 	// Codex loads user configuration by default. Override its approval setting so
 	// the workflow's only supported policy remains authoritative for this run.
@@ -74,9 +80,7 @@ func buildArgs(req provider.Request, lastMessage string) []string {
 	if req.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
-	if req.Color != "" {
-		args = append(args, "--color", req.Color)
-	}
+	args = append(args, "--color", colorPolicy(req, outputTTY))
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
@@ -85,4 +89,39 @@ func buildArgs(req provider.Request, lastMessage string) []string {
 	}
 	args = append(args, "--output-last-message", lastMessage, "-")
 	return args
+}
+
+func (p Provider) outputIsTTY(out io.Writer) bool {
+	if p.OutputTTY != nil {
+		return p.OutputTTY(out)
+	}
+	return clioutput.IsTTY(out)
+}
+
+func colorPolicy(req provider.Request, outputTTY bool) string {
+	intent := req.Presentation
+	if intent == "" && req.Color != "" {
+		intent = provider.PresentationIntent(req.Color)
+	}
+
+	switch intent {
+	case provider.PresentationNever:
+		return string(provider.PresentationNever)
+	case provider.PresentationAlways:
+		if outputTTY {
+			return string(provider.PresentationAlways)
+		}
+		return string(provider.PresentationNever)
+	case "", provider.PresentationAuto:
+		if outputTTY {
+			return string(provider.PresentationAuto)
+		}
+		return string(provider.PresentationNever)
+	default:
+		// Preserve the safe boundary for unknown or future intent values.
+		if outputTTY {
+			return string(provider.PresentationAuto)
+		}
+		return string(provider.PresentationNever)
+	}
 }
