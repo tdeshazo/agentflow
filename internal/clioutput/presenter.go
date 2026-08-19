@@ -40,6 +40,13 @@ type Presenter struct {
 // styling is disabled when NO_COLOR is present in the environment.
 func NewPresenter(out io.Writer) Presenter {
 	tty := IsTTY(out)
+	return NewPresenterWithTTY(out, tty)
+}
+
+// NewPresenterWithTTY applies the real NO_COLOR policy with an explicit
+// terminal mode. It is useful when the terminal state is supplied by a caller
+// or test rather than inferred from the writer itself.
+func NewPresenterWithTTY(out io.Writer, tty bool) Presenter {
 	return newPresenterWithPolicy(out, tty, tty, !colorAllowed())
 }
 

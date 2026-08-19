@@ -11,10 +11,12 @@ import (
 const workflowDirectory = ".agent-workflows"
 
 // DiscoveryFile is a workflow definition found in one of the discovery
-// scopes. Name is the filename without its .yaml or .yml suffix.
+// scopes. Name is the filename without its .yaml or .yml suffix. Source is
+// either repository or global.
 type DiscoveryFile struct {
-	Name string
-	Path string
+	Name   string
+	Path   string
+	Source string
 }
 
 // Discovery contains the deterministic workflow files available to a
@@ -48,11 +50,11 @@ func DiscoverFiles(repoRoot string, homeDir func() (string, error)) (Discovery, 
 
 	localDir := filepath.Join(repoRoot, workflowDirectory)
 	globalDir := filepath.Join(homeRoot, workflowDirectory)
-	local, err := discoverScope(localDir)
+	local, err := discoverScope(localDir, "repository")
 	if err != nil {
 		return Discovery{}, err
 	}
-	global, err := discoverScope(globalDir)
+	global, err := discoverScope(globalDir, "global")
 	if err != nil {
 		return Discovery{}, err
 	}
@@ -115,7 +117,7 @@ func ValidateSelector(selector string) error {
 	return nil
 }
 
-func discoverScope(directory string) (map[string]DiscoveryFile, error) {
+func discoverScope(directory, source string) (map[string]DiscoveryFile, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -141,7 +143,7 @@ func discoverScope(directory string) (map[string]DiscoveryFile, error) {
 		if existing, duplicate := files[name]; duplicate {
 			return nil, fmt.Errorf("duplicate workflow selector %q in %s: %s and %s", name, directory, existing.Path, path)
 		}
-		files[name] = DiscoveryFile{Name: name, Path: path}
+		files[name] = DiscoveryFile{Name: name, Path: path, Source: source}
 	}
 	return files, nil
 }

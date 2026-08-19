@@ -36,6 +36,15 @@ func TestDiscoverFilesUsesDeterministicScopesAndNames(t *testing.T) {
 	if got, want := discovery.Files[2].Path, filepath.Join(localDir, "shadowed.yml"); got != want {
 		t.Fatalf("shadowed workflow path = %q, want %q", got, want)
 	}
+	if got, want := discovery.Files[0].Source, "global"; got != want {
+		t.Fatalf("global workflow source = %q, want %q", got, want)
+	}
+	if got, want := discovery.Files[1].Source, "repository"; got != want {
+		t.Fatalf("local workflow source = %q, want %q", got, want)
+	}
+	if got, want := discovery.Files[2].Source, "repository"; got != want {
+		t.Fatalf("shadowed workflow source = %q, want %q", got, want)
+	}
 }
 
 func TestDiscoverFilesMissingDirectoriesAreNormal(t *testing.T) {
