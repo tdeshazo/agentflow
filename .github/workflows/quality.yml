@@ -17,5 +17,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Run canonical AgentFlow gate
         run: ./scripts/check.sh
