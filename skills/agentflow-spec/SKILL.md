@@ -41,6 +41,12 @@ Choose the requested mode:
 9. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
 10. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
+For protected content, declare `spec.workspace.mutationPolicy.integrity` as a
+list of named rules. Each rule has `id`, `mode`, and non-empty `paths`; the
+allowlist and integrity rules are separate boundaries. Use
+`spec.workspace.mutationPolicy.integrity` as the assertion policy when the
+whole protected rule set must be checked.
+
 ## Store and select workflows
 
 To make a workflow selectable by name, save its `.yaml` or `.yml` file in one

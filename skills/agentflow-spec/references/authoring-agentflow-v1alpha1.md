@@ -117,6 +117,24 @@ Integrity modes:
 `normalized-hash` requires `normalize.command`. The other integrity modes must
 not declare a normalize command.
 
+Integrity is a list of named rules under `mutationPolicy`, not a single map.
+Each rule requires an `id`, a `mode`, and one or more `paths` (which may be
+workspace-relative patterns):
+
+```yaml
+mutationPolicy:
+  allowed: [src/**]
+  integrity:
+    - id: governance
+      mode: exact-hash
+      paths: [GOVERNANCE.md, policy/**]
+```
+
+Use an integrity rule for protected content even when those paths are outside
+the mutation allowlist; the allowlist and integrity rules enforce different
+boundaries. Refer to the named rule list from assertions with
+`spec.workspace.mutationPolicy.integrity`.
+
 ### Agents
 
 Supported runner:

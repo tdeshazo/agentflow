@@ -122,6 +122,24 @@ Can require clean state:
 - `group-exact-hash`: a tracked file group must retain the same combined content identity.
 - `normalized-hash`: a normalization transform removes explicitly permitted bookkeeping differences before hashing; all other structure remains protected.
 
+Integrity rules are declared as a list under `mutationPolicy.integrity`. Each
+rule has a stable `id`, a `mode`, and non-empty workspace-relative `paths` (or
+patterns). For example:
+
+```yaml
+mutationPolicy:
+  allowed: [src/**]
+  integrity:
+    - id: governance
+      mode: exact-hash
+      paths: [GOVERNANCE.md, policy/**]
+```
+
+The mutation allowlist controls where implementation changes may occur;
+integrity rules independently protect the declared content. An assertion may
+refer to the complete named rule list with
+`spec.workspace.mutationPolicy.integrity`.
+
 Integrity rules and path allowlists solve different problems: an allowed path may still have restricted semantics through normalized integrity checks.
 
 ### Checkpointing
