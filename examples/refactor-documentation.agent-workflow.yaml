@@ -178,7 +178,6 @@ spec:
       sandbox: workspace-write
       approval: never
       ephemeral: true
-      color: never
       may_commit: false
       output_last_message: true
 
@@ -188,7 +187,6 @@ spec:
       sandbox: workspace-write
       approval: never
       ephemeral: true
-      color: never
       may_commit: false
       output_last_message: true
 
