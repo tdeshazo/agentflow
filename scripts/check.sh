@@ -9,7 +9,10 @@ cd "$ROOT"
 
 GATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/agentflow-check.XXXXXX")"
 trap 'rm -rf "$GATE_TMP"' EXIT
-export GOCACHE="$GATE_TMP/go-cache"
+
+# Preserve Go's normal persistent build cache so repeated local and CI runs can
+# reuse compilation artifacts. Test-result caching is disabled explicitly below
+# so every quality-gate invocation still executes the tests.
 
 step() {
   printf '\n==> %s\n' "$1"
@@ -30,25 +33,23 @@ git diff --check
 git diff --cached --check
 
 step "Go tests"
-go test ./...
+go test -count=1 ./...
 
 step "Go vet"
 go vet ./...
 
 step "Race-enabled Go tests"
-go test -race ./...
+go test -race -count=1 ./...
 
-step "Deterministic self-hosting runtime"
-go test ./internal/engine -run '^TestSelfHosting' -count=1
-
-step "Self-hosting definition"
-go run . validate -f examples/develop-agentflow.agent-workflow.yaml
+step "Build AgentFlow CLI"
+AGENTFLOW="$GATE_TMP/agentflow"
+go build -o "$AGENTFLOW" .
 
 step "Shipped AgentWorkflow definitions"
 mapfile -t WORKFLOW_FILES < <(rg --files spec examples -g '*.yaml' -g '*.yml' | sort)
 for workflow in "${WORKFLOW_FILES[@]}"; do
   printf '\n-- validating %s --\n' "$workflow"
-  go run . validate -f "$workflow"
+  "$AGENTFLOW" validate -f "$workflow"
 done
 
 printf '\nAgentFlow quality gate passed.\n'
