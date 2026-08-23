@@ -217,9 +217,7 @@ type Agent struct {
 	Sandbox           string `yaml:"sandbox"`
 	Approval          string `yaml:"approval"`
 	Ephemeral         bool   `yaml:"ephemeral"`
-	// Color remains an internal source-compatibility slot only. It is not part of
-	// the workflow schema, and runtime/provider presentation must not depend on it.
-	Color             string `yaml:"-"`
+	Color             string `yaml:"-"` // Internal source compatibility only; not workflow schema.
 	MayCommit         bool   `yaml:"may_commit"`
 	OutputLastMessage bool   `yaml:"output_last_message"`
 	present           map[string]bool
