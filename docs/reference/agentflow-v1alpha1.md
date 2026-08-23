@@ -135,7 +135,10 @@ May permit agent-created commits and/or automatically checkpoint successful unco
 
 ## `spec.agents`
 
-Named AI execution capabilities. Typical fields select runner, model, sandbox, approval policy, ephemeral context, and commit permission.
+Named AI execution capabilities. Typical fields select runner, model, sandbox, approval policy, ephemeral context, commit permission, and final-message capture.
+
+Terminal/provider presentation is runtime-owned rather than workflow policy. In
+particular, `color` is not an `AgentWorkflow` agent field.
 
 Agent capability does not determine phase acceptance. Validation does.
 
@@ -145,9 +148,9 @@ Agent capability does not determine phase acceptance. Validation does.
 execution into ordinary v1alpha1 fields and is validated both before and after
 that compilation. It may contain:
 
-- `agent`: inherited runner, model, sandbox, approval, ephemeral, color,
-  commit, and output capability values. A locally written agent field,
-  including `false` for a boolean, overrides the inherited value.
+- `agent`: inherited runner, model, sandbox, approval, ephemeral, commit, and
+  output capability values. A locally written agent field, including `false`
+  for a boolean, overrides the inherited value.
 - `lifecycle`: the safe-resume lifecycle used when `spec.lifecycle` is absent.
 - `phases.<kind>`: actor, reasoning, `requiresChange`, and validation defaults
   for an explicitly named phase kind. A local phase field wins.
