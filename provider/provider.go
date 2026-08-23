@@ -11,7 +11,7 @@ type Provider interface {
 	Run(context.Context, Request) (Result, error)
 }
 
-// PresentationIntent describes the caller's desired human-facing presentation
+// PresentationIntent describes the runtime's desired human-facing presentation
 // without naming a provider's command-line flags. Providers resolve it against
 // their actual output destination.
 type PresentationIntent string
@@ -34,20 +34,13 @@ const (
 	PresentationNever  = PresentationPlain
 )
 
-// ResolvePresentationIntent converts a workflow-facing presentation value into
-// a known provider intent. An omitted or unknown value uses the safe native
-// default; each provider still resolves that intent against its output sink.
-func ResolvePresentationIntent(value string) PresentationIntent {
-	switch value {
-	case "always":
-		return PresentationRich
-	case "never":
-		return PresentationPlain
-	case "auto", string(PresentationAutomatic):
-		return PresentationAutomatic
-	default:
-		return PresentationAutomatic
-	}
+// ResolvePresentationIntent is retained for source compatibility at the
+// engine/provider boundary. Presentation policy is runtime-owned: workflow
+// agent data cannot override it. Foreground execution therefore uses the
+// provider's automatic/native policy; the engine selects PresentationPlain at
+// explicit captured boundaries such as detached execution.
+func ResolvePresentationIntent(_ string) PresentationIntent {
+	return PresentationAutomatic
 }
 
 // Request specifies work to be performed by a provider.
