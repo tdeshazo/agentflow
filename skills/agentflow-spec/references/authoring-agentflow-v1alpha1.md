@@ -135,10 +135,13 @@ model: "<model-name-or-expression>"
 sandbox: workspace-write
 approval: never
 ephemeral: true
-color: never
 may_commit: true
 output_last_message: true
 ```
+
+Terminal/provider presentation is runtime-owned. `color` is not an
+`AgentWorkflow` field; do not add it under `spec.agents` or
+`spec.defaults.agent`.
 
 An agent's ability to write or commit never grants acceptance authority.
 
@@ -581,7 +584,6 @@ defaults:
     sandbox: workspace-write
     approval: never
     ephemeral: true
-    color: never
     may_commit: true
   lifecycle:
     policy: safe-resume
@@ -917,6 +919,7 @@ Avoid these:
 - making a repair gate the final hard acceptance gate when repair is not desired;
 - writing a completion marker before final validation/checkpoint/post-checks;
 - using a human gate for something a deterministic command can prove;
+- authoring `color` or other terminal/provider presentation policy in a workflow;
 - using undocumented template functions or general shell syntax in expressions;
 - copying fields from old examples without checking the current concise
   lifecycle pattern;
