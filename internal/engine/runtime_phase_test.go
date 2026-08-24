@@ -19,14 +19,14 @@ func (p *presentationRecordingProvider) Run(_ context.Context, request provider.
 	return provider.Result{}, nil
 }
 
-func TestRunAgentPassesProviderNeutralPresentationIntent(t *testing.T) {
+func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		color    string
 		detached bool
 		want     provider.PresentationIntent
 	}{
-		{name: "explicit always", color: "always", want: provider.PresentationAlways},
+		{name: "workflow always is ignored", color: "always", want: provider.PresentationAuto},
 		{name: "omitted defaults to auto", want: provider.PresentationAuto},
 		{name: "unknown defaults to auto", color: "unsupported", want: provider.PresentationAuto},
 		{name: "detached is always plain", color: "always", detached: true, want: provider.PresentationPlain},
