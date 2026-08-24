@@ -4,9 +4,10 @@ metadata:
   name: art-portfolio
   description: >-
     Build a containerized art portfolio with a FastAPI backend and React
-    frontend. The workflow creates a self-contained project in a clean Git
-    repository and verifies that the required application and Docker assets
-    exist before completion.
+    frontend through separate implementation stages, integration, and an
+    independent review. The workflow creates a self-contained project in a
+    clean Git repository and verifies the required application and Docker
+    assets before completion.
 
 spec:
   parameters:
@@ -44,12 +45,15 @@ spec:
       output_last_message: true
     lifecycle:
       policy: safe-resume
-      validation: portfolio-files
     phases:
       implementation:
         actor: builder
         reasoning: high
         requiresChange: true
+      audit:
+        actor: reviewer
+        reasoning: high
+        requiresChange: false
     repair:
       actor: builder
       reasoning: high
@@ -61,8 +65,20 @@ spec:
   agents:
     builder:
       model: "{{ parameters.model }}"
+    reviewer:
+      model: "{{ parameters.model }}"
 
   tools:
+    backend-files:
+      type: shell
+      command: >-
+        test -f backend/app/main.py &&
+        test -f backend/requirements.txt
+    frontend-files:
+      type: shell
+      command: >-
+        test -f frontend/package.json &&
+        test -f frontend/src/main.jsx
     portfolio-files:
       type: shell
       command: >-
@@ -83,46 +99,92 @@ spec:
       commands: [git, codex, sh]
 
   validation:
+    backend-files:
+      repair: once
+      steps:
+        - uses: backend-files
+    frontend-files:
+      repair: once
+      steps:
+        - uses: frontend-files
     portfolio-files:
       repair: once
       steps:
         - uses: portfolio-files
+    final-portfolio-review:
+      repair: none
+      steps:
+        - uses: portfolio-files
 
   phases:
-    - id: build-portfolio
+    - id: develop-backend
       kind: implementation
-      label: build-containerized-art-portfolio
+      label: develop-fastapi-backend
+      validation: backend-files
       prompt: |
-        Create a polished, runnable art portfolio site in this empty project.
-
-        Build a FastAPI backend in `backend/` with:
+        Build the FastAPI backend for the art portfolio in `backend/`.
         - `backend/app/main.py` exposing a health endpoint and a `/api/artworks`
           JSON endpoint with sample portfolio data;
         - `backend/requirements.txt` with the runtime dependencies;
         - CORS configured for the React development server.
 
-        Build a React frontend in `frontend/` using Vite with an elegant,
-        responsive portfolio layout: a hero section, artist statement, artwork
-        grid fed from the backend API, and contact section. Include sensible
-        loading and error states, accessible markup, and styling that does not
-        rely on external image downloads.
+        Keep the API small, documented in code, and ready for a React client.
+        Do not create frontend or container files in this stage. Work only
+        within the declared mutation scope.
 
-        Add a root multi-stage `Dockerfile` that builds the React frontend and
-        serves it with the FastAPI application, plus `docker-compose.yml` and
-        `.dockerignore`. The container must expose port 8000 and serve the SPA
-        while keeping `/api/*` routed to FastAPI. Add a concise README with
-        local-development and Docker run instructions.
+    - id: develop-frontend
+      kind: implementation
+      label: develop-react-frontend
+      validation: frontend-files
+      prompt: |
+        Build the React frontend for the art portfolio in `frontend/` using
+        Vite. Create an elegant, responsive layout with a hero section, artist
+        statement, artwork grid fed from `/api/artworks`, and a contact section.
+        Include sensible loading and error states, accessible markup, and
+        styling that does not rely on external image downloads.
 
-        Prefer small, understandable code. Do not introduce unrelated tools or
-        modify files outside the workflow's allowed paths.
+        Keep the frontend compatible with the existing FastAPI API. Do not
+        alter backend behavior or create container files in this stage. Work
+        only within the declared mutation scope.
+
+    - id: integrate-containerized-application
+      kind: implementation
+      label: integrate-and-containerize-portfolio
+      validation: portfolio-files
+      prompt: |
+        Integrate the existing backend and frontend into a runnable portfolio
+        application. Add a root multi-stage `Dockerfile` that builds the React
+        frontend and serves it with FastAPI, plus `docker-compose.yml`,
+        `.dockerignore`, and a concise README with local-development and Docker
+        run instructions.
+
+        The container must expose port 8000, serve the SPA, and keep `/api/*`
+        routed to FastAPI. Make only the integration fixes needed for these
+        assets; do not introduce unrelated tools or modify files outside the
+        declared mutation scope.
+
+    - id: review-art-portfolio
+      kind: audit
+      label: review-art-portfolio-deliverables
+      validation: final-portfolio-review
+      prompt: |
+        Independently review the completed FastAPI backend, React frontend, and
+        container integration. Verify that the frontend's API usage matches the
+        backend, the Docker setup serves both the SPA and `/api/*`, and the
+        README gives usable local and container instructions. Repair a genuine
+        in-scope defect if needed; otherwise leave the checkout unchanged.
+        Do not treat an earlier agent's completion claim as evidence.
 
   completion:
     portfolio:
-      finalValidation: portfolio-files
+      finalValidation: final-portfolio-review
       summary:
         title: "Art portfolio created."
         include: [head_commit, changed_files_since_base, workspace_clean]
 
   flow:
-    - phase: build-portfolio
+    - phase: develop-backend
+    - phase: develop-frontend
+    - phase: integrate-containerized-application
+    - phase: review-art-portfolio
     - complete: portfolio
