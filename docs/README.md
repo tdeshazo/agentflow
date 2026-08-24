@@ -5,7 +5,8 @@ the section that matches the question you are trying to answer:
 
 - [Architecture](architecture/): durable design contracts and authority
   boundaries.
-- [Guides](guides/): contributor workflows and development checks.
+- [Guides](guides/): contributor workflows, concise workflow authoring, and
+  development checks.
 - [Planning](planning/): how to navigate and execute the canonical roadmap.
 - [Reference](reference/): normative AgentWorkflow field semantics and the Go
   runtime reference.
@@ -20,7 +21,8 @@ the section that matches the question you are trying to answer:
 - To understand who may act and who may accept work, read
   [Execution authority](architecture/execution-authority.md).
 - To author or audit a workflow, read the
-  [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md).
+  [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and the
+  [concise authoring guide](guides/concise-authoring.md).
 - To understand the current interpreter, read the
   [Go runtime reference](reference/runtime.md).
 - To contribute a change, follow the
