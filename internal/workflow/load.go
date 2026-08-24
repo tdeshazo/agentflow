@@ -62,8 +62,11 @@ type Result struct {
 }
 
 // Decode uses KnownFields so an executable spelling error cannot be silently
-// discarded by the Go runtime. Decode does no repository inspection or other
-// workspace mutation.
+// discarded by the Go runtime. Concise authoring syntax is inspected on the
+// parsed YAML tree first. Workflows that do not use shorthand are decoded from
+// their original bytes exactly as before; only shorthand documents are
+// rewritten to the canonical v1alpha1 shape before strict decoding.
+// Decode does no repository inspection or other workspace mutation.
 func Decode(path string) (*Document, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -73,8 +76,16 @@ func Decode(path string) (*Document, error) {
 	if err := yaml.Unmarshal(b, &root); err != nil {
 		return nil, fmt.Errorf("parse workflow YAML: %w", err)
 	}
+
+	decodeBytes := b
+	if rewritten, changed, err := rewriteConciseAuthoring(&root); err != nil {
+		return nil, fmt.Errorf("decode workflow: %w", err)
+	} else if changed {
+		decodeBytes = rewritten
+	}
+
 	var w Workflow
-	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec := yaml.NewDecoder(bytes.NewReader(decodeBytes))
 	dec.KnownFields(true)
 	if err := dec.Decode(&w); err != nil {
 		return nil, fmt.Errorf("decode workflow: %w", err)
