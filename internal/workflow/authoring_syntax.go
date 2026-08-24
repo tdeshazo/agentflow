@@ -267,14 +267,15 @@ func containsInlineValidationRun(validations *yaml.Node) bool {
 
 // The inline actor namespace is implementation-owned. Authors may neither
 // declare agents with the prefix nor refer to such names from authored actor
-// references, including repair/default references. That prevents a generated
-// one-off capability from becoming an externally addressable workflow API.
+// references, including aliases and repair/default references. That prevents a
+// generated one-off capability from becoming an externally addressable
+// workflow API.
 func rejectReservedInlineActorNamespace(spec *yaml.Node) error {
 	if agents, ok := mappingValue(spec, "agents"); ok && agents.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(agents.Content); i += 2 {
 			name := agents.Content[i]
-			if strings.HasPrefix(name.Value, inlineActorPrefix) {
-				return fmt.Errorf("line %d: agent name %q uses reserved prefix %q", name.Line, name.Value, inlineActorPrefix)
+			if value, ok := scalarValueFollowingAliases(name); ok && strings.HasPrefix(value, inlineActorPrefix) {
+				return fmt.Errorf("line %d: agent name %q uses reserved prefix %q", name.Line, value, inlineActorPrefix)
 			}
 		}
 	}
@@ -340,10 +341,30 @@ func rejectReservedInlineActorNamespace(spec *yaml.Node) error {
 }
 
 func rejectReservedActorScalar(actor *yaml.Node, path string) error {
-	if actor.Kind == yaml.ScalarNode && strings.HasPrefix(actor.Value, inlineActorPrefix) {
-		return fmt.Errorf("line %d: %s references reserved inline actor name %q", actor.Line, path, actor.Value)
+	if value, ok := scalarValueFollowingAliases(actor); ok && strings.HasPrefix(value, inlineActorPrefix) {
+		return fmt.Errorf("line %d: %s references reserved inline actor name %q", actor.Line, path, value)
 	}
 	return nil
+}
+
+// scalarValueFollowingAliases returns the scalar value represented by n,
+// following yaml alias chains without changing the parsed document. Non-scalar
+// targets return ok=false and are left to the canonical decoder to validate.
+// Cyclic or broken alias chains also return ok=false; yaml.v3 will report those
+// structural problems during normal decoding.
+func scalarValueFollowingAliases(n *yaml.Node) (value string, ok bool) {
+	seen := map[*yaml.Node]bool{}
+	for n != nil && n.Kind == yaml.AliasNode {
+		if seen[n] || n.Alias == nil {
+			return "", false
+		}
+		seen[n] = true
+		n = n.Alias
+	}
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	return n.Value, true
 }
 
 func rejectMergeKey(mapping *yaml.Node, path string) error {
