@@ -453,32 +453,14 @@ func quoteFoldedScalars(n *yaml.Node) {
 	}
 }
 
-// cloneYAMLNode preserves both the content tree and yaml alias graph. Alias
-// pointers must target nodes in the clone; leaving them pointed at the source
-// tree can make yaml.Marshal emit an alias without the corresponding anchor.
 func cloneYAMLNode(n *yaml.Node) *yaml.Node {
-	seen := map[*yaml.Node]*yaml.Node{}
-	var clone func(*yaml.Node) *yaml.Node
-	clone = func(src *yaml.Node) *yaml.Node {
-		if src == nil {
-			return nil
-		}
-		if existing, ok := seen[src]; ok {
-			return existing
-		}
-		out := *src
-		out.Content = nil
-		out.Alias = nil
-		dst := &out
-		seen[src] = dst
-		dst.Content = make([]*yaml.Node, len(src.Content))
-		for i, child := range src.Content {
-			dst.Content[i] = clone(child)
-		}
-		if src.Alias != nil {
-			dst.Alias = clone(src.Alias)
-		}
-		return dst
+	if n == nil {
+		return nil
 	}
-	return clone(n)
+	out := *n
+	out.Content = make([]*yaml.Node, len(n.Content))
+	for i, child := range n.Content {
+		out.Content[i] = cloneYAMLNode(child)
+	}
+	return &out
 }
