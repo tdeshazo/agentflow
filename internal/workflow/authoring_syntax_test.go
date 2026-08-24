@@ -118,21 +118,48 @@ spec:
 	}
 }
 
-func TestInlinePhaseActorRejectsGeneratedNameCollision(t *testing.T) {
+func TestInlineActorPrefixReservedForNamedAgents(t *testing.T) {
 	_, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
-metadata: {name: inline-actor-collision}
+metadata: {name: inline-actor-reserved}
 spec:
   agents:
     __inline_actor__build: {runner: codex}
-  phases:
-    - id: build
-      kind: implementation
-      actor: {model: build-model}
-      prompt: build
 `))
-	if err == nil || !strings.Contains(err.Error(), "conflicts with generated agent name") {
+	if err == nil || !strings.Contains(err.Error(), "uses reserved prefix") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInlineActorPrefixCannotBeReferencedByPhase(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: inline-actor-reference}
+spec:
+  phases:
+    - id: review
+      kind: audit
+      actor: __inline_actor__build
+      prompt: review
+`))
+	if err == nil || !strings.Contains(err.Error(), "references reserved inline actor name") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInlineActorPrefixCannotBeReferencedByRepair(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: inline-actor-repair-reference}
+spec:
+  defaults:
+    repair:
+      actor: __inline_actor__build
+`))
+	if err == nil || !strings.Contains(err.Error(), "references reserved inline actor name") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -240,6 +267,27 @@ spec:
 	}
 }
 
+func TestValidationRunRejectsMergeKey(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: merged-validation}
+spec:
+  tools:
+    existing-check: {type: shell, command: "true"}
+  validation:
+    shared: &shared
+      steps:
+        - uses: existing-check
+    gate:
+      <<: *shared
+      run: go test ./...
+`))
+	if err == nil || !strings.Contains(err.Error(), "YAML merge keys are not supported in validation.gate") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidationRunRejectsGeneratedToolCollision(t *testing.T) {
 	_, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
@@ -257,7 +305,116 @@ spec:
 	}
 }
 
-func TestConciseSpecUnmarshalKeepsKnownFieldsStrict(t *testing.T) {
+func TestFoldedScalarsPreservedWithAndWithoutConciseSyntax(t *testing.T) {
+	canonical, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: folded-canonical}
+spec:
+  workspace:
+    mutationPolicy:
+      allowed: [src/**]
+  defaults:
+    repair:
+      actor: repairer
+      reasoning: high
+      prompt: >-
+        Repair the first issue
+        and keep the second constraint.
+  agents:
+    repairer: {runner: codex}
+    worker: {runner: codex}
+  tools:
+    gate:
+      type: shell
+      command: >-
+        printf one &&
+        printf two
+  validation:
+    gate:
+      repair: once
+      steps: [{uses: gate}]
+  phases:
+    - id: build
+      kind: implementation
+      actor: worker
+      validation: gate
+      prompt: >-
+        Review the first line
+        and the second line.
+  flow: [{phase: build}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	concise, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: folded-concise}
+spec:
+  workspace:
+    allowWrites: [src/**]
+  defaults:
+    agent:
+      runner: codex
+    repair:
+      actor: repairer
+      reasoning: high
+      prompt: >-
+        Repair the first issue
+        and keep the second constraint.
+  agents:
+    repairer: {model: repair-model}
+  validation:
+    gate:
+      run: >-
+        printf one &&
+        printf two
+      repair: once
+  phases:
+    - id: build
+      kind: implementation
+      actor:
+        model: build-model
+      validation: gate
+      prompt: >-
+        Review the first line
+        and the second line.
+  flow: [{phase: build}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const wantPrompt = "Review the first line and the second line."
+	const wantRepair = "Repair the first issue and keep the second constraint."
+	const wantCommand = "printf one && printf two"
+	if got := canonical.Workflow.Spec.Phases[0].Prompt; got != wantPrompt {
+		t.Fatalf("canonical prompt = %q, want %q", got, wantPrompt)
+	}
+	if got := concise.Workflow.Spec.Phases[0].Prompt; got != wantPrompt {
+		t.Fatalf("concise prompt = %q, want %q", got, wantPrompt)
+	}
+	if got := canonical.Workflow.Spec.Defaults.Repair.Prompt; got != wantRepair {
+		t.Fatalf("canonical repair prompt = %q, want %q", got, wantRepair)
+	}
+	if got := concise.Workflow.Spec.Defaults.Repair.Prompt; got != wantRepair {
+		t.Fatalf("concise repair prompt = %q, want %q", got, wantRepair)
+	}
+	if got := canonical.Workflow.Spec.Tools["gate"].Command; got != wantCommand {
+		t.Fatalf("canonical command = %q, want %q", got, wantCommand)
+	}
+	steps := concise.Workflow.Spec.Validation["gate"].Steps
+	if len(steps) != 1 {
+		t.Fatalf("concise validation steps = %#v", steps)
+	}
+	if got := concise.Workflow.Spec.Tools[steps[0].Uses].Command; got != wantCommand {
+		t.Fatalf("concise command = %q, want %q", got, wantCommand)
+	}
+}
+
+func TestConcisePreprocessingKeepsKnownFieldsStrict(t *testing.T) {
 	_, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
