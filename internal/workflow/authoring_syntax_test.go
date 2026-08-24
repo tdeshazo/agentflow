@@ -49,6 +49,113 @@ spec:
 	}
 }
 
+func TestInlinePhaseActorExpandsToNamedAgentAndUsesDefaults(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: inline-actor}
+spec:
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+  agents:
+    reviewer:
+      model: review-model
+  validation:
+    gate:
+      run: "true"
+  phases:
+    - id: build
+      kind: implementation
+      actor:
+        model: build-model
+        may_commit: false
+      validation: gate
+      prompt: build
+    - id: review
+      kind: audit
+      actor: reviewer
+      validation: gate
+      prompt: review
+  flow:
+    - phase: build
+    - phase: review
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	actorRef := d.Workflow.Spec.Phases[0].Actor
+	if actorRef != "__inline_actor__build" {
+		t.Fatalf("inline actor ref = %q", actorRef)
+	}
+	if d.Workflow.Spec.Phases[1].Actor != "reviewer" {
+		t.Fatalf("named actor ref = %q", d.Workflow.Spec.Phases[1].Actor)
+	}
+	inline, ok := d.Workflow.Spec.Agents[actorRef]
+	if !ok || inline.Model != "build-model" || !inline.present["may_commit"] {
+		t.Fatalf("inline agent = %#v", inline)
+	}
+	if _, ok := d.Workflow.Spec.Agents["reviewer"]; !ok {
+		t.Fatal("named reviewer agent was removed")
+	}
+
+	result := Validate(d)
+	if result.Status != Executable {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	normalizedInline := result.Normalized.Workflow.Spec.Agents[actorRef]
+	if normalizedInline.Runner != "codex" || normalizedInline.Model != "build-model" || normalizedInline.Sandbox != "workspace-write" || normalizedInline.Approval != "never" || !normalizedInline.Ephemeral || normalizedInline.MayCommit {
+		t.Fatalf("normalized inline agent = %#v", normalizedInline)
+	}
+	normalizedReviewer := result.Normalized.Workflow.Spec.Agents["reviewer"]
+	if normalizedReviewer.Runner != "codex" || normalizedReviewer.Model != "review-model" || !normalizedReviewer.MayCommit {
+		t.Fatalf("normalized named agent = %#v", normalizedReviewer)
+	}
+}
+
+func TestInlinePhaseActorRejectsGeneratedNameCollision(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: inline-actor-collision}
+spec:
+  agents:
+    __inline_actor__build: {runner: codex}
+  phases:
+    - id: build
+      kind: implementation
+      actor: {model: build-model}
+      prompt: build
+`))
+	if err == nil || !strings.Contains(err.Error(), "conflicts with generated agent name") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInlinePhaseActorKeepsAgentFieldsStrict(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: inline-actor-strict}
+spec:
+  phases:
+    - id: build
+      kind: implementation
+      actor:
+        model: build-model
+        teleport: true
+      prompt: build
+`))
+	if err == nil || !strings.Contains(err.Error(), "field teleport not found") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidationRunExpandsToShellTool(t *testing.T) {
 	d, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
