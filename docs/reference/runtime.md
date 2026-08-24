@@ -13,13 +13,13 @@ This prevents descriptive fields from being silently treated as enforcement.
 
 ```sh
 go run . run \
-  -f examples/finish-priority-05.agent-workflow.yaml \
+  -f workflow.yaml \
   -C /path/to/target/repository
 
 go run . run code-styling
 
 go run . run --detach \
-  -f examples/finish-priority-05.agent-workflow.yaml \
+  -f workflow.yaml \
   -C /path/to/target/repository
 ```
 

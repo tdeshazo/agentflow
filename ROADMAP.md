@@ -46,7 +46,9 @@ At minimum, that self-hosting workflow must exercise:
 
 A shell command may launch AgentFlow, but a bespoke shell orchestrator must not own the phase sequence, repair loop, progress decisions, checkpoint policy, or completion transition. Those responsibilities must be expressed in the AgentFlow YAML and executed by the Go interpreter.
 
-The self-hosting workflow should remain in the repository as a continuously exercised example and regression target. Once AgentFlow can develop itself, later roadmap work should preferentially use AgentFlow for AgentFlow development so specification/runtime gaps are discovered through dogfooding.
+Once AgentFlow can develop itself, later roadmap work should preferentially use
+AgentFlow for AgentFlow development so specification/runtime gaps are discovered
+through dogfooding.
 
 ## Current foundation
 
@@ -122,11 +124,10 @@ The current runtime intentionally implements a conservative subset of the broade
 
 This is the MVP gate for the project. Priorities after this point are improvements to a system that has already demonstrated that it can safely develop itself.
 
-**MVP status: achieved.** The retained proof is documented in [docs/evidence/self-hosting-mvp.md](docs/evidence/self-hosting-mvp.md).
+**MVP status: achieved.**
 
 ### Scope
 
-- Add a repository-owned AgentFlow workflow for development of `agentflow`, for example `examples/develop-agentflow.agent-workflow.yaml`.
 - Use the normal Go interpreter entry point to execute that workflow against the repository itself.
 - Encode repository mutation policy, protected resources, validation, repair budget, checkpointing, recovery, and completion in YAML rather than a coordinating shell script.
 - Use at least one real AI implementation phase and one independent audit/review phase with intentionally chosen model/reasoning assignments.
@@ -136,7 +137,6 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 - Make self-hosting workflow state namespaced so repeated development workflows cannot collide with ordinary Git refs or other AgentFlow runs.
 - Produce useful `status` output while a self-hosted run is active, failed, recoverable, or complete.
 - Use the self-hosting workflow to complete at least one real subsequent `agentflow` change and retain that run as documented evidence of dogfooding.
-- Add CI coverage that validates the self-hosting workflow definition and tests its deterministic/runtime semantics without requiring live model calls.
 
 ### Exit criteria
 
@@ -146,7 +146,6 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 - Killing the interpreter after a durable checkpoint and rerunning it resumes from persisted AgentFlow state rather than replaying accepted work.
 - A deliberately failing validation receives only its declared repair budget and cannot advance until deterministic checks pass.
 - Protected files and out-of-scope mutations are rejected even when an agent attempts them.
-- The self-hosting workflow remains a maintained example/conformance fixture for subsequent roadmap work.
 
 ---
 
@@ -154,7 +153,13 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 **Goal:** Make AgentFlow workflows materially more concise than equivalent imperative orchestrators by keeping workflow-specific policy in YAML while moving generic lifecycle mechanics into the runtime.
 
-The first executable examples proved that AgentFlow can preserve the semantics of large shell orchestrators. They also exposed the next design constraint: a declarative workflow should not have to restate how AgentFlow itself persists an active phase, resumes it, checkpoints accepted work, advances progress, or reuses deterministic evidence. Priority 4 therefore treats the current self-hosting workflows as compression and authority benchmarks before adding more execution topology.
+Early executable workflows proved that AgentFlow can preserve the semantics of
+large shell orchestrators. They also exposed the next design constraint: a
+declarative workflow should not have to restate how AgentFlow itself persists an
+active phase, resumes it, checkpoints accepted work, advances progress, or
+reuses deterministic evidence. Priority 4 therefore treats concise workflow
+authoring as a compression and authority benchmark before adding more execution
+topology.
 
 ### Immediate implementation order
 
@@ -211,7 +216,6 @@ The first executable examples proved that AgentFlow can preserve the semantics o
 
 ### Exit criteria
 
-- `examples/finish-priority-05.agent-workflow.yaml` and the self-hosting workflow are materially smaller in non-prompt orchestration surface while preserving their existing mutation, validation, repair, recovery, human-gate, and completion guarantees.
 - Representative workflows no longer require an explicit procedural active-phase recovery sequence for the normal safe-resume case.
 - Workspace scope, protected integrity, lineage, and cleanliness policy are declared once and are enforced at every required runtime boundary.
 - Criterion prompts no longer ask an agent to mark its own acceptance criterion complete; deterministic acceptance owns that transition.
@@ -379,7 +383,8 @@ The first executable examples proved that AgentFlow can preserve the semantics o
 - Graph visualization for dependencies and gates.
 - Shell/editor completion for CLI and workflow fields.
 - JSON Schema or equivalent editor integration.
-- High-quality examples covering sequential, conditional, recovery, DAG, human-gated, self-hosted, and reusable workflows.
+- High-quality examples covering sequential, conditional, recovery, DAG,
+  human-gated, and reusable workflows.
 - Semantic workflow comparison that distinguishes behavior changes from prompt-only text changes.
 - Documentation generated from or verified against schema definitions where practical.
 

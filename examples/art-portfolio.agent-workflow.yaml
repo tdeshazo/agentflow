@@ -1,0 +1,128 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: art-portfolio
+  description: >-
+    Build a containerized art portfolio with a FastAPI backend and React
+    frontend. The workflow creates a self-contained project in a clean Git
+    repository and verifies that the required application and Docker assets
+    exist before completion.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    model:
+      type: string
+      default: "{{ env.PORTFOLIO_MODEL | default('gpt-5.6-terra') }}"
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - backend/**
+        - frontend/**
+        - Dockerfile
+        - docker-compose.yml
+        - .dockerignore
+        - .gitignore
+        - README.md
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: portfolio-files
+    phases:
+      implementation:
+        actor: builder
+        reasoning: high
+        requiresChange: true
+    repair:
+      actor: builder
+      reasoning: high
+      prompt: |
+        The art portfolio validation failed. Inspect the current checkout and
+        repair only the missing or invalid portfolio asset. Keep the FastAPI,
+        React, and Docker deliverables within the declared mutation scope.
+
+  agents:
+    builder:
+      model: "{{ parameters.model }}"
+
+  tools:
+    portfolio-files:
+      type: shell
+      command: >-
+        test -f backend/app/main.py &&
+        test -f backend/requirements.txt &&
+        test -f frontend/package.json &&
+        test -f frontend/src/main.jsx &&
+        test -f Dockerfile &&
+        test -f docker-compose.yml &&
+        test -f README.md
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh]
+
+  validation:
+    portfolio-files:
+      repair: once
+      steps:
+        - uses: portfolio-files
+
+  phases:
+    - id: build-portfolio
+      kind: implementation
+      label: build-containerized-art-portfolio
+      prompt: |
+        Create a polished, runnable art portfolio site in this empty project.
+
+        Build a FastAPI backend in `backend/` with:
+        - `backend/app/main.py` exposing a health endpoint and a `/api/artworks`
+          JSON endpoint with sample portfolio data;
+        - `backend/requirements.txt` with the runtime dependencies;
+        - CORS configured for the React development server.
+
+        Build a React frontend in `frontend/` using Vite with an elegant,
+        responsive portfolio layout: a hero section, artist statement, artwork
+        grid fed from the backend API, and contact section. Include sensible
+        loading and error states, accessible markup, and styling that does not
+        rely on external image downloads.
+
+        Add a root multi-stage `Dockerfile` that builds the React frontend and
+        serves it with the FastAPI application, plus `docker-compose.yml` and
+        `.dockerignore`. The container must expose port 8000 and serve the SPA
+        while keeping `/api/*` routed to FastAPI. Add a concise README with
+        local-development and Docker run instructions.
+
+        Prefer small, understandable code. Do not introduce unrelated tools or
+        modify files outside the workflow's allowed paths.
+
+  completion:
+    portfolio:
+      finalValidation: portfolio-files
+      summary:
+        title: "Art portfolio created."
+        include: [head_commit, changed_files_since_base, workspace_clean]
+
+  flow:
+    - phase: build-portfolio
+    - complete: portfolio

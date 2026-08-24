@@ -282,7 +282,6 @@ func TestValidateRejectsUnknownIntegrityMode(t *testing.T) {
 func TestReferenceDocumentsAreSpecValid(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"),
-		filepath.Join("..", "..", "examples", "finish-priority-05.agent-workflow.yaml"),
 	} {
 		r := ValidateFile(path)
 		if r.Status == Invalid {

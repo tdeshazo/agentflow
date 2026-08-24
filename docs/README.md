@@ -5,8 +5,7 @@ the section that matches the question you are trying to answer:
 
 - [Architecture](architecture/): durable design contracts and authority
   boundaries.
-- [Guides](guides/): contributor workflows, development checks, and
-  self-hosting.
+- [Guides](guides/): contributor workflows and development checks.
 - [Planning](planning/): how to navigate and execute the canonical roadmap.
 - [Reference](reference/): normative AgentWorkflow field semantics and the Go
   runtime reference.
@@ -26,8 +25,6 @@ the section that matches the question you are trying to answer:
   [Go runtime reference](reference/runtime.md).
 - To contribute a change, follow the
   [development guide](guides/development.md).
-- To run a bounded AgentFlow development task, follow the
-  [self-hosting guide](guides/self-hosting.md).
 - To choose roadmap work, use the
   [planning index](planning/README.md), which points to the root
   [ROADMAP.md](../ROADMAP.md) as the canonical source of priority and status.

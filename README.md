@@ -10,7 +10,7 @@ This repository contains:
 - a field-level specification reference;
 - an agent skill for authoring, describing, reviewing, and comparing workflow
   specifications without requiring AgentFlow implementation source;
-- concrete workflow examples;
+- an executable workflow example;
 - an experimental Go interpreter with a provider-neutral execution interface;
   and
 - a roadmap for evolving AgentFlow into a portable YAML SDL with a reference
@@ -25,9 +25,6 @@ organizes the documentation by purpose:
   the current separation among definition, execution, and assurance.
 - [Development guide](docs/guides/development.md) covers prerequisites,
   deterministic checks, focused commands, and contributor workflow.
-- [Self-hosting guide](docs/guides/self-hosting.md) explains the bounded
-  AgentFlow development workflow and retained
-  [MVP evidence](docs/evidence/self-hosting-mvp.md).
 - [AgentWorkflow v1alpha1 reference](docs/reference/agentflow-v1alpha1.md)
   documents field semantics.
 - [Go runtime reference](docs/reference/runtime.md) documents the current
@@ -72,7 +69,7 @@ organizes the documentation by purpose:
 ├── skills/
 │   └── agentflow-spec/
 └── examples/
-    └── finish-priority-05.agent-workflow.yaml
+    └── art-portfolio.agent-workflow.yaml
 ```
 
 ## Install
@@ -114,9 +111,8 @@ execution. The initial adapter uses non-interactive Codex CLI execution.
 
 See the [runtime reference](docs/reference/runtime.md) for CLI usage, state
 layout, supported constructs, provider behavior, and current limits. The
-[example workflow](examples/finish-priority-05.agent-workflow.yaml) shows
-phases, protected boundaries, validation, bounded repair, checkpointing,
-resume, human verification, and completion bookkeeping.
+[art portfolio workflow](examples/art-portfolio.agent-workflow.yaml) creates
+a FastAPI backend, React frontend, and containerized deployment.
 
 ## Validation
 
@@ -126,9 +122,9 @@ Run the repository-owned deterministic development gate:
 ./scripts/check.sh
 ```
 
-It checks formatting and diff hygiene, tests, vet, race-enabled tests, the
-deterministic self-hosting runtime, and every shipped workflow definition. It
-does not make live model calls. For individual workflow validation, see the
+It checks formatting and diff hygiene, tests, vet, race-enabled tests, and the
+reference workflow definition. It does not make live model calls. For
+individual workflow validation, see the
 [development guide](docs/guides/development.md).
 
 ## Agent skill

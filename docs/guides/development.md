@@ -13,8 +13,8 @@ From the repository root, install or provide:
 - Bash and the repository tools used by `scripts/check.sh`, including
   `rg`, `gofmt`, and standard POSIX utilities.
 
-A Codex CLI installation is also required to run the provider-backed
-self-hosting workflow. Deterministic checks do not make live model calls.
+A Codex CLI installation is also required to run provider-backed workflows.
+Deterministic checks do not make live model calls.
 
 ## Canonical deterministic gate
 
@@ -24,10 +24,9 @@ Run the repository-owned gate from the repository root:
 ./scripts/check.sh
 ```
 
-It checks Go formatting and diff hygiene, tests, vet, race-enabled tests, the
-deterministic self-hosting runtime tests, and validation of every shipped
-workflow definition. Treat it as the canonical development gate; CI invokes the
-same script.
+It checks Go formatting and diff hygiene, tests, vet, race-enabled tests, and
+the reference workflow definition. Treat it as the canonical development gate;
+CI invokes the same script.
 
 ## Focused commands
 
@@ -45,8 +44,8 @@ go vet ...
 Validate a workflow without opening a repository or invoking a provider:
 
 ```sh
-go run . validate -f examples/develop-agentflow.agent-workflow.yaml
-go run . plan --expanded -f examples/develop-agentflow.agent-workflow.yaml
+go run . validate -f workflow.yaml
+go run . plan --expanded -f workflow.yaml
 ```
 
 The validator distinguishes invalid documents from documents that are valid but
@@ -56,24 +55,6 @@ unsupported by this runtime. The shipped definitions can all be checked with
 Use the expanded plan when reviewing concise authoring defaults. It shows the
 normalized executable lifecycle and safety/repair/completion contract without
 calling an actor or a mutable tool.
-
-## Bounded self-development
-
-Use the repository-owned workflow for one specific task, starting from a clean
-named branch:
-
-```sh
-go run . run \
-  -f examples/develop-agentflow.agent-workflow.yaml \
-  -C . \
-  --set "task=Add focused regression coverage for <bounded behavior>."
-```
-
-Inspect the resulting checkout at the human gate and type `yes` when the
-requested verification is complete. Use `status` (or `status --json`) to
-inspect durable state, and rerun the same command with the same task to resume
-after an interruption. Use `reset` only to intentionally abandon that run's
-orchestration history.
 
 ## Failure diagnosis
 
