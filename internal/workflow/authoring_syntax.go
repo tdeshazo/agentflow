@@ -16,6 +16,9 @@ func (s *Spec) UnmarshalYAML(n *yaml.Node) error {
 	if err := expandWorkspaceAllowWrites(rewritten); err != nil {
 		return err
 	}
+	if err := expandInlinePhaseActors(rewritten); err != nil {
+		return err
+	}
 	if err := expandInlineValidationRuns(rewritten); err != nil {
 		return err
 	}
@@ -60,6 +63,56 @@ func expandWorkspaceAllowWrites(spec *yaml.Node) error {
 
 	removeMappingField(workspace, "allowWrites")
 	appendMappingField(mutationPolicy, "allowed", allowWrites)
+	return nil
+}
+
+// A mapping-valued phase.actor is shorthand for a one-off named agent. It is
+// compiled into spec.agents under a reserved deterministic name and the phase
+// is rewritten to reference that name. This keeps provider defaults, runtime
+// lookup, validation, and execution on the same path as explicitly named
+// agents instead of creating a second actor representation.
+func expandInlinePhaseActors(spec *yaml.Node) error {
+	phases, ok := mappingValue(spec, "phases")
+	if !ok || phases.Kind != yaml.SequenceNode {
+		return nil
+	}
+
+	var agents *yaml.Node
+	for i, phase := range phases.Content {
+		if phase.Kind != yaml.MappingNode {
+			continue
+		}
+		actor, hasActor := mappingValue(phase, "actor")
+		if !hasActor || actor.Kind != yaml.MappingNode {
+			continue
+		}
+
+		if agents == nil {
+			var hasAgents bool
+			agents, hasAgents = mappingValue(spec, "agents")
+			if hasAgents && agents.Kind != yaml.MappingNode {
+				return nil // Let the canonical decoder report the structural error.
+			}
+			if !hasAgents {
+				agents = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: phases.Line, Column: phases.Column}
+				appendMappingField(spec, "agents", agents)
+			}
+		}
+
+		phaseKey := fmt.Sprintf("phase_%d", i)
+		if id, hasID := mappingValue(phase, "id"); hasID && id.Kind == yaml.ScalarNode && strings.TrimSpace(id.Value) != "" {
+			phaseKey = id.Value
+		}
+		agentName := "__inline_actor__" + phaseKey
+		if _, exists := mappingValue(agents, agentName); exists {
+			return fmt.Errorf("line %d: inline actor for phase %q conflicts with generated agent name %q", actor.Line, phaseKey, agentName)
+		}
+
+		appendMappingField(agents, agentName, cloneYAMLNode(actor))
+		removeMappingField(phase, "actor")
+		actorRef := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: agentName, Line: actor.Line, Column: actor.Column}
+		appendMappingField(phase, "actor", actorRef)
+	}
 	return nil
 }
 
