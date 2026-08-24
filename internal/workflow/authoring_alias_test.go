@@ -86,7 +86,7 @@ spec:
 	}
 }
 
-func TestOrdinaryActorAliasRemainsValid(t *testing.T) {
+func TestOrdinaryWorkflowActorAliasStillUsesOriginalDecodePath(t *testing.T) {
 	d, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
@@ -94,36 +94,31 @@ metadata:
   name: ordinary-actor-alias
   description: &reviewer_name reviewer
 spec:
-  defaults:
-    agent:
-      runner: codex
   agents:
     reviewer:
-      model: review-model
+      runner: codex
+  tools:
+    gate:
+      type: shell
+      command: "true"
   validation:
     gate:
-      run: "true"
+      steps:
+        - uses: gate
   phases:
-    - id: build
-      kind: implementation
-      actor:
-        model: build-model
-      validation: gate
-      prompt: Build.
     - id: review
       kind: audit
       actor: *reviewer_name
       validation: gate
       prompt: Review.
   flow:
-    - phase: build
     - phase: review
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Workflow.Spec.Phases[1].Actor != "reviewer" {
-		t.Fatalf("review actor = %q", d.Workflow.Spec.Phases[1].Actor)
+	if d.Workflow.Spec.Phases[0].Actor != "reviewer" {
+		t.Fatalf("review actor = %q", d.Workflow.Spec.Phases[0].Actor)
 	}
 	if result := Validate(d); result.Status != Executable {
 		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
