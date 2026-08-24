@@ -8,6 +8,12 @@ executable contract and must not create an acceptance bypass.
 The `v1alpha1` authoring surface currently includes three additional shorthands
 for common repository workflows.
 
+Concise preprocessing is opt-in by syntax: workflows that use none of these
+shorthands are decoded from their original YAML bytes through the ordinary
+strict `KnownFields` decoder. A shorthand document is rewritten to the
+canonical v1alpha1 shape before that same strict decode. Folded scalar semantic
+values are preserved during the rewrite.
+
 ## Workspace write allowlist
 
 For workflows that only need a path allowlist, `workspace.allowWrites` is
@@ -88,9 +94,11 @@ as `may_commit: false` still override defaults, and unknown agent fields remain
 invalid.
 
 The generated name uses the reserved `__inline_actor__` prefix and the phase ID
-when available. Authors should not declare named agents with that prefix. A
-collision fails closed instead of silently changing which capability the phase
-references.
+when available. That namespace is runtime-owned: authored workflows must not
+declare named agents with that prefix or reference such names from phases,
+phase defaults, or repair policies. This keeps a generated one-off capability
+local to its phase instead of turning a predictable internal name into a
+workflow API.
 
 Use a named actor when multiple phases share an execution capability, when a
 repair policy or other workflow object needs to reference the actor, or when the
@@ -134,6 +142,27 @@ continue to use the existing executable semantics.
 `run` and `steps` are mutually exclusive. Use `steps` when a validation needs
 multiple deterministic operations, conditional tool uses, typed `with`
 arguments, or reusable named tools.
+
+## YAML merge keys
+
+Concise authoring expansion intentionally fails closed around YAML merge keys.
+A mapping that the preprocessor must inspect or modify may not contain `<<`.
+For example, this is rejected instead of silently allowing the generated
+`steps` value to shadow inherited validation steps:
+
+```yaml
+validation:
+  shared: &shared
+    steps:
+      - uses: existing-check
+  gate:
+    <<: *shared
+    run: go test ./...
+```
+
+Use the canonical form explicitly when YAML merge behavior is required. The
+restriction is deliberately local to mappings touched by concise expansion; it
+prevents shorthand conflict checks from depending on implicit merge precedence.
 
 ## Example
 
