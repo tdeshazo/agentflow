@@ -57,6 +57,29 @@ func TestDiscoverFilesMissingDirectoriesAreNormal(t *testing.T) {
 	}
 }
 
+func TestDiscoverFilesIgnoresLegacyDirectories(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeRoot := t.TempDir()
+	for _, directory := range []string{
+		filepath.Join(repoRoot, ".agent-workflows"),
+		filepath.Join(homeRoot, ".agent-workflows"),
+	} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeDiscoveryFile(t, filepath.Join(repoRoot, ".agent-workflows", "legacy-local.yaml"))
+	writeDiscoveryFile(t, filepath.Join(homeRoot, ".agent-workflows", "legacy-global.yaml"))
+
+	discovery, err := DiscoverFiles(repoRoot, func() (string, error) { return homeRoot, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovery.Files) != 0 {
+		t.Fatalf("legacy workflows were discovered: %#v", discovery.Files)
+	}
+}
+
 func TestDiscoverFilesRejectsDuplicateLogicalNames(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -68,13 +91,13 @@ func TestDiscoverFilesRejectsDuplicateLogicalNames(t *testing.T) {
 			name:       "repository scope",
 			duplicate:  "repo",
 			otherRoot:  func(t *testing.T) string { return t.TempDir() },
-			expectedIn: filepath.FromSlash(".agent-workflows"),
+			expectedIn: filepath.FromSlash(".agentflow/workflows"),
 		},
 		{
 			name:       "home scope",
 			duplicate:  "home",
 			otherRoot:  func(t *testing.T) string { return t.TempDir() },
-			expectedIn: filepath.FromSlash(".agent-workflows"),
+			expectedIn: filepath.FromSlash(".agentflow/workflows"),
 		},
 	}
 	for _, tt := range tests {
@@ -110,7 +133,7 @@ func TestResolveFileUnknownSelectorNamesLocationsWithoutHomeDetails(t *testing.T
 	}
 	if !strings.Contains(errText, `unknown workflow selector "missing"`) ||
 		!strings.Contains(errText, filepath.Join(repoRoot, workflowDirectory)) ||
-		!strings.Contains(errText, "~/.agent-workflows") ||
+		!strings.Contains(errText, "~/.agentflow/workflows") ||
 		strings.Contains(errText, "private-home") {
 		t.Fatalf("unknown selector error = %q", errText)
 	}

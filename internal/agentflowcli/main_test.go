@@ -256,8 +256,8 @@ func TestRepositoryDefaultRejectsNonGitBeforeWorkflowRead(t *testing.T) {
 func TestPositionalWorkflowSelectorUsesLocalAndHomeScopes(t *testing.T) {
 	repo := newCLIStatusRepo(t)
 	home := t.TempDir()
-	localPath := filepath.Join(repo.Root, ".agent-workflows", "code-styling.yaml")
-	globalPath := filepath.Join(home, ".agent-workflows", "code-styling.yaml")
+	localPath := filepath.Join(repo.Root, ".agentflow", "workflows", "code-styling.yaml")
+	globalPath := filepath.Join(home, ".agentflow", "workflows", "code-styling.yaml")
 	writeCLIWorkflow(t, localPath, "local-code-styling")
 	writeCLIWorkflow(t, globalPath, "global-code-styling")
 	originalHome := workflowHomeDirectory
@@ -327,9 +327,9 @@ func TestExplicitWorkflowFileRemainsFileOnly(t *testing.T) {
 func TestDetachedSelectorPassesResolvedFilePath(t *testing.T) {
 	repo := newCLIStatusRepo(t)
 	home := t.TempDir()
-	workflowPath := filepath.Join(repo.Root, ".agent-workflows", "code-styling.yaml")
+	workflowPath := filepath.Join(repo.Root, ".agentflow", "workflows", "code-styling.yaml")
 	writeCLIWorkflow(t, workflowPath, "detached-code-styling")
-	if err := os.MkdirAll(filepath.Join(home, ".agent-workflows"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".agentflow", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	originalHome := workflowHomeDirectory

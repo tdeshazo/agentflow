@@ -15,15 +15,15 @@ import (
 func TestSelectWorkflowRendersSortedEntriesAndReturnsSelectedPath(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".agent-workflows"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".agentflow", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(home, ".agent-workflows"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".agentflow", "workflows"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	alphaPath := filepath.Join(repo, ".agent-workflows", "alpha.yaml")
-	zetaPath := filepath.Join(repo, ".agent-workflows", "zeta.yaml")
-	betaPath := filepath.Join(home, ".agent-workflows", "beta.yaml")
+	alphaPath := filepath.Join(repo, ".agentflow", "workflows", "alpha.yaml")
+	zetaPath := filepath.Join(repo, ".agentflow", "workflows", "zeta.yaml")
+	betaPath := filepath.Join(home, ".agentflow", "workflows", "beta.yaml")
 	writeCLIWorkflow(t, alphaPath, "alpha")
 	writeCLIWorkflow(t, zetaPath, "zeta")
 	writeCLIWorkflow(t, betaPath, "beta")
@@ -43,8 +43,8 @@ func TestSelectWorkflowRendersSortedEntriesAndReturnsSelectedPath(t *testing.T) 
 func TestPickWorkflowUsesLocalPrecedenceAndReturnsResolvedPath(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
-	localDir := filepath.Join(repo, ".agent-workflows")
-	globalDir := filepath.Join(home, ".agent-workflows")
+	localDir := filepath.Join(repo, ".agentflow", "workflows")
+	globalDir := filepath.Join(home, ".agentflow", "workflows")
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestPickWorkflowUsesLocalPrecedenceAndReturnsResolvedPath(t *testing.T) {
 func TestSelectWorkflowNoWorkflows(t *testing.T) {
 	var output bytes.Buffer
 	_, err := pickWorkflow(t.TempDir(), strings.NewReader("1\n"), &output, func() (string, error) { return t.TempDir(), nil })
-	if err == nil || !strings.Contains(err.Error(), ".agent-workflows/") {
+	if err == nil || !strings.Contains(err.Error(), ".agentflow/workflows/") {
 		t.Fatalf("no-workflow error = %v", err)
 	}
 	if output.Len() != 0 {
@@ -133,7 +133,7 @@ func TestMissingWorkflowSelectorNonTTYDoesNotReadInput(t *testing.T) {
 func TestInteractiveSelectionPassesResolvedPathToValidation(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
-	workflowDir := filepath.Join(repo, ".agent-workflows")
+	workflowDir := filepath.Join(repo, ".agentflow", "workflows")
 	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

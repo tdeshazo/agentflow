@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const workflowDirectory = ".agent-workflows"
+const workflowDirectory = ".agentflow/workflows"
 
 // DiscoveryFile is a workflow definition found in one of the discovery
 // scopes. Name is the filename without its .yaml or .yml suffix. Source is
@@ -101,7 +101,7 @@ func ResolveFile(repoRoot, selector string, homeDir func() (string, error)) (str
 		return "", fmt.Errorf("resolve repository discovery root: %w", err)
 	}
 	return "", fmt.Errorf(
-		"unknown workflow selector %q; searched %s and ~/.agent-workflows (available: %s)",
+		"unknown workflow selector %q; searched %s and ~/.agentflow/workflows (available: %s)",
 		selector,
 		filepath.Join(repoRoot, workflowDirectory),
 		availableNames(discovery.Names),

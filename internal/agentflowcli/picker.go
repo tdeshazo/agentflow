@@ -25,7 +25,7 @@ func pickWorkflow(repoRoot string, in io.Reader, out io.Writer, homeDir func() (
 
 func selectWorkflow(discovery workflow.Discovery, in io.Reader, presenter clioutput.Presenter) (string, error) {
 	if len(discovery.Files) == 0 {
-		return "", fmt.Errorf("no workflows available; add a workflow under .agent-workflows/")
+		return "", fmt.Errorf("no workflows available; add a workflow under .agentflow/workflows/")
 	}
 
 	presenter.Line(clioutput.RoleHeading, "Select a workflow:")

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -25,6 +26,24 @@ import (
 type sets struct {
 	values []string
 	parsed map[string]string
+}
+
+func configuredSets(parameters map[string]string) sets {
+	if len(parameters) == 0 {
+		return sets{}
+	}
+	keys := make([]string, 0, len(parameters))
+	for key := range parameters {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := sets{parsed: make(map[string]string, len(parameters))}
+	for _, key := range keys {
+		value := parameters[key]
+		result.parsed[key] = value
+		result.values = append(result.values, key+"="+value)
+	}
+	return result
 }
 
 func (s *sets) String() string { return fmt.Sprint(s.parsed) }
@@ -81,23 +100,67 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		return usage()
 	}
 	cmd := args[0]
+	configRoot, err := discoveryRoot(commandLineRepo(args[1:]))
+	if err != nil {
+		return err
+	}
+	config, err := loadCLIConfig(configRoot, workflowHomeDirectory)
+	if err != nil {
+		return err
+	}
+
+	codexBinDefault := configuredString(config.CodexBin, "codex")
+	detachDefault := cmd == "run" && configuredBool(config.Run.Detach, false)
+	if os.Getenv(detachedChildEnv) == "1" {
+		detachDefault = false
+	}
+	jsonDefault := cmd == "status" && configuredBool(config.Status.JSON, false)
+	allDefault := cmd == "status" && configuredBool(config.Status.All, false)
+	logsWorkflowDefault := ""
+	tailDefault := -1
+	followDefault := false
+	if cmd == "logs" {
+		logsWorkflowDefault = configuredString(config.Logs.Workflow, "")
+		tailDefault = configuredInt(config.Logs.Tail, -1)
+		followDefault = configuredBool(config.Logs.Follow, false)
+	}
+	expandedDefault := cmd == "plan" && configuredBool(config.Plan.Expanded, false)
+
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	file := fs.String("f", "", "workflow YAML file")
 	repo := fs.String("C", "", "repository root override")
-	codexBin := fs.String("codex-bin", "codex", "Codex CLI binary")
-	detach := fs.Bool("detach", false, "start the workflow in a detached child process (run only)")
-	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON (status only)")
-	all := fs.Bool("all", false, "inspect every discovered workflow (status only)")
-	workflowName := fs.String("workflow", "", "workflow name (logs only)")
-	tail := fs.Int("tail", -1, "show the final N log lines (logs only)")
-	follow := fs.Bool("follow", false, "follow appended workflow log output (logs only)")
-	expanded := fs.Bool("expanded", false, "show resolved executable plan")
-	var overrides sets
+	codexBin := fs.String("codex-bin", codexBinDefault, "Codex CLI binary")
+	detach := fs.Bool("detach", detachDefault, "start the workflow in a detached child process (run only)")
+	jsonOutput := fs.Bool("json", jsonDefault, "emit machine-readable JSON (status only)")
+	all := fs.Bool("all", allDefault, "inspect every discovered workflow (status only)")
+	workflowName := fs.String("workflow", logsWorkflowDefault, "workflow name (logs only)")
+	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
+	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
+	expanded := fs.Bool("expanded", expandedDefault, "show resolved executable plan")
+	overrides := configuredSets(config.Parameters)
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
 	flagArgs, positional := splitCommandArgs(args[1:])
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
+	}
+	explicit := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	configuredWorkflow := configWorkflow(config, cmd)
+	if len(positional) > 0 || *file != "" {
+		if cmd == "status" && !explicit["all"] {
+			*all = false
+		}
+		configuredWorkflow = ""
+	} else if cmd == "status" && explicit["all"] && *all {
+		configuredWorkflow = ""
+	}
+	if cmd == "logs" {
+		if explicit["tail"] {
+			*follow = false
+		} else if explicit["follow"] && *follow {
+			*tail = -1
+		}
 	}
 	if *file != "" && len(positional) > 0 {
 		return fmt.Errorf("-f and a positional workflow selector are mutually exclusive")
@@ -120,12 +183,10 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("%s does not accept a positional workflow selector", cmd)
 		}
 	}
-	tailProvided := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "tail" {
-			tailProvided = true
-		}
-	})
+	tailProvided := cmd == "logs" && (config.Logs.Tail != nil || explicit["tail"])
+	if explicit["follow"] && *follow {
+		tailProvided = false
+	}
 	if *jsonOutput && cmd != "status" {
 		return fmt.Errorf("--json is only supported with status")
 	}
@@ -167,7 +228,6 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 
 	workflowFile := *file
-	var err error
 	if workflowFile != "" {
 		workflowFile, err = filepath.Abs(workflowFile)
 		if err != nil {
@@ -193,8 +253,12 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 	}
+	selector := configuredWorkflow
 	if len(positional) == 1 {
-		workflowFile, err = workflow.ResolveFile(repoRoot, positional[0], workflowHomeDirectory)
+		selector = positional[0]
+	}
+	if selector != "" {
+		workflowFile, err = workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory)
 		if err != nil {
 			return err
 		}
@@ -300,6 +364,7 @@ func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
+	fmt.Fprintln(out, "       defaults load from <repo>/.agentflow/config.toml and ~/.agentflow/config.toml")
 }
 
 func writeValidationResult(presenter clioutput.Presenter, result workflow.Result) error {
@@ -444,6 +509,7 @@ func splitCommandArgs(args []string) (flagArgs, positional []string) {
 	valueFlags := map[string]bool{
 		"-f":          true,
 		"-C":          true,
+		"--C":         true,
 		"--codex-bin": true,
 		"-codex-bin":  true,
 		"--workflow":  true,
@@ -471,6 +537,43 @@ func splitCommandArgs(args []string) (flagArgs, positional []string) {
 		}
 	}
 	return flagArgs, positional
+}
+
+func commandLineRepo(args []string) string {
+	var root string
+	valueFlags := map[string]bool{
+		"-f":          true,
+		"--codex-bin": true,
+		"-codex-bin":  true,
+		"--workflow":  true,
+		"-workflow":   true,
+		"--tail":      true,
+		"-tail":       true,
+		"--set":       true,
+		"-set":        true,
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--":
+			return root
+		case arg == "-C" || arg == "--C":
+			if i+1 < len(args) {
+				i++
+				root = args[i]
+			}
+		case strings.HasPrefix(arg, "-C="):
+			root = strings.TrimPrefix(arg, "-C=")
+		case strings.HasPrefix(arg, "--C="):
+			root = strings.TrimPrefix(arg, "--C=")
+		default:
+			name := strings.SplitN(arg, "=", 2)[0]
+			if valueFlags[name] && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+			}
+		}
+	}
+	return root
 }
 
 func runLogs(repoRoot, workflowName string, tail int, follow bool) error {

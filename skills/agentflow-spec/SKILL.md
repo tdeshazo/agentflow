@@ -52,8 +52,8 @@ whole protected rule set must be checked.
 To make a workflow selectable by name, save its `.yaml` or `.yml` file in one
 of these directories:
 
-- `<repository>/.agent-workflows/` for a workflow owned by one repository.
-- `~/.agent-workflows/` for a workflow available across the current user's
+- `<repository>/.agentflow/workflows/` for a workflow owned by one repository.
+- `~/.agentflow/workflows/` for a workflow available across the current user's
   repositories.
 
 Repository-local workflows take precedence when the two directories contain

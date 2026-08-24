@@ -36,13 +36,64 @@ using `--tail N` or `--follow`).
 default is the current working directory, which must be a Git repository.
 Single-workflow `run`, `status`, `reset`, `validate`, and `plan` commands may
 also take one positional workflow name. Names are looked up as regular
-`.yaml`/`.yml` files in `<repository>/.agent-workflows/` and
-`~/.agent-workflows/`; repository-local files shadow home files. Use `-f` for
-an explicit workflow path. The positional form and `-f` cannot be combined.
+`.yaml`/`.yml` files in `<repository>/.agentflow/workflows/` and
+`~/.agentflow/workflows/`; repository-local files shadow home files. Use `-f`
+for an explicit workflow path. The positional form and `-f` cannot be combined.
 When both selectors are omitted in an interactive terminal, AgentFlow presents
 a sorted numbered workflow picker and accepts one selection line; redirected
 or piped commands instead fail with the selector usage error and never read
 stdin.
+
+AgentFlow reads optional defaults from `<repository>/.agentflow/config.toml`
+and `~/.agentflow/config.toml`. An explicit `-C` selects the repository config;
+otherwise the current working directory is used. Values are merged by field,
+and parameter maps are merged by key, with this precedence:
+
+```text
+command line > repository config > home config > built-in defaults
+```
+
+Configuration is typed and rejects unknown keys. The `workflow` values for
+`run`, `status`, `reset`, `validate`, and `plan` are logical names from the
+discovery directories; explicit workflow selectors override configured
+selectors. `logs.workflow` mirrors the runtime workflow name accepted by
+`logs --workflow`. `-C` and `-f` are intentionally command-line-only.
+
+```toml
+codex_bin = "codex"
+
+[parameters]
+model = "gpt-5"
+task = "build the portfolio"
+
+[run]
+workflow = "art-portfolio"
+detach = false
+
+[status]
+workflow = "art-portfolio"
+json = false
+all = false
+
+[reset]
+workflow = "art-portfolio"
+
+[validate]
+workflow = "art-portfolio"
+
+[plan]
+workflow = "art-portfolio"
+expanded = true
+
+[logs]
+workflow = "art-portfolio"
+tail = 100
+follow = false
+```
+
+Within one configuration file, `status.workflow` conflicts with
+`status.all = true`, and `logs.tail` conflicts with `logs.follow = true`.
+A higher-precedence selector or mode replaces its lower-precedence conflict.
 
 State can be inspected or reset independently:
 
