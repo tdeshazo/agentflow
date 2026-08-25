@@ -273,18 +273,37 @@ itself, satisfy the final completion validation: the final gate must establish
 acceptance for the final workspace state and completion boundary.
 
 If the final validation has `repair.once`, its repair actor is subject to the
-same exactly-one-attempt and deterministic-revalidation rules. The final
-completion state is written only after the final validation succeeds and all
-other existing completion conditions pass. Its validation evidence, failed
-validation record, and repair budget are scoped to the completion transition,
-so they cannot be borrowed from a phase that uses the same validation name.
+same exactly-one-attempt and deterministic-revalidation rules. The shared
+`Completion.FinalValidation` durability scope is exactly:
+
+```text
+completion/<completion-name>/<validation-name>
+```
+
+For v1alpha2, the concise `completion.validation` field is normalized onto the
+default completion name. Its validation evidence, failed-validation record,
+repair budget, and repair-invocation attribution therefore cannot be borrowed
+from a phase, an ordinary standalone validation, or another completion that
+uses the same validation name. The complete cross-version contract, including
+the repair crash window and terminal safety rules, is defined in the [shared
+execution authority reference](../architecture/execution-authority.md#shared-completionfinalvalidation-durability-contract).
+
+The final completion state is written only after deterministic final
+validation succeeds and all other existing completion conditions pass. A
+consumed repair budget is execution-policy state, not completion evidence.
 
 If completion repair is interrupted after it creates a commit, restart first
 recovers the pending repair actor identity. An authorized commit is still only
 retained workspace state until the final deterministic validation runs and
-passes; an unauthorized commit persists standalone terminal safety. Neither
+passes; an unauthorized commit persists completion-scoped terminal safety. Neither
 case invokes a second repair attempt or writes completion evidence from the
 commit alone.
+
+If repair revalidation succeeds but the completion marker is not yet durable,
+the consumed repair budget remains. A restart that still passes the final gate
+continues toward completion; a restart whose final gate fails reports
+exhausted repair budget. The budget is cleared only after the completion marker
+is durable.
 
 The repair actor's `may_commit` authority is evaluated for that repair
 invocation. It is not borrowed from the actor of the phase that preceded the
