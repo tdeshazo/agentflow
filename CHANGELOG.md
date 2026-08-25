@@ -7,6 +7,10 @@
 - Made the expanded execution plan explicitly report invocation-scoped
   `may_commit` enforcement after provider errors and distinguish runtime-owned
   checkpoint commits from actor-created commits.
+- Gave v1alpha1 `Completion.FinalValidation` the same completion-scoped repair
+  durability as v1alpha2, including crash-safe budget consumption and
+  marker-before-cleanup ordering. Generic standalone `flow.validate` remains
+  outside this transition-scoped contract.
 
 ### Added
 

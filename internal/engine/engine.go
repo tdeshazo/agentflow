@@ -71,6 +71,8 @@ const (
 	interruptionAfterPendingInvocation interruptionPoint = "after-pending-invocation"
 	interruptionAfterProviderReturn    interruptionPoint = "after-provider-return"
 	interruptionAfterAuthority         interruptionPoint = "after-authority-reconciliation"
+	interruptionBeforeCompletionMarker interruptionPoint = "before-completion-marker"
+	interruptionAfterCompletionMarker  interruptionPoint = "after-completion-marker"
 )
 
 // ActivePhase is the durable record of a phase's current execution state,

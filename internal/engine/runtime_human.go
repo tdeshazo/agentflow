@@ -299,11 +299,27 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 			marker = resolved
 		}
 	}
+	if c.FinalValidation != "" {
+		if err := e.runInterruptionHook(interruptionBeforeCompletionMarker, PendingActorInvocation{
+			Role:            "completion-marker",
+			ValidationScope: completionValidationScope(name, c.FinalValidation),
+		}); err != nil {
+			return err
+		}
+	}
 	if err := e.Store.SetCommit(marker, head); err != nil {
 		return err
 	}
 	if marker != e.workflowCompleteMarker() {
 		if err := e.Store.SetCommit(e.workflowCompleteMarker(), head); err != nil {
+			return err
+		}
+	}
+	if c.FinalValidation != "" {
+		if err := e.runInterruptionHook(interruptionAfterCompletionMarker, PendingActorInvocation{
+			Role:            "completion-marker",
+			ValidationScope: completionValidationScope(name, c.FinalValidation),
+		}); err != nil {
 			return err
 		}
 	}
@@ -407,12 +423,12 @@ func (e *Engine) reconcileV1Alpha1CompletionValidationState(completion, validati
 	scope := completionValidationScope(completion, validation)
 	newRepairRecord := e.standaloneRepairRecordForScope(scope)
 	var current standaloneRepairState
-	ok, err = e.Store.GetJSON(newRepairRecord, &current)
+	scopedExists, err := e.Store.GetJSON(newRepairRecord, &current)
 	if err != nil {
 		return err
 	}
-	if ok {
-		return nil
+	if scopedExists && current.Attempts < 0 {
+		return fmt.Errorf("invalid completion repair budget for validation %q", validation)
 	}
 
 	var legacy standaloneRepairState
@@ -420,10 +436,16 @@ func (e *Engine) reconcileV1Alpha1CompletionValidationState(completion, validati
 	if err != nil {
 		return err
 	}
-	if !ok || legacy.Attempts <= 0 {
+	if !ok {
 		return nil
 	}
-	return e.Store.SetJSON(newRepairRecord, legacy)
+	if legacy.Attempts < 0 {
+		return fmt.Errorf("invalid completion repair budget for validation %q", validation)
+	}
+	if legacy.Attempts <= current.Attempts {
+		return nil
+	}
+	return e.Store.SetJSON(newRepairRecord, standaloneRepairState{Attempts: legacy.Attempts})
 }
 
 func (e *Engine) commitLink(presenter clioutput.Presenter, commit string) string {
