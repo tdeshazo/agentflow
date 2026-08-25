@@ -268,7 +268,7 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 		}
 	}
 	if c.FinalValidation != "" {
-		if err := e.runValidation(ctx, c.FinalValidation, nil); err != nil {
+		if err := e.runCompletionValidation(ctx, name, c.FinalValidation); err != nil {
 			return err
 		}
 	}
@@ -358,6 +358,18 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 		}
 	}
 	return nil
+}
+
+// runCompletionValidation runs the v1alpha2 final gate in its own durable
+// evidence scope. v1alpha1 retains its existing explicit-flow behavior.
+func (e *Engine) runCompletionValidation(ctx context.Context, completion, validation string) error {
+	if e.Workflow.APIVersion != "agentflow.dev/v1alpha2" {
+		return e.runValidation(ctx, validation, nil)
+	}
+	previous := e.completionValidation
+	e.completionValidation = completion
+	defer func() { e.completionValidation = previous }()
+	return e.runValidation(ctx, validation, nil)
 }
 
 func (e *Engine) commitLink(presenter clioutput.Presenter, commit string) string {

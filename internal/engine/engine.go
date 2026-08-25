@@ -48,7 +48,12 @@ type Engine struct {
 	logStore           *observability.LogStore
 	outputBridge       *observability.OutputBridge
 	outputRestore      func()
-	detached           bool
+	// completionValidation scopes the validation evidence and bounded repair
+	// state for a v1alpha2 final validation. A phase gate and the final gate
+	// may deliberately have the same name, but they are different authority
+	// transitions and therefore must never share durable proof.
+	completionValidation string
+	detached             bool
 	// recoveryEligible is set only after this invocation has passed the
 	// run-identity boundary and established or resumed a durable active phase.
 	// It prevents a later invocation that fails during initialization or input

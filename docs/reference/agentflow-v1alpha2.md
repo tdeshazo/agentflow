@@ -178,7 +178,9 @@ acceptance for the final workspace state and completion boundary.
 If the final validation has `repair.once`, its repair actor is subject to the
 same exactly-one-attempt and deterministic-revalidation rules. The final
 completion state is written only after the final validation succeeds and all
-other existing completion conditions pass.
+other existing completion conditions pass. Its validation evidence, failed
+validation record, and repair budget are scoped to the completion transition,
+so they cannot be borrowed from a phase that uses the same validation name.
 
 ## Dependency-derived execution
 
@@ -225,7 +227,6 @@ expanded execution plan before it executes any actor.
 
 This phase does not implement:
 
-- dependency scheduling in the Go runtime;
 - changes to v1alpha1 behavior; or
 - parallel phase execution.
 

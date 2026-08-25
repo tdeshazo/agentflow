@@ -613,7 +613,14 @@ type validationFailureEvidence struct {
 }
 
 func (e *Engine) standaloneFailureRecord(validation string) string {
-	return fmt.Sprintf("validation-failures/%x", validation)
+	return fmt.Sprintf("validation-failures/%x", e.standaloneValidationScope(validation))
+}
+
+func (e *Engine) standaloneValidationScope(validation string) string {
+	if e.completionValidation != "" {
+		return "completion/" + e.completionValidation + "/" + validation
+	}
+	return validation
 }
 
 // consumeRepairAttempt persists the applicable repair budget before invoking a
@@ -644,7 +651,7 @@ func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max 
 }
 
 func (e *Engine) standaloneRepairRecord(validation string) string {
-	return fmt.Sprintf("validation-repairs/%x", validation)
+	return fmt.Sprintf("validation-repairs/%x", e.standaloneValidationScope(validation))
 }
 
 func (e *Engine) consumeStandaloneRepairAttempt(validation string, max int) (bool, error) {

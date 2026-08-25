@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -221,6 +222,98 @@ func TestV1Alpha2SchedulerResumesOnlyDurablePhaseEvidence(t *testing.T) {
 	})
 }
 
+func TestV1Alpha2CompletionIsASeparateDurableTransition(t *testing.T) {
+	t.Run("phase validation does not satisfy the final validation", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		countFile := filepath.Join(t.TempDir(), "validation-count")
+		w := conciseCompletionWorkflow(t, repo, "distinct-final-validation", fmt.Sprintf("printf x >> %s; test -f root.txt", countFile))
+		if len(w.Spec.Flow) != 0 {
+			t.Fatalf("concise v1alpha2 workflow unexpectedly has flow: %#v", w.Spec.Flow)
+		}
+		p := &schedulingProvider{}
+		e := newSchedulingEngineAt(t, w, p, repo)
+		if err := e.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(mustReadFile(t, countFile)); got != 2 {
+			t.Fatalf("validation executions = %d, want phase and distinct final validation", got)
+		}
+		assertSchedulingCalls(t, p, "root:worker")
+		assertSchedulingCompletion(t, e)
+	})
+
+	t.Run("failed final validation does not complete and resumes without replaying phases", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		allow := filepath.Join(t.TempDir(), "validation.allow")
+		if err := os.WriteFile(allow, []byte("allow\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		w := conciseCompletionWorkflow(t, repo, "final-validation-failure", fmt.Sprintf("test -f root.txt && test -f %s", allow))
+		p := &schedulingProvider{}
+		e := newSchedulingEngineAt(t, w, p, repo)
+		if err := e.initializeState(); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.runPhase(context.Background(), "root"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(allow); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.runV1Alpha2Schedule(context.Background()); err == nil || !strings.Contains(err.Error(), "validation tests failed") {
+			t.Fatalf("final validation error = %v", err)
+		}
+		assertNoSchedulingCompletion(t, e)
+		assertSchedulingCalls(t, p, "root:worker")
+
+		if err := os.WriteFile(allow, []byte("allow\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := newSchedulingEngineAt(t, w, p, repo).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		assertSchedulingCalls(t, p, "root:worker")
+		assertSchedulingCompletion(t, e)
+	})
+
+	t.Run("restart reuses only durable final evidence and persisted completion", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		countFile := filepath.Join(t.TempDir(), "validation-count")
+		w := conciseCompletionWorkflow(t, repo, "restart-final-validation", fmt.Sprintf("printf x >> %s; test -f root.txt", countFile))
+		p := &schedulingProvider{}
+		e := newSchedulingEngineAt(t, w, p, repo)
+		if err := e.initializeState(); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.runPhase(context.Background(), "root"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.runCompletionValidation(context.Background(), "default", "tests"); err != nil {
+			t.Fatal(err)
+		}
+		assertNoSchedulingCompletion(t, e)
+		if got := len(mustReadFile(t, countFile)); got != 2 {
+			t.Fatalf("validation executions before restart = %d, want phase and final validation", got)
+		}
+
+		if err := newSchedulingEngineAt(t, w, p, repo).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(mustReadFile(t, countFile)); got != 2 {
+			t.Fatalf("restart reran final validation despite durable evidence: %d", got)
+		}
+		assertSchedulingCalls(t, p, "root:worker")
+		assertSchedulingCompletion(t, e)
+
+		if err := newSchedulingEngineAt(t, w, p, repo).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := len(mustReadFile(t, countFile)); got != 2 {
+			t.Fatalf("restart reran a persisted completion: %d", got)
+		}
+	})
+}
+
 func schedulingWorkflow(repo, name string, ids []string, dependencies map[string][]string, gateCommand string) *workflow.Workflow {
 	graph := workflow.PhaseDependencyGraph{}
 	phases := make([]workflow.Phase, 0, len(ids))
@@ -258,7 +351,12 @@ func schedulingWorkflow(repo, name string, ids []string, dependencies map[string
 
 func newSchedulingEngine(t *testing.T, w *workflow.Workflow, p *schedulingProvider) *Engine {
 	t.Helper()
-	e, err := New(w, map[string]provider.Provider{"test": p}, Options{})
+	return newSchedulingEngineAt(t, w, p, "")
+}
+
+func newSchedulingEngineAt(t *testing.T, w *workflow.Workflow, p *schedulingProvider, repo string) *Engine {
+	t.Helper()
+	e, err := New(w, map[string]provider.Provider{"test": p}, Options{RepoRoot: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,6 +388,53 @@ func assertSchedulingCompletion(t *testing.T, e *Engine) {
 	if ok, _, err := e.validCommitMarker(e.workflowCompleteMarker()); err != nil || !ok {
 		t.Fatalf("completion marker: ok=%v err=%v", ok, err)
 	}
+}
+
+func assertNoSchedulingCompletion(t *testing.T, e *Engine) {
+	t.Helper()
+	if ok, _, err := e.validCommitMarker(e.workflowCompleteMarker()); err != nil || ok {
+		t.Fatalf("completion marker: ok=%v err=%v", ok, err)
+	}
+}
+
+func conciseCompletionWorkflow(t *testing.T, repo, name, command string) *workflow.Workflow {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "workflow.yaml")
+	document := fmt.Sprintf(`
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: %s}
+spec:
+  workspace: {allowWrites: [root.txt, validation.allow]}
+  agents:
+    worker: {runner: test, model: test-model}
+  validation:
+    tests: {run: %q}
+  phases:
+    - {id: root, actor: worker, prompt: write the root artifact, validation: tests}
+  completion: {validation: tests}
+`, name, command)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := workflow.Decode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := workflow.Validate(d)
+	if result.Status != workflow.Executable || result.Normalized == nil {
+		t.Fatalf("workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	return result.Normalized.Workflow
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func waitForFile(t *testing.T, path string) {
