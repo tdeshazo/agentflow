@@ -113,6 +113,31 @@ func TestV1Alpha2InlineActorSchedulerPreservesAcceptanceBoundary(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2ActorCreatedCommitDoesNotSatisfyValidationOrDependency(t *testing.T) {
+	repo := newDurableRepo(t)
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["phase"] != "root" {
+			return nil
+		}
+		if err := os.WriteFile(filepath.Join(request.Workspace, "root.txt"), []byte("actor commit\n"), 0o644); err != nil {
+			return err
+		}
+		gitIn(t, request.Workspace, "add", "root.txt")
+		gitIn(t, request.Workspace, "commit", "-qm", "actor-created root commit")
+		return nil
+	}}
+	w := schedulingWorkflow(repo, "actor-commit-not-acceptance", []string{"root", "child"}, map[string][]string{"child": {"root"}}, "false")
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model", MayCommit: true}
+	e := newSchedulingEngine(t, w, p)
+	err := e.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "validation") {
+		t.Fatalf("actor-created commit bypass error = %v", err)
+	}
+	assertNoPhaseMarker(t, e, "root")
+	assertNoPhaseMarker(t, e, "child")
+	assertSchedulingCalls(t, p, "root:worker")
+}
+
 func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
 	t.Run("invalid references fail before any actor runs", func(t *testing.T) {
 		repo := newDurableRepo(t)
