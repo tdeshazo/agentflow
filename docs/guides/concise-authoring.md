@@ -119,8 +119,9 @@ spec:
 
 A phase that needs a one-off actor may instead place the ordinary `Agent`
 fields for its selected language version directly under `actor`. In v1alpha2,
-the mapping uses exactly the same `runner` and `model` schema as a named
-v1alpha2 agent:
+the mapping uses exactly the same full schema as a named v1alpha2 agent,
+including `runner`, `model`, `sandbox`, `approval`, `ephemeral`, `may_commit`,
+and `output_last_message`:
 
 ```yaml
 spec:
@@ -129,6 +130,11 @@ spec:
       actor:
         runner: codex
         model: gpt-5.6-terra
+        sandbox: workspace-write
+        approval: never
+        ephemeral: true
+        may_commit: false
+        output_last_message: true
       validation: tests
       prompt: Review the implementation.
 ```
@@ -143,6 +149,15 @@ In v1alpha1, the mapping instead uses the v1alpha1 `Agent` schema, including
 fields such as `sandbox`, `approval`, `ephemeral`, and `may_commit`.
 `defaults.agent` inheritance and explicit boolean overrides continue to apply
 there unchanged.
+
+The v1alpha2 capability fields control actor execution only. They preserve the
+shared v1alpha1/runtime `Agent` meanings and do not grant acceptance authority:
+they cannot accept a phase or satisfy `dependsOn`, waive validation, widen
+`workspace.allowWrites`, bypass integrity or lineage, extend repair budgets, or
+authorize workflow completion. Explicit `false` values for `ephemeral`,
+`may_commit`, and `output_last_message` remain valid values rather than missing
+fields or truthy defaults. See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md#specagents)
+for the field-level contract.
 
 The generated name uses the reserved `__inline_actor__` prefix and the phase ID
 when available. That namespace is runtime-owned: authored workflows must not
