@@ -5,6 +5,12 @@
 ### Added
 
 - Experimental Go interpreter for the executable `v1alpha1` core.
+- Concise `agentflow.dev/v1alpha2` authoring with strict decoding, named actor
+  resolution, workspace allowlists, dependency-derived serial scheduling,
+  bounded repair, deterministic final validation, and durable completion
+  evidence.
+- Checked-in v1alpha2 conformance and example workflows, with v1alpha1
+  compatibility regressions and expanded-plan coverage.
 - Git-object/ref-backed durable workflow state and resumable phase markers.
 - Public provider-neutral execution interface with an initial Codex CLI adapter.
 - Runtime documentation and tests for Git state, glob policy, templates, and Codex invocation.

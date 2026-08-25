@@ -24,8 +24,8 @@ the section that matches the question you are trying to answer:
   [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and the
   [concise authoring guide](guides/concise-authoring.md). The
   [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)
-  is available for strict decoding, validation, and expanded plans; it is not
-  yet executable.
+  describes the executable concise evolution and its dependency/acceptance
+  boundaries.
 - To understand the current interpreter, read the
   [Go runtime reference](reference/runtime.md).
 - To contribute a change, follow the

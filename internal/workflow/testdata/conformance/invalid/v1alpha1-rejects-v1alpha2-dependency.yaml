@@ -1,0 +1,14 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: v1alpha1-compatibility
+spec:
+  agents:
+    worker:
+      runner: codex
+  phases:
+    - id: build
+      kind: implementation
+      actor: worker
+      prompt: Build the feature.
+      dependsOn: [other]

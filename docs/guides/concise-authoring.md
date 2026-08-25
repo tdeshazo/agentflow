@@ -5,6 +5,54 @@ validation authority, and completion authority structurally separate. Concise
 authoring syntax may remove boilerplate, but it must compile to the same
 executable contract and must not create an acceptance bypass.
 
+## v1alpha2 concise evolution
+
+`agentflow.dev/v1alpha2` is the concise AgentFlow evolution for a small,
+dependency-aware implementation and review workflow. It keeps the existing
+AgentFlow nouns—`workspace`, `agents`, `validation`, `phases`, and
+`completion`—and makes the executable authority explicit in a compact form:
+
+```yaml
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: feature
+spec:
+  workspace:
+    allowWrites: [src/**, tests/**]
+  agents:
+    coder: {runner: codex, model: gpt-5.6-terra}
+    reviewer: {runner: codex, model: gpt-5.6-luna}
+  validation:
+    tests:
+      run: make test
+      repair:
+        once: coder
+  phases:
+    - id: implement
+      actor: coder
+      prompt: Implement the feature.
+      validation: tests
+    - id: review
+      actor: reviewer
+      dependsOn: [implement]
+      prompt: Review the feature.
+      validation: tests
+  completion:
+    validation: tests
+```
+
+This form is executable today. `allowWrites` normalizes to the existing
+workspace mutation policy, named actors resolve to the existing executor
+capabilities, and each `run` command becomes a deterministic shell validation.
+`repair.once` permits exactly one named repair attempt and then reruns the same
+validation. `dependsOn` requires durable deterministic acceptance of every
+referenced phase, and the completion validation is a separate final transition.
+The expanded plan makes these normalized boundaries inspectable before a run.
+
+See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md) and the
+[checked-in conformance example](../../internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml).
+
 The `v1alpha1` authoring surface currently includes three additional shorthands
 for common repository workflows.
 
@@ -105,7 +153,13 @@ repair policy or other workflow object needs to reference the actor, or when the
 capability should have a stable human-facing identity. Use the inline form for a
 capability that is genuinely local to one phase.
 
-## Inline shell validation
+## v1alpha1 concise syntax
+
+The following shorthand sections describe the existing v1alpha1 authoring
+layer. They remain compatible with v1alpha1 and are separate from the
+v1alpha2 contract above.
+
+### Inline shell validation
 
 A validation containing one shell command may use `run` instead of declaring a
 separate shell tool and a one-element `steps` list:
@@ -237,10 +291,10 @@ The authored form is intentionally shorter, but the semantics remain:
 
 ## What is not shorthand
 
-AgentFlow does not currently add `dependsOn` as an authoring alias. Dependency
-edges require the ready-node scheduler and concurrent-mutation semantics from
-the explicit dependency-graph roadmap work. Accepting the syntax before the
-runtime can enforce those semantics would create a misleading contract.
+The v1alpha1 concise layer does not add `dependsOn`. Dependency edges belong
+to the v1alpha2 contract, where the ready-node scheduler and durable acceptance
+semantics enforce them. A v1alpha1 document that declares `dependsOn` remains
+invalid rather than being silently interpreted as v1alpha2.
 
 Similarly, concise validation syntax does not add model-decided completion,
 `skip`-on-failure acceptance, or unbounded repair. Those behaviors would weaken

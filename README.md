@@ -11,6 +11,7 @@ This repository contains:
 - an agent skill for authoring, describing, reviewing, and comparing workflow
   specifications without requiring AgentFlow implementation source;
 - an executable workflow example;
+- a checked-in v1alpha2 concise conformance example;
 - an experimental Go interpreter with a provider-neutral execution interface;
   and
 - a roadmap for evolving AgentFlow into a portable YAML SDL with a reference
@@ -28,8 +29,8 @@ organizes the documentation by purpose:
 - [AgentWorkflow v1alpha1 reference](docs/reference/agentflow-v1alpha1.md)
   documents field semantics.
 - [AgentWorkflow v1alpha2 authoring contract](docs/reference/agentflow-v1alpha2.md)
-  defines the proposed concise form and its dependency/acceptance semantics;
-  it is design-only until implementation work is scheduled.
+  defines the concise AgentFlow evolution and its dependency/acceptance
+  semantics.
 - [Go runtime reference](docs/reference/runtime.md) documents the current
   interpreter and its limits.
 - [Planning](docs/planning/README.md) navigates the canonical root
@@ -72,7 +73,8 @@ organizes the documentation by purpose:
 ├── skills/
 │   └── agentflow-spec/
 └── examples/
-    └── art-portfolio.agent-workflow.yaml
+    ├── art-portfolio.agent-workflow.yaml
+    └── feature.agent-workflow.yaml
 ```
 
 ## Install
@@ -107,15 +109,19 @@ workflow logic.
 
 ## Current interpreter
 
-The experimental Go interpreter executes the supported core of `v1alpha1`
-against Git workspaces, stores durable workflow state in namespaced Git refs,
-and uses the public [provider interface](provider/provider.go) for AI
-execution. The initial adapter uses non-interactive Codex CLI execution.
+The experimental Go interpreter executes the supported cores of `v1alpha1` and
+the concise `v1alpha2` contract against Git workspaces, stores durable
+workflow state in namespaced Git refs, and uses the public [provider
+interface](provider/provider.go) for AI execution. v1alpha2 derives a
+deterministic serial schedule from `dependsOn`; the initial adapter uses
+non-interactive Codex CLI execution.
 
 See the [runtime reference](docs/reference/runtime.md) for CLI usage, state
 layout, supported constructs, provider behavior, and current limits. The
 [art portfolio workflow](examples/art-portfolio.agent-workflow.yaml) creates
-a FastAPI backend, React frontend, and containerized deployment.
+a FastAPI backend, React frontend, and containerized deployment. The concise
+[feature workflow](examples/feature.agent-workflow.yaml) is the checked-in
+v1alpha2 conformance example.
 
 ## Validation
 
@@ -142,18 +148,22 @@ and completion.
 
 ## Status
 
-The current specification identifier is:
+The supported specification identifiers are:
 
 ```yaml
 apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
+
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
 ```
 
-`v1alpha1` remains the currently supported executable identifier and is
-experimental. `v1alpha2` has explicit decoding, structural validation, and
-normalization support for its concise authoring form, but remains unsupported
-for execution until dependency scheduling is implemented. It does not change
-v1alpha1 behavior.
+`v1alpha1` remains supported and experimental. `v1alpha2` is the concise
+AgentFlow evolution: its core form strictly decodes, validates as executable,
+normalizes to the existing authority model, derives a deterministic serial
+schedule, and records durable phase/completion evidence. It does not change
+v1alpha1 behavior; representative v1alpha1 regressions remain in the
+conformance suite.
 
 ## Publishing
 

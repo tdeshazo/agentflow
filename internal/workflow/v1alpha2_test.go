@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -74,6 +76,19 @@ func TestV1Alpha2RepairNormalizesToBoundedDeterministicValidation(t *testing.T) 
 	}
 	if len(v.OnFailure.Then) != 0 {
 		t.Fatalf("unexpected alternate post-repair steps = %#v", v.OnFailure.Then)
+	}
+}
+
+func TestV1Alpha2ConformanceExampleRemainsStrictlyDecoded(t *testing.T) {
+	path := filepath.Join("testdata", "conformance", "valid", "v1alpha2-concise.yaml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := strings.Replace(string(body), "      run: make test", "      run: make test\n      unknowable: true", 1)
+	_, err = Decode(writeWorkflow(t, unknown))
+	if err == nil || !strings.Contains(err.Error(), "field unknowable not found") {
+		t.Fatalf("strict decode error = %v", err)
 	}
 }
 

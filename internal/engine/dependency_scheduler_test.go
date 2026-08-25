@@ -16,8 +16,9 @@ import (
 )
 
 type schedulingProvider struct {
-	calls  []string
-	action func(context.Context, provider.Request) error
+	calls         []string
+	action        func(context.Context, provider.Request) error
+	skipPhaseFile bool
 }
 
 func (p *schedulingProvider) Name() string { return "scheduler-test" }
@@ -31,6 +32,9 @@ func (p *schedulingProvider) Run(ctx context.Context, request provider.Request) 
 		}
 	}
 	if phase == "" {
+		return provider.Result{}, nil
+	}
+	if p.skipPhaseFile {
 		return provider.Result{}, nil
 	}
 	return provider.Result{}, os.WriteFile(filepath.Join(request.Workspace, phase+".txt"), []byte(phase+"\n"), 0o644)
@@ -312,6 +316,74 @@ func TestV1Alpha2CompletionIsASeparateDurableTransition(t *testing.T) {
 			t.Fatalf("restart reran a persisted completion: %d", got)
 		}
 	})
+}
+
+func TestV1Alpha2ConformanceExampleExecutesAuthorityBoundaries(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "v1alpha2-concise.yaml")
+	d, err := workflow.Decode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := workflow.Validate(d)
+	if result.Status != workflow.Executable || result.Normalized == nil {
+		t.Fatalf("status = %s, normalized = %#v, diagnostics = %#v", result.Status, result.Normalized, result.Diagnostics)
+	}
+	w := result.Normalized.Workflow
+	toolName := w.Spec.Validation["tests"].Steps[0].Uses
+	tool := w.Spec.Tools[toolName]
+	validationCount := filepath.Join(t.TempDir(), "validation-count")
+	tool.Command = fmt.Sprintf("printf x >> %s; test -f src/repaired.txt", validationCount)
+	w.Spec.Tools[toolName] = tool
+
+	accepted := map[string]bool{}
+	ready := NewReadyNodeScheduler(w.DependencyGraph)
+	next, err := ready.Next(func(id string) (bool, error) { return accepted[id], nil })
+	if err != nil || next == nil || next.ID != "implement" {
+		t.Fatalf("initial ready phase = %#v, err = %v", next, err)
+	}
+	accepted["implement"] = true
+	next, err = ready.Next(func(id string) (bool, error) { return accepted[id], nil })
+	if err != nil || next == nil || next.ID != "review" {
+		t.Fatalf("ready phase after accepted implement = %#v, err = %v", next, err)
+	}
+
+	coderCalls := 0
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["actor"] == "coder" {
+			coderCalls++
+			if coderCalls == 2 {
+				return os.WriteFile(filepath.Join(request.Workspace, "src", "repaired.txt"), []byte("repaired\n"), 0o644)
+			}
+		}
+		return nil
+	}}
+	e, err := New(w, map[string]provider.Provider{"codex": p}, Options{RepoRoot: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.In = strings.NewReader("")
+	e.Out = io.Discard
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertSchedulingCalls(t, p, "implement:coder", "implement:coder", "review:reviewer")
+	if coderCalls != 2 {
+		t.Fatalf("coder calls = %d, want one implementation call plus exactly one repair call", coderCalls)
+	}
+	if got := len(mustReadFile(t, validationCount)); got != 4 {
+		t.Fatalf("validation executions = %d, want initial validation, post-repair rerun, review validation, and final validation", got)
+	}
+	assertSchedulingCompletion(t, e)
+
+	restarted, err := New(w, map[string]provider.Provider{"codex": p}, Options{RepoRoot: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSchedulingCompletion(t, restarted)
 }
 
 func schedulingWorkflow(repo, name string, ids []string, dependencies map[string][]string, gateCommand string) *workflow.Workflow {

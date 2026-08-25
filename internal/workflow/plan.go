@@ -9,18 +9,19 @@ import (
 // ExpandedPlan is a read-only explanation of the actual executable contract.
 // It intentionally contains no provider invocation or mutable tool operation.
 type ExpandedPlan struct {
-	Workflow                string               `yaml:"workflow"`
-	ResolvedAgents          []PlannedAgent       `yaml:"resolvedAgents"`
-	ResolvedLifecycle       LifecyclePolicy      `yaml:"resolvedLifecycle"`
-	SafetyEnforcementPoints []string             `yaml:"safetyEnforcementPoints"`
-	RecoveryBehavior        []string             `yaml:"recoveryBehavior"`
-	Validations             []PlannedValidation  `yaml:"validations"`
-	DependencyGraph         PhaseDependencyGraph `yaml:"dependencyGraph"`
-	Phases                  []PlannedPhase       `yaml:"phases"`
-	ProgressTransitions     []string             `yaml:"progressTransitions"`
-	CheckpointBehavior      string               `yaml:"checkpointBehavior"`
-	HumanGates              []string             `yaml:"humanGates"`
-	CompletionContract      []string             `yaml:"completionContract"`
+	Workflow                   string               `yaml:"workflow"`
+	WorkspaceMutationAllowlist []string             `yaml:"workspaceMutationAllowlist"`
+	ResolvedAgents             []PlannedAgent       `yaml:"resolvedAgents"`
+	ResolvedLifecycle          LifecyclePolicy      `yaml:"resolvedLifecycle"`
+	SafetyEnforcementPoints    []string             `yaml:"safetyEnforcementPoints"`
+	RecoveryBehavior           []string             `yaml:"recoveryBehavior"`
+	Validations                []PlannedValidation  `yaml:"validations"`
+	DependencyGraph            PhaseDependencyGraph `yaml:"dependencyGraph"`
+	Phases                     []PlannedPhase       `yaml:"phases"`
+	ProgressTransitions        []string             `yaml:"progressTransitions"`
+	CheckpointBehavior         string               `yaml:"checkpointBehavior"`
+	HumanGates                 []string             `yaml:"humanGates"`
+	CompletionContract         []string             `yaml:"completionContract"`
 }
 type PlannedValidation struct {
 	Name            string   `yaml:"name"`
@@ -77,12 +78,13 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		}
 	}
 	plan := ExpandedPlan{
-		Workflow:                w.Metadata.Name,
-		DependencyGraph:         clonePhaseDependencyGraph(n.DependencyGraph),
-		ResolvedLifecycle:       resolvedLifecycle,
-		SafetyEnforcementPoints: []string{"before actor and tool work", "after actor and tool work", "before checkpoint", "before acceptance marker reuse", "during interrupted-phase recovery"},
-		RecoveryBehavior:        []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
-		CheckpointBehavior:      "runtime checkpoints accepted allowed dirty work, rechecks lineage, integrity, scope, and cleanliness, then writes the commit-valued phase marker",
+		Workflow:                   w.Metadata.Name,
+		WorkspaceMutationAllowlist: append([]string{}, w.Spec.Workspace.MutationPolicy.Allowed...),
+		DependencyGraph:            clonePhaseDependencyGraph(n.DependencyGraph),
+		ResolvedLifecycle:          resolvedLifecycle,
+		SafetyEnforcementPoints:    []string{"before actor and tool work", "after actor and tool work", "before checkpoint", "before acceptance marker reuse", "during interrupted-phase recovery"},
+		RecoveryBehavior:           []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
+		CheckpointBehavior:         "runtime checkpoints accepted allowed dirty work, rechecks lineage, integrity, scope, and cleanliness, then writes the commit-valued phase marker",
 	}
 	for _, name := range sortedKeys(w.Spec.Agents) {
 		a := w.Spec.Agents[name]

@@ -2,6 +2,13 @@
 
 This reference describes the semantics used by the workflow definitions in this conversation. It is a descriptive guide for agents, not a claim of an externally standardized engine implementation.
 
+`agentflow.dev/v1alpha2` is the concise AgentFlow evolution for small
+dependency-aware workflows. It has its own strict authoring contract and
+normalizes to the same workspace, named-actor, deterministic-validation, and
+durable-completion authorities described here. This v1alpha1 guide remains the
+field reference for v1alpha1; see the [v1alpha2 reference](agentflow-v1alpha2.md)
+for its compact fields and dependency-derived scheduling.
+
 ## Top level
 
 - `apiVersion`: DSL version. Current examples use `agentflow.dev/v1alpha1`.

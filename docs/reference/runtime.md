@@ -1,7 +1,7 @@
 # Go interpreter
 
-AgentFlow includes an experimental Go interpreter for the executable core of
-`agentflow.dev/v1alpha1`.
+AgentFlow includes an experimental Go interpreter for the executable cores of
+`agentflow.dev/v1alpha1` and the concise `agentflow.dev/v1alpha2` contract.
 
 The runtime is intentionally conservative: implemented constructs execute, while
 unknown preconditions, tools, assertions, or template expressions fail closed.
@@ -112,13 +112,15 @@ go run . plan --expanded -f workflow.yaml
 Runtime parameters can be overridden with repeated `--set key=value` flags.
 Environment-backed parameter defaults continue to work through the workflow.
 
-`plan --expanded` validates the authored document, normalizes concise defaults,
-and validates the resulting executable representation without opening a
-repository or invoking actors/tools. Its YAML output exposes the resolved
-lifecycle and executor defaults, recovery, safety boundaries, each gate's
-repair actor and post-repair steps, each phase's resolved actor/reasoning,
-validation, mutation/progress flags, bookkeeping transitions, and acceptance
-ordering, plus the checkpoint contract, human gates, and completion contract.
+`plan --expanded` validates the authored document, normalizes concise defaults
+or the v1alpha2 form, and validates the resulting executable representation
+without opening a repository or invoking actors/tools. Its YAML output exposes
+the resolved lifecycle and executor defaults, recovery, safety boundaries,
+each gate's repair actor and bounded rerun contract, each phase's resolved
+actor/reasoning, validation, mutation/progress flags, bookkeeping transitions,
+and acceptance ordering. For v1alpha2 it also exposes the normalized
+dependency graph, including the durable acceptance condition on each edge,
+plus the checkpoint contract, human gates, and completion contract.
 
 ## Git-backed state
 
