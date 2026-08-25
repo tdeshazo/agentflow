@@ -186,7 +186,7 @@ func TestReconcilePendingInvocationFailsClosedBeforeRecoveryWork(t *testing.T) {
 
 func TestReconcilePendingInvocationRetainsCompletionRepairAttribution(t *testing.T) {
 	repo := newDurableRepo(t)
-	w := v1Alpha2CompletionRepairWorkflow(repo, "pending-completion-repair")
+	w := completionRepairWorkflow(repo, "pending-completion-repair")
 	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model", MayCommit: true}
 	e := newSchedulingEngine(t, w, &schedulingProvider{})
 	if err := e.initializeOrResumeState(); err != nil {

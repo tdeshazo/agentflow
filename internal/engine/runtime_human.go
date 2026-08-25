@@ -307,8 +307,8 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 			return err
 		}
 	}
-	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" && c.FinalValidation != "" {
-		scope := "completion/" + name + "/" + c.FinalValidation
+	if c.FinalValidation != "" {
+		scope := completionValidationScope(name, c.FinalValidation)
 		if err := e.clearStandaloneRepairStateForScope(scope); err != nil {
 			return err
 		}
@@ -366,12 +366,8 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 	return nil
 }
 
-// runCompletionValidation runs the v1alpha2 final gate in its own durable
-// evidence scope. v1alpha1 retains its existing explicit-flow behavior.
+// runCompletionValidation runs a final gate in its own durable evidence scope.
 func (e *Engine) runCompletionValidation(ctx context.Context, completion, validation string) error {
-	if e.Workflow.APIVersion != "agentflow.dev/v1alpha2" {
-		return e.runValidation(ctx, validation, nil)
-	}
 	previous := e.completionValidation
 	e.completionValidation = completion
 	defer func() { e.completionValidation = previous }()

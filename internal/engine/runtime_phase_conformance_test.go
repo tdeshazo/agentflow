@@ -181,7 +181,7 @@ func TestAdversarialCompletionRepairAttributionAcrossCrashWindows(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newDurableRepo(t)
 			counter := filepath.Join(t.TempDir(), "completion-validation-count")
-			w := v1Alpha2CompletionRepairWorkflow(repo, "adversarial-completion-"+strings.ReplaceAll(tt.name, " ", "-"))
+			w := completionRepairWorkflow(repo, "adversarial-completion-"+strings.ReplaceAll(tt.name, " ", "-"))
 			w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "worker-model", MayCommit: false}
 			w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model", MayCommit: tt.repairMayCommit}
 			w.Spec.Parameters = map[string]workflow.Parameter{"counter": {Type: "path", Default: counter}}
