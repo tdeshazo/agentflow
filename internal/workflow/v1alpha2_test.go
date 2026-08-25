@@ -56,6 +56,31 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2ExpandedPlanExposesEffectiveActorCapabilities(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture,
+		"coder: {runner: codex, model: gpt-5.6-terra}",
+		"coder: {runner: codex, model: gpt-5.6-terra, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true}",
+		1,
+	)
+	d, err := Decode(writeWorkflow(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildExpandedPlan(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ResolvedAgents) != 2 {
+		t.Fatalf("planned agents = %#v", plan.ResolvedAgents)
+	}
+	coder := plan.ResolvedAgents[0]
+	if coder.Name != "coder" || coder.Runner != "codex" || coder.Model != "gpt-5.6-terra" ||
+		coder.Sandbox != "workspace-write" || coder.Approval != "never" || !coder.Ephemeral ||
+		!coder.MayCommit || !coder.OutputLastMessage {
+		t.Fatalf("planned coder capabilities = %#v", coder)
+	}
+}
+
 func TestV1Alpha2PhaseActorForms(t *testing.T) {
 	t.Run("named scalar actor", func(t *testing.T) {
 		d, err := Decode(writeWorkflow(t, v1alpha2Fixture))

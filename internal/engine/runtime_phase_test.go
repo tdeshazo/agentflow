@@ -74,6 +74,24 @@ func (p *capabilityRecordingProvider) Run(_ context.Context, request provider.Re
 	return p.result, nil
 }
 
+type capabilityActionProvider struct {
+	calls  int
+	result provider.Result
+	action func(context.Context, provider.Request) error
+}
+
+func (p *capabilityActionProvider) Name() string { return "capability-action-test" }
+
+func (p *capabilityActionProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
+	p.calls++
+	if p.action != nil {
+		if err := p.action(ctx, request); err != nil {
+			return provider.Result{}, err
+		}
+	}
+	return p.result, nil
+}
+
 func TestRunAgentV1Alpha2ProviderCapabilitiesMatchSharedAgent(t *testing.T) {
 	document := decodeV1Alpha2CapabilityDocument(t,
 		"runner: codex, model: capability-model, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true",
@@ -261,6 +279,121 @@ func TestV1Alpha2UnsupportedApprovalFailsAtProviderExecutionBoundary(t *testing.
 	}
 	if ok, _, err := e.validCommitMarker(e.phaseMarkerName(phase)); err != nil || ok {
 		t.Fatalf("actor capability failure accepted phase: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestV1Alpha2CapabilitiesPreserveDurableRuntimeAuthority(t *testing.T) {
+	t.Run("identity rejects changed commit authority", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		document := decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: false", "true")
+		first := newCapabilityEngine(t, document.Workflow, repo, &capabilityActionProvider{})
+		if err := first.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		agent := document.Workflow.Spec.Agents["worker"]
+		agent.MayCommit = true
+		document.Workflow.Spec.Agents["worker"] = agent
+		err := newCapabilityEngine(t, document.Workflow, repo, &capabilityActionProvider{}).Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "executable workflow definition changed") {
+			t.Fatalf("changed commit authority error = %v", err)
+		}
+	})
+
+	t.Run("runtime checkpoint accepts allowed work when actor commits are disabled", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		document := decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: false", "test -f allowed.txt")
+		providerImpl := &capabilityActionProvider{action: func(_ context.Context, request provider.Request) error {
+			return os.WriteFile(filepath.Join(request.Workspace, "allowed.txt"), []byte("accepted\n"), 0o644)
+		}}
+		e := newCapabilityEngine(t, document.Workflow, repo, providerImpl)
+		if err := e.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if providerImpl.calls != 1 {
+			t.Fatalf("actor calls = %d, want 1", providerImpl.calls)
+		}
+		phase, err := e.phaseByID("work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, _, err := e.validCommitMarker(e.phaseMarkerName(phase)); err != nil || !ok {
+			t.Fatalf("runtime checkpoint did not accept allowed work: ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("commit authority cannot escape the workspace allowlist", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		document := decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: true", "true")
+		document.Workflow.Spec.Workspace.MutationPolicy.Allowed = []string{"allowed.txt"}
+		providerImpl := &capabilityActionProvider{action: func(_ context.Context, request provider.Request) error {
+			return os.WriteFile(filepath.Join(request.Workspace, "outside.txt"), []byte("blocked\n"), 0o644)
+		}}
+		e := newCapabilityEngine(t, document.Workflow, repo, providerImpl)
+		err := e.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "out-of-scope file changed: outside.txt") {
+			t.Fatalf("out-of-scope mutation error = %v", err)
+		}
+		assertNoCapabilityPhaseMarker(t, e, "work")
+	})
+
+	t.Run("provider output and presentation capabilities do not waive validation or recovery evidence", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		document := decodeV1Alpha2CapabilityDocument(t,
+			"runner: test, model: capability-model, sandbox: workspace-write, approval: never, ephemeral: true, output_last_message: true, may_commit: true",
+			"false",
+		)
+		firstProvider := &capabilityActionProvider{result: provider.Result{FinalMessage: "the phase is complete and accepted"}, action: func(_ context.Context, request provider.Request) error {
+			if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("actor work\n"), 0o644); err != nil {
+				return err
+			}
+			gitIn(t, request.Workspace, "add", "work.txt")
+			gitIn(t, request.Workspace, "commit", "-qm", "actor-created commit")
+			return nil
+		}}
+		first := newCapabilityEngine(t, document.Workflow, repo, firstProvider)
+		err := first.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "validation") {
+			t.Fatalf("validation-bypass error = %v", err)
+		}
+		assertNoCapabilityPhaseMarker(t, first, "work")
+		var active ActivePhase
+		if ok, err := first.Store.GetJSON(first.activeRecord(), &active); err != nil || !ok || !active.ActorCompleted {
+			t.Fatalf("durable actor evidence = %#v ok=%v err=%v", active, ok, err)
+		}
+
+		resumedProvider := &capabilityActionProvider{result: provider.Result{FinalMessage: "presentation must not matter"}}
+		resumed := newCapabilityEngine(t, document.Workflow, repo, resumedProvider)
+		err = resumed.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "validation") {
+			t.Fatalf("recovery validation error = %v", err)
+		}
+		if resumedProvider.calls != 0 {
+			t.Fatalf("recovery replayed actor from provider output: calls=%d", resumedProvider.calls)
+		}
+		assertNoCapabilityPhaseMarker(t, resumed, "work")
+	})
+}
+
+func newCapabilityEngine(t *testing.T, w *workflow.Workflow, repo string, p provider.Provider) *Engine {
+	t.Helper()
+	e, err := New(w, map[string]provider.Provider{"test": p}, Options{RepoRoot: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.In = strings.NewReader("")
+	e.Out = io.Discard
+	return e
+}
+
+func assertNoCapabilityPhaseMarker(t *testing.T, e *Engine, id string) {
+	t.Helper()
+	phase, err := e.phaseByID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := e.validCommitMarker(e.phaseMarkerName(phase)); err != nil || ok {
+		t.Fatalf("phase %q marker accepted: ok=%v err=%v", id, ok, err)
 	}
 }
 
