@@ -407,11 +407,24 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 	return nil
 }
 
+// effectiveActorCommitPermission reports whether one specific actor invocation
+// may create commits. Workflow-level settings grant workflow authority to any
+// actor; they do not inherit another actor's MayCommit value.
+//
+// Keep every actor invocation path, including future pending-invocation
+// recovery, behind invokeAgent so it uses this same rule.
+func (e *Engine) effectiveActorCommitPermission(agent workflow.Agent) bool {
+	return agent.MayCommit ||
+		e.Workflow.Spec.Workspace.AgentCommits.Allowed ||
+		e.Workflow.Spec.Workspace.Checkpointing.AgentCommitsAllowed
+}
+
 // invokeAgent is the shared repository-authority boundary for every named
 // actor invocation, including primary actors, repairs, and recovered reruns.
-// It deliberately observes only HEAD: may_commit governs actor-created
-// commits, while ordinary workspace edits remain subject to the independent
-// mutation-boundary checks and may later be checkpointed by the runtime.
+// It deliberately observes only HEAD: actor commit permission governs
+// actor-created commits, while ordinary workspace edits remain subject to the
+// independent mutation-boundary checks and may later be checkpointed by the
+// runtime.
 func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request) (bool, error) {
 	before, err := e.Repo.Head()
 	if err != nil {
@@ -423,9 +436,9 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 	if headErr != nil {
 		return false, fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
 	}
-	if before != after && !agent.MayCommit {
+	if before != after && !e.effectiveActorCommitPermission(agent) {
 		return true, &safetyViolation{
-			err:    fmt.Errorf("repository policy: actor %q moved HEAD but may_commit is false", actorName),
+			err:    fmt.Errorf("repository policy: actor %q moved HEAD but effective actor commit permission is false (may_commit is false and no workflow actor-commit permission is enabled)", actorName),
 			actor:  actorName,
 			commit: after,
 		}

@@ -299,8 +299,7 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
 	}
-	allowed := agent.MayCommit || e.Workflow.Spec.Workspace.AgentCommits.Allowed || e.Workflow.Spec.Workspace.Checkpointing.AgentCommitsAllowed
-	if allowed {
+	if e.effectiveActorCommitPermission(agent) {
 		return nil
 	}
 	head, err := e.Repo.Head()
