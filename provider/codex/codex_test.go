@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 )
 
@@ -26,6 +27,82 @@ func TestBuildArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildArgsResolvesSandbox(t *testing.T) {
+	tests := []struct {
+		name    string
+		sandbox string
+		want    string
+	}{
+		{name: "empty defaults to workspace-write", want: "workspace-write"},
+		{name: "explicit workspace-write", sandbox: "workspace-write", want: "workspace-write"},
+		{name: "explicit read-only", sandbox: "read-only", want: "read-only"},
+		{name: "explicit danger-full-access", sandbox: "danger-full-access", want: "danger-full-access"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := buildArgs(provider.Request{Workspace: "/repo", Sandbox: tt.sandbox}, "/tmp/last")
+			if got := sandboxArg(args); got != tt.want {
+				t.Fatalf("--sandbox value = %q, want %q: %#v", got, tt.want, args)
+			}
+		})
+	}
+}
+
+func TestBuildArgsEmptySandboxCannotInheritCodexUserConfiguration(t *testing.T) {
+	args := buildArgs(provider.Request{Workspace: "/repo"}, "/tmp/last")
+	if got := sandboxArg(args); got != defaultSandbox {
+		t.Fatalf("empty sandbox argument = %q, want explicit %q: %#v", got, defaultSandbox, args)
+	}
+}
+
+func TestNormalizedAgentsUseTheSameCodexSandboxBehavior(t *testing.T) {
+	tests := []struct {
+		name     string
+		document string
+	}{
+		{
+			name: "v1alpha1",
+			document: `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: v1alpha1}
+spec:
+  agents: {worker: {runner: codex}}
+`,
+		},
+		{
+			name: "v1alpha2",
+			document: `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: v1alpha2}
+spec:
+  agents: {worker: {runner: codex, model: test-model}}
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := writeWorkflow(t, tt.document)
+			decoded, err := workflow.Decode(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, err := workflow.NormalizeWorkflow(decoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent := normalized.Workflow.Spec.Agents["worker"]
+			if agent.Sandbox != "" {
+				t.Fatalf("normalized sandbox = %q, want provider-neutral empty value", agent.Sandbox)
+			}
+			if got := sandboxArg(buildArgs(provider.Request{Workspace: "/repo", Sandbox: agent.Sandbox}, "/tmp/last")); got != defaultSandbox {
+				t.Fatalf("Codex sandbox argument = %q, want %q", got, defaultSandbox)
+			}
+		})
 	}
 }
 
@@ -296,6 +373,24 @@ func containsColorArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func sandboxArg(args []string) string {
+	for i := range args {
+		if args[i] == "--sandbox" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func writeWorkflow(t *testing.T, document string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "workflow.yaml")
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	return path
 }
 
 func contains(values []string, want string) bool {

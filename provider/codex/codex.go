@@ -21,6 +21,8 @@ type Provider struct {
 	OutputTTY func(io.Writer) bool
 }
 
+const defaultSandbox = "workspace-write"
+
 func (p Provider) Name() string { return "codex" }
 
 func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Result, error) {
@@ -79,9 +81,9 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	// Codex loads user configuration by default. Override its approval setting so
 	// the workflow's only supported policy remains authoritative for this run.
 	args = append(args, "-c", `approval_policy="never"`)
-	if req.Sandbox != "" {
-		args = append(args, "--sandbox", req.Sandbox)
-	}
+	// Keep the provider-neutral request unchanged at the engine boundary, but
+	// make the built-in adapter's empty-sandbox behavior explicit to Codex.
+	args = append(args, "--sandbox", resolveSandbox(req.Sandbox))
 	if req.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
@@ -97,6 +99,13 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	}
 	args = append(args, "-")
 	return args
+}
+
+func resolveSandbox(sandbox string) string {
+	if sandbox == "" {
+		return defaultSandbox
+	}
+	return sandbox
 }
 
 func (p Provider) outputIsTTY(out io.Writer) bool {

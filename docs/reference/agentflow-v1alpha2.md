@@ -132,11 +132,16 @@ values, defaults, or other semantics for them:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `sandbox` | string | Selects the provider sandbox capability. |
+| `sandbox` | string | Authored provider-neutral sandbox capability, passed to the selected provider. |
 | `approval` | string | Selects the provider approval policy, subject to provider support. |
 | `ephemeral` | boolean | Controls provider session/context persistence according to existing provider semantics. |
 | `may_commit` | boolean | Invocation-scoped authority: whether this named actor invocation may move repository `HEAD` by creating commits. |
 | `output_last_message` | boolean | Provider-neutral capture intent: when true, ask the provider to capture and return its final message when supported; when false, do not request capture. |
+
+The authored `sandbox` field becomes the shared provider-neutral
+`Agent.Sandbox` capability and is passed to the selected provider through
+`Request.Sandbox`. It does not select a provider-specific default during
+v1alpha2 normalization.
 
 An explicit boolean `false` is a valid authored value. In particular,
 `may_commit: false`, `output_last_message: false`, and `ephemeral: false` are
@@ -144,9 +149,9 @@ not missing fields and must not be replaced by truthy defaults. v1alpha2 does
 not apply inherited agent defaults: omitted boolean fields normalize to `false`,
 while an explicit `false` remains `false`.
 
-Any future `defaults.agent` inheritance feature must first introduce
-presence-aware boolean decoding. Only presence-aware decoding can distinguish
-an omitted boolean from an explicit `false` before a truthy inherited default is
+If v1alpha2 later adds agent inheritance, it must first introduce
+presence-aware boolean decoding. Only presence-aware decoding can distinguish an
+omitted boolean from an explicit `false` before a truthy inherited default is
 applied; without that distinction, an explicit `false` could be overwritten.
 
 `may_commit` is evaluated independently for every actor invocation. It applies
