@@ -350,7 +350,9 @@ type Provider interface {
 
 `Request` describes workspace, model, reasoning effort, prompt, sandbox, and
 execution-lifetime preferences without exposing Codex-specific command-line
-arguments to the interpreter. Agent commit permission is evaluated per named
+arguments to the interpreter. The authored `Agent.Sandbox` value is copied to
+the provider-neutral `Request.Sandbox` value; an empty value is not defaulted by
+the engine. Agent commit permission is evaluated per named
 actor invocation by the shared runtime; it is not a phase-wide provider
 setting. Providers must not treat a different actor's permission as authority
 for the current invocation.

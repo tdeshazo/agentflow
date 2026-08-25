@@ -65,6 +65,24 @@ func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 	}
 }
 
+func TestRunAgentLeavesEmptySandboxProviderNeutralForInjectedProvider(t *testing.T) {
+	providerImpl := &capabilityRecordingProvider{}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{
+			"worker": {Runner: "custom"},
+		}}},
+		Providers: map[string]provider.Provider{"custom": providerImpl},
+		Repo:      gitstate.Repo{Root: newDurableRepo(t)},
+	}
+
+	if err := e.runAgent(context.Background(), "worker", "", "do work", nil); err != nil {
+		t.Fatal(err)
+	}
+	if providerImpl.request.Sandbox != "" {
+		t.Fatalf("injected provider sandbox = %q, want provider-neutral empty value", providerImpl.request.Sandbox)
+	}
+}
+
 func TestRunAgentEnforcesMayCommitAtEachActorInvocation(t *testing.T) {
 	providerFailure := errors.New("provider failed after committing")
 	for _, test := range []struct {
