@@ -371,7 +371,59 @@ func (e *Engine) runCompletionValidation(ctx context.Context, completion, valida
 	previous := e.completionValidation
 	e.completionValidation = completion
 	defer func() { e.completionValidation = previous }()
+	if err := e.reconcileV1Alpha1CompletionValidationState(completion, validation); err != nil {
+		return err
+	}
 	return e.runValidation(ctx, validation, nil)
+}
+
+// reconcileV1Alpha1CompletionValidationState recognizes the unscoped durable
+// state written by the runtime before completion validations had their own
+// namespace. It deliberately treats a same-named standalone validation as
+// ambiguous and fails closed: a legacy consumed repair budget is also consumed
+// by the completion validation. The legacy record is retained because this
+// runtime cannot prove which old invocation created it.
+//
+// Safety evidence is recognized directly rather than copied so its bounded
+// diagnostic output and actor/commit attribution remain exactly authoritative.
+// Repair state is copied only when the new scope has no record. Writing the new
+// record first makes an interruption safe and repeated entry idempotent; no
+// migration path deletes the legacy record.
+func (e *Engine) reconcileV1Alpha1CompletionValidationState(completion, validation string) error {
+	if e.Workflow.APIVersion != "agentflow.dev/v1alpha1" {
+		return nil
+	}
+
+	var legacyFailure validationFailureEvidence
+	legacyFailureRecord := e.standaloneFailureRecordForScope(validation)
+	ok, err := e.Store.GetJSON(legacyFailureRecord, &legacyFailure)
+	if err != nil {
+		return err
+	}
+	if ok && legacyFailure.FailureKind == PhaseFailureSafety {
+		return safetyViolationFromEvidence(legacyFailure)
+	}
+
+	scope := completionValidationScope(completion, validation)
+	newRepairRecord := e.standaloneRepairRecordForScope(scope)
+	var current standaloneRepairState
+	ok, err = e.Store.GetJSON(newRepairRecord, &current)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+
+	var legacy standaloneRepairState
+	ok, err = e.Store.GetJSON(e.standaloneRepairRecordForScope(validation), &legacy)
+	if err != nil {
+		return err
+	}
+	if !ok || legacy.Attempts <= 0 {
+		return nil
+	}
+	return e.Store.SetJSON(newRepairRecord, legacy)
 }
 
 func (e *Engine) commitLink(presenter clioutput.Presenter, commit string) string {
