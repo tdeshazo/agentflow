@@ -82,6 +82,11 @@ the shared executable `Workflow` model. v1alpha2 is not passed through the
 v1alpha1 concise AST rewrite, and the capability parity above does not imply
 parity for defaults or the rest of the v1alpha1 schema.
 
+In v1alpha2, omitted boolean agent fields and explicit `false` have the same
+effective value because there is no `defaults.agent` inheritance. A future
+inheritance feature must add presence-aware boolean decoding before a truthy
+inherited default can be overridden by explicit `false`.
+
 ## Workspace write allowlist
 
 For workflows that only need a path allowlist, `workspace.allowWrites` lowers
@@ -172,6 +177,16 @@ authorize workflow completion. Explicit `false` values for `ephemeral`,
 `may_commit`, and `output_last_message` remain valid values rather than missing
 fields or truthy defaults. See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md#specagents)
 for the field-level contract.
+
+`may_commit` is checked for each invocation, including the primary actor,
+validation repair actor, recovery rerun, and completion-validation repair actor.
+An unauthorized actor-created commit is a repository-policy safety failure; it
+cannot be repaired away, accepted through another actor's permission, hidden by
+later validation, used to satisfy `dependsOn`, or used to authorize completion.
+AgentFlow's runtime-owned checkpoint may still commit validated allowed dirty
+work when the actor invocation has `may_commit: false`. A returned final message
+from `output_last_message` is diagnostic/presentation output only and never
+validation, `actor_completed`, dependency, or completion evidence.
 
 The generated name uses the reserved `__inline_actor__` prefix and the phase ID
 when available. That namespace is runtime-owned: authored workflows must not

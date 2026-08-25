@@ -20,9 +20,37 @@ AgentFlow keeps three concerns distinct:
 
 An agent has bounded mutation authority. Its provider invocation may change
 files and create commits only within the workflow's allowed workspace policy
-and actor permissions. The agent may implement or repair work, but it cannot
-mark its own phase accepted, waive a protected boundary, extend a repair
-budget, or write the workflow-complete transition.
+and that invocation's permissions. The agent may implement or repair work, but
+it cannot mark its own phase accepted, waive a protected boundary, extend a
+repair budget, or write the workflow-complete transition.
+
+### Shared Agent capability contract
+
+`may_commit` is invocation-scoped authority. It answers whether the specifically
+named actor invocation may move repository `HEAD` by creating commits. It does
+not belong to the surrounding phase merely because that phase has a primary
+actor. The check applies independently to the primary phase actor, a
+validation-repair actor, an actor rerun during recovery, a repair actor invoked
+by `completion.validation`, and every future actor invocation through the
+shared runtime.
+
+An actor-created commit without that actor invocation's permission is a
+repository-policy safety failure. It is terminal for the safety boundary: it
+does not become a repair invitation, is not accepted because another actor has
+`may_commit: true`, is not hidden by later successful validation, cannot satisfy
+`dependsOn`, and cannot authorize completion.
+
+Runtime-owned checkpoints are distinct from actor-created commits. An
+invocation with `may_commit: false` still permits AgentFlow to checkpoint
+validated, allowed dirty work. That runtime commit does not grant the actor
+commit authority or change the invocation that was authorized.
+
+`output_last_message` is provider-neutral capture intent. When true, the
+runtime asks the provider to capture and return its final message when the
+provider supports that capability. When false, the runtime does not request
+provider final-message capture. A returned final message is diagnostic or
+presentation output only. It is never deterministic validation evidence,
+`actor_completed` evidence, dependency evidence, or completion authority.
 
 Deterministic tools have operational authority for the checks they implement.
 The interpreter invokes shell gates, workspace-policy assertions, Git
@@ -45,11 +73,12 @@ change, and advances only the declared target after the deterministic gate.
 Fully declarative Markdown checklist, status, and index transitions use the
 same engine authority on actor-less bookkeeping phases.
 
-After acceptance, checkpointing may preserve an agent-created commit or commit
-allowed dirty files. The checkpoint asserts scope, stages only allowed files,
-requires a clean worktree, and reasserts the policy. The completed-phase marker
-is written at the accepted `HEAD`; completion bookkeeping is a separate
-validated transition after all phases and required gates pass.
+After acceptance, checkpointing may preserve a permitted agent-created commit
+or commit allowed dirty files as a runtime-owned checkpoint. The checkpoint
+asserts scope, stages only allowed files, requires a clean worktree, and
+reasserts the policy. The completed-phase marker is written at the accepted
+`HEAD`; completion bookkeeping is a separate validated transition after all
+phases and required gates pass.
 
 For concise workflows, `spec.lifecycle.policy: safe-resume` makes these phase
 boundaries runtime-owned. The runtime also rechecks lineage, protected
@@ -74,9 +103,9 @@ tied to repository commits or current workspace identity as appropriate.
 
 Recovery validates the saved base and branch lineage. It preserves useful
 partial commits and worktree changes. If an active phase lacks durable
-`actor_completed` evidence, the actor is rerun; if the actor returned
-successfully and only deterministic acceptance was interrupted, recovery resumes
-acceptance without replaying the actor. Completed markers are trusted only
-while their commits remain valid ancestors of the current `HEAD`. Safety
-failures remain terminal, while only configured validation failures may consume
-a bounded repair attempt.
+`actor_completed` evidence, the same actor is rerun under that rerun
+invocation's own capabilities; if the actor returned successfully and only
+deterministic acceptance was interrupted, recovery resumes acceptance without
+replaying the actor. Completed markers are trusted only while their commits
+remain valid ancestors of the current `HEAD`. Safety failures remain terminal,
+while only configured validation failures may consume a bounded repair attempt.
