@@ -22,7 +22,6 @@ spec:
     allowWrites: [src/**, tests/**]
   agents:
     coder: {runner: codex, model: gpt-5.6-terra}
-    reviewer: {runner: codex, model: gpt-5.6-luna}
   validation:
     tests:
       run: make test
@@ -34,7 +33,9 @@ spec:
       prompt: Implement the feature.
       validation: tests
     - id: review
-      actor: reviewer
+      actor:
+        runner: codex
+        model: gpt-5.6-luna
       dependsOn: [implement]
       prompt: Review the feature.
       validation: tests
@@ -43,8 +44,9 @@ spec:
 ```
 
 This form is executable today. `allowWrites` normalizes to the existing
-workspace mutation policy, named actors resolve to the existing executor
-capabilities, and each `run` command becomes a deterministic shell validation.
+workspace mutation policy, named and inline actors resolve to the existing
+executor capabilities, and each `run` command becomes a deterministic shell
+validation.
 `repair.once` permits exactly one named repair attempt and then reruns the same
 validation. `dependsOn` requires durable deterministic acceptance of every
 referenced phase, and the completion validation is a separate final transition.
@@ -53,19 +55,22 @@ The expanded plan makes these normalized boundaries inspectable before a run.
 See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md) and the
 [checked-in conformance example](../../internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml).
 
-The `v1alpha1` authoring surface currently includes three additional shorthands
-for common repository workflows.
+The conveniences shared by both language versions are recorded explicitly:
 
-Concise preprocessing is opt-in by syntax: workflows that use none of these
-shorthands are decoded from their original YAML bytes through the ordinary
-strict `KnownFields` decoder. A shorthand document is rewritten to the
-canonical v1alpha1 shape before that same strict decode. Folded scalar semantic
-values are preserved during the rewrite.
+| Concise authoring convenience | v1alpha1 | v1alpha2 |
+| --- | --- | --- |
+| `workspace.allowWrites` | Supported through concise AST lowering | Supported by the v1alpha2 schema and direct lowering |
+| `validation.<name>.run` | Supported through concise AST lowering | Supported by the v1alpha2 schema and direct lowering |
+| Mapping-valued `phases[].actor` | Supported with the v1alpha1 `Agent` schema | Supported with the v1alpha2 `agents.<name>` schema |
+
+Each version lowers these fields through its own authoring implementation into
+the shared executable `Workflow` model. v1alpha2 is not passed through the
+v1alpha1 concise AST rewrite.
 
 ## Workspace write allowlist
 
-For workflows that only need a path allowlist, `workspace.allowWrites` is
-shorthand for `workspace.mutationPolicy.allowed`:
+For workflows that only need a path allowlist, `workspace.allowWrites` lowers
+to `workspace.mutationPolicy.allowed` in the shared executable model:
 
 ```yaml
 spec:
@@ -75,7 +80,7 @@ spec:
       - tests/**
 ```
 
-This is equivalent to:
+The resulting executable authority is equivalent to:
 
 ```yaml
 spec:
@@ -113,40 +118,39 @@ spec:
 ```
 
 A phase that needs a one-off actor may instead place the ordinary `Agent`
-fields directly under `actor`:
+fields for its selected language version directly under `actor`. In v1alpha2,
+the mapping uses exactly the same `runner` and `model` schema as a named
+v1alpha2 agent:
 
 ```yaml
 spec:
-  defaults:
-    agent:
-      runner: codex
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-
   phases:
     - id: review
-      kind: audit
       actor:
+        runner: codex
         model: gpt-5.6-terra
-        may_commit: false
       validation: tests
       prompt: Review the implementation.
 ```
 
 AgentFlow compiles the mapping-valued actor into an internal named agent and
 rewrites the phase to reference it. The generated agent then follows the same
-normalization and runtime path as any explicitly named actor. In particular,
-`defaults.agent` inheritance still applies, locally written boolean values such
-as `may_commit: false` still override defaults, and unknown agent fields remain
-invalid.
+normalization, dependency scheduling, validation, and runtime path as any
+explicitly named actor. Unknown inline fields are rejected by the same strict
+schema used for named agents.
+
+In v1alpha1, the mapping instead uses the v1alpha1 `Agent` schema, including
+fields such as `sandbox`, `approval`, `ephemeral`, and `may_commit`.
+`defaults.agent` inheritance and explicit boolean overrides continue to apply
+there unchanged.
 
 The generated name uses the reserved `__inline_actor__` prefix and the phase ID
 when available. That namespace is runtime-owned: authored workflows must not
 declare named agents with that prefix or reference such names from phases,
-phase defaults, or repair policies. This keeps a generated one-off capability
-local to its phase instead of turning a predictable internal name into a
-workflow API.
+phase defaults, or repair policies, including through YAML aliases. Generated
+name collisions are rejected. This keeps a generated one-off capability local
+to its phase instead of turning a predictable internal name into a workflow
+API.
 
 Use a named actor when multiple phases share an execution capability, when a
 repair policy or other workflow object needs to reference the actor, or when the
@@ -158,6 +162,12 @@ capability that is genuinely local to one phase.
 The following shorthand sections describe the existing v1alpha1 authoring
 layer. They remain compatible with v1alpha1 and are separate from the
 v1alpha2 contract above.
+
+Concise preprocessing is opt-in by syntax: v1alpha1 workflows that use none of
+these shorthands are decoded from their original YAML bytes through the
+ordinary strict `KnownFields` decoder. A shorthand document is rewritten to
+the canonical v1alpha1 shape before that same strict decode. Folded scalar
+semantic values are preserved during the rewrite.
 
 ### Inline shell validation
 

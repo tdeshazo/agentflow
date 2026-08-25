@@ -70,6 +70,49 @@ func TestV1Alpha2SerialReadyNodeScheduler(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2InlineActorSchedulerPreservesAcceptanceBoundary(t *testing.T) {
+	tests := []struct {
+		name        string
+		validation  string
+		wantCalls   []string
+		wantFailure bool
+	}{
+		{
+			name:       "accepted dependency schedules inline actor",
+			validation: "true",
+			wantCalls:  []string{"root:worker", "child:__inline_actor__child"},
+		},
+		{
+			name:        "actor completion without validation blocks inline dependent",
+			validation:  "false",
+			wantCalls:   []string{"root:worker"},
+			wantFailure: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			p := &schedulingProvider{}
+			w := inlineActorSchedulingWorkflow(t, tt.name, tt.validation)
+			e := newSchedulingEngineAt(t, w, p, repo)
+			err := e.Run(context.Background())
+			if tt.wantFailure {
+				if err == nil || !strings.Contains(err.Error(), "validation") {
+					t.Fatalf("run error = %v", err)
+				}
+				assertNoPhaseMarker(t, e, "root")
+				assertNoPhaseMarker(t, e, "child")
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertSchedulingCompletion(t, e)
+			}
+			assertSchedulingCalls(t, p, tt.wantCalls...)
+		})
+	}
+}
+
 func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
 	t.Run("invalid references fail before any actor runs", func(t *testing.T) {
 		repo := newDurableRepo(t)
@@ -497,6 +540,42 @@ spec:
   phases:
     - {id: root, actor: worker, prompt: write the root artifact, validation: tests}
   completion: {validation: tests}
+`, name, command)
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := workflow.Decode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := workflow.Validate(d)
+	if result.Status != workflow.Executable || result.Normalized == nil {
+		t.Fatalf("workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	return result.Normalized.Workflow
+}
+
+func inlineActorSchedulingWorkflow(t *testing.T, name, command string) *workflow.Workflow {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "workflow.yaml")
+	document := fmt.Sprintf(`
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: %s}
+spec:
+  workspace: {allowWrites: ["*"]}
+  agents:
+    worker: {runner: test, model: test-model}
+  validation:
+    gate: {run: %q}
+  phases:
+    - {id: root, actor: worker, prompt: create root output, validation: gate}
+    - id: child
+      actor: {runner: test, model: inline-model}
+      prompt: create child output
+      validation: gate
+      dependsOn: [root]
+  completion: {validation: gate}
 `, name, command)
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
