@@ -121,7 +121,10 @@ layout, supported constructs, provider behavior, and current limits. The
 [art portfolio workflow](examples/art-portfolio.agent-workflow.yaml) creates
 a FastAPI backend, React frontend, and containerized deployment. The concise
 [feature workflow](examples/feature.agent-workflow.yaml) is the checked-in
-v1alpha2 conformance example.
+v1alpha2 conformance example. It shows the shared agent capability fields
+(`sandbox`, `approval`, `ephemeral`, `may_commit`, and `output_last_message`)
+on both a named agent and an inline phase actor; this capability parity does
+not imply full v1alpha1 schema or defaults parity.
 
 ## Validation
 
@@ -163,7 +166,9 @@ AgentFlow evolution: its core form strictly decodes, validates as executable,
 normalizes to the existing authority model, derives a deterministic serial
 schedule, and records durable phase/completion evidence. It does not change
 v1alpha1 behavior; representative v1alpha1 regressions remain in the
-conformance suite.
+conformance suite. The v1alpha2 contract shares the core agent capability
+fields, but intentionally does not claim the full v1alpha1 schema, including
+`spec.defaults.agent` inheritance.
 
 ## Publishing
 

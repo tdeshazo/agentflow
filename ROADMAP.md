@@ -185,6 +185,11 @@ authoring into the existing executable authority concepts wherever possible.
   part of the initial v1alpha2 contract.
 - Specify `completion.validation` as a distinct deterministic final gate whose
   evidence is not inherited from prior successful phase validation.
+- Define v1alpha2 named and inline agent capability parity for `runner`,
+  `model`, `sandbox`, `approval`, `ephemeral`, `may_commit`, and
+  `output_last_message`, with normalization into the shared `Agent` values.
+- Keep v1alpha1-only inherited defaults such as `spec.defaults.agent` outside
+  v1alpha2; capability parity does not claim full v1alpha1 schema parity.
 - State explicitly that model/actor output never authorizes advancement or
   completion, and that v1alpha1 retains its existing behavior.
 - Check in the representative `feature` example and prove strict decoding,

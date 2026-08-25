@@ -40,6 +40,12 @@ workspace policy limits mutations, and deterministic validation authorizes
 advancement. Normalization must not create a second execution model or allow
 actor output to become acceptance evidence.
 
+v1alpha2 has capability parity for the shared agent execution fields, not full
+v1alpha1 schema parity. In particular, the v1alpha1 `spec.defaults.agent`
+inheritance layer and other v1alpha1-only defaults/schema fields remain outside
+the v1alpha2 contract. v1alpha2 agents declare their effective capability
+values directly.
+
 ## Canonical authoring form
 
 The intended v1alpha2 form is:
@@ -132,9 +138,9 @@ values, defaults, or other semantics for them:
 
 An explicit boolean `false` is a valid authored value. In particular,
 `may_commit: false`, `output_last_message: false`, and `ephemeral: false` are
-not missing fields and must not be replaced by truthy defaults. Where shared
-Agent defaults or inheritance apply, an explicit `false` remains an explicit
-override of the inherited value.
+not missing fields and must not be replaced by truthy defaults. v1alpha2 does
+not apply inherited agent defaults: omitted boolean fields normalize to `false`,
+while an explicit `false` remains `false`.
 
 These are actor execution capabilities, not acceptance authority. None of
 these fields can authorize phase acceptance, satisfy `dependsOn`, waive

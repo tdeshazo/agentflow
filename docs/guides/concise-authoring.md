@@ -21,7 +21,14 @@ spec:
   workspace:
     allowWrites: [src/**, tests/**]
   agents:
-    coder: {runner: codex, model: gpt-5.6-terra}
+    coder:
+      runner: codex
+      model: gpt-5.6-terra
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
   validation:
     tests:
       run: make test
@@ -36,6 +43,11 @@ spec:
       actor:
         runner: codex
         model: gpt-5.6-luna
+        sandbox: workspace-write
+        approval: never
+        ephemeral: true
+        may_commit: false
+        output_last_message: true
       dependsOn: [implement]
       prompt: Review the feature.
       validation: tests
@@ -55,17 +67,20 @@ The expanded plan makes these normalized boundaries inspectable before a run.
 See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md) and the
 [checked-in conformance example](../../internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml).
 
-The conveniences shared by both language versions are recorded explicitly:
+The cross-version relationship is deliberately split between concise syntax,
+agent capability fields, and inherited defaults:
 
-| Concise authoring convenience | v1alpha1 | v1alpha2 |
-| --- | --- | --- |
-| `workspace.allowWrites` | Supported through concise AST lowering | Supported by the v1alpha2 schema and direct lowering |
-| `validation.<name>.run` | Supported through concise AST lowering | Supported by the v1alpha2 schema and direct lowering |
-| Mapping-valued `phases[].actor` | Supported with the v1alpha1 `Agent` schema | Supported with the v1alpha2 `agents.<name>` schema |
+| Surface | v1alpha1 | v1alpha2 | Relationship |
+| --- | --- | --- | --- |
+| Concise syntax: `workspace.allowWrites`, `validation.<name>.run`, and mapping-valued `phases[].actor` | Supported through concise AST lowering | Supported through the v1alpha2 schema and direct lowering | Concise syntax parity |
+| Agent capabilities: `runner`, `model`, `sandbox`, `approval`, `ephemeral`, `may_commit`, and `output_last_message` | Supported by `Agent` | Supported by named and inline v1alpha2 agents | Capability parity; both normalize to shared `Agent` values |
+| `spec.defaults.agent` inheritance | Supported | Not part of the v1alpha2 contract | Intentionally v1alpha1-only |
+| Other v1alpha1 defaults and schema fields | Supported where defined by v1alpha1 | Not implied by v1alpha2 | v1alpha2 is not full v1alpha1 schema parity |
 
 Each version lowers these fields through its own authoring implementation into
 the shared executable `Workflow` model. v1alpha2 is not passed through the
-v1alpha1 concise AST rewrite.
+v1alpha1 concise AST rewrite, and the capability parity above does not imply
+parity for defaults or the rest of the v1alpha1 schema.
 
 ## Workspace write allowlist
 
@@ -145,10 +160,9 @@ normalization, dependency scheduling, validation, and runtime path as any
 explicitly named actor. Unknown inline fields are rejected by the same strict
 schema used for named agents.
 
-In v1alpha1, the mapping instead uses the v1alpha1 `Agent` schema, including
-fields such as `sandbox`, `approval`, `ephemeral`, and `may_commit`.
+In v1alpha1, the mapping instead uses the v1alpha1 `Agent` schema. Its
 `defaults.agent` inheritance and explicit boolean overrides continue to apply
-there unchanged.
+there unchanged; v1alpha2 has no equivalent inherited-agent defaults.
 
 The v1alpha2 capability fields control actor execution only. They preserve the
 shared v1alpha1/runtime `Agent` meanings and do not grant acceptance authority:
