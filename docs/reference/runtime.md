@@ -212,11 +212,12 @@ complete marker.
 Completion-scoped safety state is terminal and survives repair-state
 migration, `HEAD` changes, later validation success, and unscoped records. A
 pre-upgrade v1alpha1 unscoped validation-name record is conservatively
-recognized for a matching completion final gate and migrated to the scoped
-identity with attempts and failure kind preserved before repair availability
-is evaluated. Safety wins over non-safety state; malformed or conflicting
-legacy state fails closed; migration does not delete the legacy source or
-clear safety state. New ordinary v1alpha1 `flow.validate` behavior is outside
+recognized for a matching completion final gate before repair availability is
+evaluated. Its repair budget is migrated to the scoped identity without
+lowering attempts; terminal safety remains authoritative in the legacy record
+rather than being copied or cleared. Safety wins over non-safety state;
+malformed or conflicting legacy state fails closed; migration does not delete
+the legacy source. New ordinary v1alpha1 `flow.validate` behavior is outside
 this completion contract.
 
 Successful deterministic validations additionally write small, digest-only

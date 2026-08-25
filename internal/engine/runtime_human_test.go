@@ -326,6 +326,73 @@ func TestV1Alpha1CompletionLegacyMigrationDoesNotResetAuthority(t *testing.T) {
 	assertCompletionRegressionMarker(t, restarted, false)
 }
 
+func TestV1Alpha1CompletionLegacyMigrationRequiresCompatibleRunIdentity(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := completionScopeRegressionWorkflow(repo, "legacy-migration-identity", "agentflow.dev/v1alpha1", "quality", true, "false")
+	p := &completionRegressionProvider{}
+	preUpgrade := newCompletionRegressionEngine(t, w, p)
+	if err := preUpgrade.initializeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := preUpgrade.Store.SetJSON(preUpgrade.standaloneRepairRecordForScope("quality"), standaloneRepairState{Attempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A changed executable definition must stop the run before legacy state can
+	// be copied into a new completion-scoped authority record.
+	w.Spec.Tools["final"] = workflow.Tool{Type: "shell", Command: "true"}
+	restarted := newCompletionRegressionEngine(t, w, p)
+	err := restarted.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "executable workflow definition changed") {
+		t.Fatalf("run identity error = %v", err)
+	}
+	if len(p.calls) != 0 {
+		t.Fatalf("identity mismatch invoked repair actor: calls=%d", len(p.calls))
+	}
+	assertCompletionRegressionRepairState(t, restarted, "default", "quality", 0, false)
+}
+
+func TestV1Alpha1CompletionLegacyMigrationRejectsMalformedFailureState(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		failure validationFailureEvidence
+		want    string
+	}{
+		{
+			name:    "mismatched validation",
+			failure: validationFailureEvidence{Validation: "other", FailureKind: PhaseFailureValidation},
+			want:    "mismatched validation",
+		},
+		{
+			name:    "unknown failure kind",
+			failure: validationFailureEvidence{Validation: "quality", FailureKind: PhaseFailureKind("unknown")},
+			want:    "invalid failure kind",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			w := completionScopeRegressionWorkflow(repo, "legacy-migration-malformed-"+strings.ReplaceAll(tt.name, " ", "-"), "agentflow.dev/v1alpha1", "quality", true, "false")
+			p := &completionRegressionProvider{}
+			e := newCompletionRegressionEngine(t, w, p)
+			if err := e.initializeState(); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Store.SetJSON(e.standaloneFailureRecordForScope("quality"), tt.failure); err != nil {
+				t.Fatal(err)
+			}
+
+			err := e.runCompletionValidation(context.Background(), "default", "quality")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("malformed legacy failure error = %v", err)
+			}
+			if len(p.calls) != 0 {
+				t.Fatalf("malformed legacy failure invoked repair actor: calls=%d", len(p.calls))
+			}
+			assertCompletionRegressionRepairState(t, e, "default", "quality", 0, false)
+		})
+	}
+}
+
 type completionRegressionProvider struct {
 	calls  []string
 	action func(context.Context, provider.Request) error
