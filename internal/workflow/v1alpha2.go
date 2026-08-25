@@ -444,6 +444,7 @@ func validateV1Alpha2(d *Document) Result {
 	v := v1alpha2Validator{result: &r, locations: d.Locations, w: d.V1Alpha2}
 	v.roots()
 	v.references()
+	v.runtimeSurface()
 	for _, diagnostic := range r.Diagnostics {
 		if diagnostic.Status == Invalid {
 			r.Status = Invalid
@@ -457,7 +458,12 @@ func validateV1Alpha2(d *Document) Result {
 		return r
 	}
 	r.Normalized = normalized
-	r.Status = Executable
+	for _, diagnostic := range r.Diagnostics {
+		if diagnostic.Status == Unsupported {
+			r.Status = Unsupported
+			break
+		}
+	}
 	return r
 }
 
@@ -470,6 +476,12 @@ type v1alpha2Validator struct {
 func (v v1alpha2Validator) add(path, format string, args ...any) {
 	v.result.Diagnostics = append(v.result.Diagnostics, Diagnostic{
 		Status: Invalid, Path: path, Position: v.location(path), Message: fmt.Sprintf(format, args...),
+	})
+}
+
+func (v v1alpha2Validator) addUnsupported(path, format string, args ...any) {
+	v.result.Diagnostics = append(v.result.Diagnostics, Diagnostic{
+		Status: Unsupported, Path: path, Position: v.location(path), Message: fmt.Sprintf(format, args...),
 	})
 }
 
@@ -606,6 +618,26 @@ func (v v1alpha2Validator) agentFields(path string, agent V1Alpha2Agent) {
 	}
 	if agent.Model == "" {
 		v.add(path+".model", "is required")
+	}
+}
+
+func (v v1alpha2Validator) runtimeSurface() {
+	for _, name := range sortedKeys(v.w.Spec.Agents) {
+		v.agentRuntimeSurface("spec.agents."+name, v.w.Spec.Agents[name])
+	}
+	for i, phase := range v.w.Spec.Phases {
+		if phase.Actor.Inline != nil {
+			v.agentRuntimeSurface(fmt.Sprintf("spec.phases[%d].actor", i), *phase.Actor.Inline)
+		}
+	}
+}
+
+func (v v1alpha2Validator) agentRuntimeSurface(path string, agent V1Alpha2Agent) {
+	// v1alpha2 keeps runner provider-neutral so injected Go providers can use
+	// custom runner names. The built-in Codex adapter is the only provider
+	// whose approval policy is known during document validation.
+	if agent.Runner == "codex" && agent.Approval != "" && agent.Approval != "never" {
+		v.addUnsupported(path+".approval", "approval policy %q is not implemented", agent.Approval)
 	}
 }
 

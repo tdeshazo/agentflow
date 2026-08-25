@@ -375,6 +375,52 @@ func TestV1Alpha2CapabilitiesPreserveDurableRuntimeAuthority(t *testing.T) {
 	})
 }
 
+func TestV1Alpha2MaterialAgentCapabilitiesChangeRunIdentity(t *testing.T) {
+	repo := newDurableRepo(t)
+	document := decodeV1Alpha2CapabilityDocument(t,
+		"runner: codex, model: capability-model, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true",
+		"true",
+	)
+	base := newCapabilityEngine(t, document.Workflow, repo, &capabilityActionProvider{})
+	want, err := base.expectedRunIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		change func(*workflow.Agent)
+	}{
+		{name: "runner", change: func(agent *workflow.Agent) { agent.Runner = "other" }},
+		{name: "model", change: func(agent *workflow.Agent) { agent.Model = "other-model" }},
+		{name: "sandbox", change: func(agent *workflow.Agent) { agent.Sandbox = "danger-full-access" }},
+		{name: "approval", change: func(agent *workflow.Agent) { agent.Approval = "on-request" }},
+		{name: "ephemeral", change: func(agent *workflow.Agent) { agent.Ephemeral = false }},
+		{name: "may_commit", change: func(agent *workflow.Agent) { agent.MayCommit = false }},
+		{name: "output_last_message", change: func(agent *workflow.Agent) { agent.OutputLastMessage = false }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			modified := *document.Workflow
+			modified.Spec.Agents = make(map[string]workflow.Agent, len(document.Workflow.Spec.Agents))
+			for name, agent := range document.Workflow.Spec.Agents {
+				modified.Spec.Agents[name] = agent
+			}
+			agent := modified.Spec.Agents["worker"]
+			test.change(&agent)
+			modified.Spec.Agents["worker"] = agent
+
+			candidate := newCapabilityEngine(t, &modified, repo, &capabilityActionProvider{})
+			got, err := candidate.expectedRunIdentity()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.WorkflowDigest == want.WorkflowDigest {
+				t.Fatalf("capability change did not change workflow identity: %#v", got)
+			}
+		})
+	}
+}
+
 func newCapabilityEngine(t *testing.T, w *workflow.Workflow, repo string, p provider.Provider) *Engine {
 	t.Helper()
 	e, err := New(w, map[string]provider.Provider{"test": p}, Options{RepoRoot: repo})

@@ -113,8 +113,8 @@ Runtime parameters can be overridden with repeated `--set key=value` flags.
 Environment-backed parameter defaults continue to work through the workflow.
 
 `plan --expanded` validates the authored document, normalizes concise defaults
-or the v1alpha2 form, and validates the resulting executable representation
-without opening a repository or invoking actors/tools. Its YAML output exposes
+or the v1alpha2 form, and rejects invalid or unsupported runtime surfaces before
+building the plan; it does not open a repository or invoke actors/tools. Its YAML output exposes
 the resolved lifecycle and executor defaults, recovery, safety boundaries,
 each gate's repair actor and bounded rerun contract, each phase's resolved
 actor/reasoning, validation, mutation/progress flags, bookkeeping transitions,
@@ -426,8 +426,8 @@ message using `--output-last-message`.
 
 This is an interpreter MVP, not yet a complete implementation of every field in
 the descriptive specification. The following are explicitly non-executable in
-this runtime and are rejected by validation: provider runners other than
-`codex`, approval policies other than `never`, state backends other than
+this runtime and are rejected by validation: for the built-in Codex provider,
+approval policies other than `never`, state backends other than
 `git-dir`, non-Git workspaces, non-Markdown progress sources, non-`on-exit` temp
 cleanup, `tool` and `human` phase kinds, and tool types outside the list above.
 Parallel DAG scheduling,

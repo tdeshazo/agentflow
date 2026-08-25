@@ -2,10 +2,12 @@
 
 This document defines the concise authoring contract for
 `agentflow.dev/v1alpha2`. It is a concise AgentFlow evolution: the reference
-implementation strictly decodes the form, validates it as executable, and
-normalizes it to AgentFlow's shared authority model before planning or
-execution. The runtime uses the declared phase dependencies with a
-deterministic serial scheduler.
+implementation strictly decodes the form, validates it against the current
+runtime surface, and normalizes it to AgentFlow's shared authority model
+before planning or execution. A structurally valid workflow that selects an
+unsupported built-in approval policy is reported as unsupported; runner names
+remain provider-neutral for injected Go providers. The runtime uses the
+declared phase dependencies with a deterministic serial scheduler.
 
 v1alpha2 is an evolution of AgentFlow's existing vocabulary and authority
 boundaries. It keeps `workspace`, `agents`, `validation`, `phases`, and
@@ -134,7 +136,7 @@ values, defaults, or other semantics for them:
 | `approval` | string | Selects the provider approval policy, subject to provider support. |
 | `ephemeral` | boolean | Controls provider session/context persistence according to existing provider semantics. |
 | `may_commit` | boolean | Controls whether the actor capability may create commits according to existing AgentFlow checkpoint/workspace policy. |
-| `output_last_message` | boolean | Retains the actor's final provider message according to existing runtime semantics. |
+| `output_last_message` | boolean | Requests final-message retention at the provider boundary; the current Codex adapter captures a final message for every invocation. The message is never acceptance evidence. |
 
 An explicit boolean `false` is a valid authored value. In particular,
 `may_commit: false`, `output_last_message: false`, and `ephemeral: false` are
@@ -278,12 +280,17 @@ executes.
 
 ## Current runtime boundary
 
-The v1alpha2 core is executable, but its initial scheduler is deliberately
-serial. It does not yet provide:
+The v1alpha2 core is executable when it uses the current runtime surface, but
+its initial scheduler is deliberately serial. It does not yet provide:
 
 - parallel execution of independent phases;
 - implicit mutation authority outside `workspace.allowWrites`; or
 - acceptance based on actor output, commits, or an unvalidated workspace.
+
+The built-in Codex provider reports approval policies other than `never` as
+valid but unsupported. Runner names remain provider-neutral in v1alpha2 so
+injected Go providers can be used through the Go API; the CLI's built-in
+provider registry still determines which runner can execute a run.
 
 `v1alpha1` compatibility remains a separate contract and regression coverage
 continues to ensure that v1alpha2 fields such as `dependsOn` are not accepted
