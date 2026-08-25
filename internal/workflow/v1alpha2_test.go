@@ -182,6 +182,50 @@ func TestV1Alpha2AgentFieldsNormalizeTogether(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2ExplicitFalseCapabilityFieldsSurviveNormalization(t *testing.T) {
+	configuration := "runner: codex, model: capability-model, sandbox: workspace-write, approval: never, ephemeral: false, may_commit: false, output_last_message: false"
+	want := Agent{
+		Runner: "codex", Model: "capability-model", Sandbox: "workspace-write", Approval: "never",
+	}
+
+	for _, test := range []struct {
+		name       string
+		inline     bool
+		agentName  string
+		actorCheck func(*V1Alpha2Workflow) V1Alpha2Agent
+	}{
+		{
+			name:      "named actor",
+			agentName: "coder",
+			actorCheck: func(w *V1Alpha2Workflow) V1Alpha2Agent {
+				return w.Spec.Agents["coder"]
+			},
+		},
+		{
+			name:      "inline actor",
+			inline:    true,
+			agentName: "__inline_actor__implement",
+			actorCheck: func(w *V1Alpha2Workflow) V1Alpha2Agent {
+				return *w.Spec.Phases[0].Actor.Inline
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			d, err := Decode(writeWorkflow(t, v1alpha2AgentDocument(configuration, test.inline)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			authored := test.actorCheck(d.V1Alpha2)
+			if authored.Ephemeral || authored.MayCommit || authored.OutputLastMessage {
+				t.Fatalf("authored explicit false capabilities = %#v", authored)
+			}
+			if got := d.Workflow.Spec.Agents[test.agentName]; !reflect.DeepEqual(got, want) {
+				t.Fatalf("normalized explicit false capabilities = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestV1Alpha2AgentFieldsRejectWrongYAMLTypes(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -207,6 +251,24 @@ func TestV1Alpha2AgentFieldsRejectWrongYAMLTypes(t *testing.T) {
 						t.Fatal("Decode succeeded for a malformed agent field")
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestV1Alpha2ActorFormsFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		actor string
+	}{
+		{name: "non-string scalar", actor: "true"},
+		{name: "sequence", actor: "[coder]"},
+		{name: "mapping with invalid field type", actor: "{runner: true, model: capability-model}"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := strings.Replace(v1alpha2Fixture, "actor: coder", "actor: "+test.actor, 1)
+			if _, err := Decode(writeWorkflow(t, document)); err == nil {
+				t.Fatal("Decode accepted an invalid actor form")
 			}
 		})
 	}
@@ -320,11 +382,12 @@ func TestV1Alpha2InlineActorPreservesPhaseDependencies(t *testing.T) {
 }
 
 func TestV1Alpha2InlineAndNamedActorsNormalizeEquivalently(t *testing.T) {
-	named, err := Decode(writeWorkflow(t, v1alpha2Fixture))
+	configuration := "runner: codex, model: capability-model, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true"
+	named, err := Decode(writeWorkflow(t, v1alpha2AgentDocument(configuration, false)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	inlineDocument := strings.Replace(v1alpha2Fixture, "actor: coder", "actor: {runner: codex, model: gpt-5.6-terra}", 1)
+	inlineDocument := v1alpha2AgentDocument(configuration, true)
 	inline, err := Decode(writeWorkflow(t, inlineDocument))
 	if err != nil {
 		t.Fatal(err)
@@ -339,6 +402,28 @@ func TestV1Alpha2InlineAndNamedActorsNormalizeEquivalently(t *testing.T) {
 	inlinePhase.Actor = "coder"
 	if !reflect.DeepEqual(inlinePhase, namedPhase) {
 		t.Fatalf("inline phase = %#v, named phase = %#v", inlinePhase, namedPhase)
+	}
+}
+
+func TestV1Alpha2ExpandedRepairActorRemainsNamedAndBounded(t *testing.T) {
+	configuration := "runner: codex, model: repair-model, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true"
+	d, err := Decode(writeWorkflow(t, v1alpha2AgentDocument(configuration, false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := d.Workflow.Spec.Validation["tests"].OnFailure; got.Strategy != "repair-once" || got.MaxRepairAttempts != 1 || got.Repair.Actor != "coder" {
+		t.Fatalf("expanded repair policy = %#v, want named coder with one attempt", got)
+	}
+	if _, ok := d.Workflow.Spec.Agents["__inline_actor__implement"]; ok {
+		t.Fatal("named repair actor unexpectedly became an inline actor")
+	}
+	want := Agent{
+		Runner: "codex", Model: "repair-model", Sandbox: "workspace-write", Approval: "never",
+		Ephemeral: true, MayCommit: true, OutputLastMessage: true,
+	}
+	if got := d.Workflow.Spec.Agents["coder"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized repair actor = %#v, want %#v", got, want)
 	}
 }
 
