@@ -164,16 +164,16 @@ legacy standalone records under the validation name. Such a record is
 ambiguous: it may have come from an ordinary flow validation or from the
 completion transition. When a v1alpha1 completion final gate is opened, a
 well-formed legacy record for the same validation name must therefore be
-recognized conservatively and migrated to the completion scope before the
-runtime decides whether repair is available. Migration preserves the consumed
-attempt count and the failure kind; it never resets attempts and never turns a
-safety failure into a validation failure.
+recognized conservatively before the runtime decides whether repair is
+available. A legacy repair budget is copied to the completion scope without
+lowering its consumed attempt count. A legacy safety failure remains directly
+authoritative in its original record; it is neither cleared nor downgraded.
 
 If both legacy and scoped records exist, safety state wins and repair attempts
 are combined conservatively (the greater consumed count is retained). A
 malformed, conflicting, or unclassifiable legacy record fails closed; the
 scoped record must not be treated as fresh. The legacy source is not deleted
-during migration. A migrated safety record remains terminal, and a migrated
+during migration. Safety remains terminal in its legacy record, and a migrated
 repair-budget source is removable only through explicit state disposal (or
 post-completion cleanup that cannot remove safety state). New v1alpha1
 standalone flow validations remain outside this completion contract; only

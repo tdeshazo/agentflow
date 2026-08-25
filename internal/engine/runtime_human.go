@@ -402,9 +402,9 @@ func (e *Engine) runCompletionValidation(ctx context.Context, completion, valida
 //
 // Safety evidence is recognized directly rather than copied so its bounded
 // diagnostic output and actor/commit attribution remain exactly authoritative.
-// Repair state is copied only when the new scope has no record. Writing the new
-// record first makes an interruption safe and repeated entry idempotent; no
-// migration path deletes the legacy record.
+// Repair state is copied or strengthened only when the legacy count is higher.
+// Writing the new record first makes an interruption safe and repeated entry
+// idempotent; no migration path deletes the legacy record.
 func (e *Engine) reconcileV1Alpha1CompletionValidationState(completion, validation string) error {
 	if e.Workflow.APIVersion != "agentflow.dev/v1alpha1" {
 		return nil
@@ -416,8 +416,19 @@ func (e *Engine) reconcileV1Alpha1CompletionValidationState(completion, validati
 	if err != nil {
 		return err
 	}
-	if ok && legacyFailure.FailureKind == PhaseFailureSafety {
-		return safetyViolationFromEvidence(legacyFailure)
+	if ok {
+		if legacyFailure.Validation != validation {
+			return fmt.Errorf("legacy completion validation failure has mismatched validation %q", legacyFailure.Validation)
+		}
+		switch legacyFailure.FailureKind {
+		case PhaseFailureSafety:
+			return safetyViolationFromEvidence(legacyFailure)
+		case PhaseFailureValidation:
+			// A legacy validation failure is recoverable only through its
+			// corresponding legacy repair budget below.
+		default:
+			return fmt.Errorf("legacy completion validation failure has invalid failure kind %q", legacyFailure.FailureKind)
+		}
 	}
 
 	scope := completionValidationScope(completion, validation)
