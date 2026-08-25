@@ -41,20 +41,85 @@ type V1Alpha2Workspace struct {
 }
 
 type V1Alpha2Agent struct {
-	Runner string `yaml:"runner"`
-	Model  string `yaml:"model"`
+	Runner            string `yaml:"runner"`
+	Model             string `yaml:"model"`
+	Sandbox           string `yaml:"sandbox"`
+	Approval          string `yaml:"approval"`
+	Ephemeral         bool   `yaml:"ephemeral"`
+	MayCommit         bool   `yaml:"may_commit"`
+	OutputLastMessage bool   `yaml:"output_last_message"`
 }
 
 // UnmarshalYAML keeps named and inline v1alpha2 agents on exactly the same
 // strict authoring schema.
 func (a *V1Alpha2Agent) UnmarshalYAML(n *yaml.Node) error {
-	type plain V1Alpha2Agent
-	var out plain
-	if err := decodeKnownNode(n, &out); err != nil {
+	resolved, err := resolveYAMLNode(n)
+	if err != nil {
 		return err
 	}
-	*a = V1Alpha2Agent(out)
+	if resolved.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: agent must be a mapping", n.Line)
+	}
+
+	var out V1Alpha2Agent
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(resolved.Content); i += 2 {
+		keyNode := resolved.Content[i]
+		key, ok := scalarValueFollowingAliases(keyNode)
+		if !ok {
+			return fmt.Errorf("line %d: agent field name must be a scalar", keyNode.Line)
+		}
+		if seen[key] {
+			return fmt.Errorf("line %d: mapping key %q already defined", keyNode.Line, key)
+		}
+		seen[key] = true
+
+		value, err := resolveYAMLNode(resolved.Content[i+1])
+		if err != nil {
+			return err
+		}
+		switch key {
+		case "runner":
+			out.Runner, err = v1Alpha2AgentString(value, key)
+		case "model":
+			out.Model, err = v1Alpha2AgentString(value, key)
+		case "sandbox":
+			out.Sandbox, err = v1Alpha2AgentString(value, key)
+		case "approval":
+			out.Approval, err = v1Alpha2AgentString(value, key)
+		case "ephemeral":
+			out.Ephemeral, err = v1Alpha2AgentBool(value, key)
+		case "may_commit":
+			out.MayCommit, err = v1Alpha2AgentBool(value, key)
+		case "output_last_message":
+			out.OutputLastMessage, err = v1Alpha2AgentBool(value, key)
+		default:
+			return fmt.Errorf("line %d: field %s not found in type workflow.V1Alpha2Agent", keyNode.Line, key)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	*a = out
 	return nil
+}
+
+func v1Alpha2AgentString(n *yaml.Node, field string) (string, error) {
+	if n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
+		return "", fmt.Errorf("line %d: cannot unmarshal %s into Go struct field V1Alpha2Agent.%s of type string", n.Line, n.Tag, field)
+	}
+	return n.Value, nil
+}
+
+func v1Alpha2AgentBool(n *yaml.Node, field string) (bool, error) {
+	if n.Kind != yaml.ScalarNode || n.Tag != "!!bool" {
+		return false, fmt.Errorf("line %d: cannot unmarshal %s into Go struct field V1Alpha2Agent.%s of type bool", n.Line, n.Tag, field)
+	}
+	var value bool
+	if err := n.Decode(&value); err != nil {
+		return false, err
+	}
+	return value, nil
 }
 
 type V1Alpha2Validation struct {
@@ -232,7 +297,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		File: authored.File,
 	}
 	for name, agent := range authored.Spec.Agents {
-		w.Spec.Agents[name] = Agent{Runner: agent.Runner, Model: agent.Model}
+		w.Spec.Agents[name] = normalizeV1Alpha2Agent(agent)
 	}
 	for name, validation := range authored.Spec.Validation {
 		toolName := v1Alpha2ValidationToolName(name)
@@ -262,7 +327,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			if _, exists := w.Spec.Agents[actorName]; exists {
 				return nil, fmt.Errorf("inline actor for phase %q conflicts with generated agent name %q", phaseKey, actorName)
 			}
-			w.Spec.Agents[actorName] = Agent{Runner: phase.Actor.Inline.Runner, Model: phase.Actor.Inline.Model}
+			w.Spec.Agents[actorName] = normalizeV1Alpha2Agent(*phase.Actor.Inline)
 		}
 		w.Spec.Phases = append(w.Spec.Phases, Phase{
 			ID: phase.ID, Kind: "implementation", Actor: actorName,
@@ -276,6 +341,18 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		DependencyGraph:   graph,
 		PhaseDependencies: graph.phaseDependenciesMap(),
 	}, nil
+}
+
+func normalizeV1Alpha2Agent(agent V1Alpha2Agent) Agent {
+	return Agent{
+		Runner:            agent.Runner,
+		Model:             agent.Model,
+		Sandbox:           agent.Sandbox,
+		Approval:          agent.Approval,
+		Ephemeral:         agent.Ephemeral,
+		MayCommit:         agent.MayCommit,
+		OutputLastMessage: agent.OutputLastMessage,
+	}
 }
 
 func rejectV1Alpha2ReservedActorNamespace(authored *V1Alpha2Workflow) error {

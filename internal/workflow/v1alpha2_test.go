@@ -104,6 +104,134 @@ func TestV1Alpha2InlineActorKeepsAgentFieldsStrict(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2AgentFieldsNormalizeIndependently(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		want  Agent
+	}{
+		{name: "sandbox", field: "sandbox: workspace-write", want: Agent{Sandbox: "workspace-write"}},
+		{name: "approval", field: "approval: never", want: Agent{Approval: "never"}},
+		{name: "ephemeral true", field: "ephemeral: true", want: Agent{Ephemeral: true}},
+		{name: "ephemeral false", field: "ephemeral: false", want: Agent{}},
+		{name: "may_commit true", field: "may_commit: true", want: Agent{MayCommit: true}},
+		{name: "may_commit false", field: "may_commit: false", want: Agent{}},
+		{name: "output_last_message true", field: "output_last_message: true", want: Agent{OutputLastMessage: true}},
+		{name: "output_last_message false", field: "output_last_message: false", want: Agent{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, inline := range []bool{false, true} {
+				name := "named"
+				if inline {
+					name = "inline"
+				}
+				t.Run(name, func(t *testing.T) {
+					got := decodeV1Alpha2Agent(t, "runner: codex, model: gpt-5.6-terra, "+tt.field, inline)
+					want := tt.want
+					want.Runner = "codex"
+					want.Model = "gpt-5.6-terra"
+					if !reflect.DeepEqual(got, want) {
+						t.Fatalf("normalized agent = %#v, want %#v", got, want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestV1Alpha2AgentFieldsNormalizeTogether(t *testing.T) {
+	tests := []struct {
+		name          string
+		configuration string
+		want          Agent
+	}{
+		{
+			name:          "enabled booleans",
+			configuration: "runner: codex, model: gpt-5.6-terra, sandbox: workspace-write, approval: never, ephemeral: true, may_commit: true, output_last_message: true",
+			want: Agent{
+				Runner: "codex", Model: "gpt-5.6-terra", Sandbox: "workspace-write", Approval: "never",
+				Ephemeral: true, MayCommit: true, OutputLastMessage: true,
+			},
+		},
+		{
+			name:          "disabled booleans",
+			configuration: "runner: codex, model: gpt-5.6-terra, sandbox: workspace-write, approval: never, ephemeral: false, may_commit: false, output_last_message: false",
+			want:          Agent{Runner: "codex", Model: "gpt-5.6-terra", Sandbox: "workspace-write", Approval: "never"},
+		},
+		{
+			name:          "omitted fields",
+			configuration: "runner: codex, model: gpt-5.6-terra",
+			want:          Agent{Runner: "codex", Model: "gpt-5.6-terra"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, inline := range []bool{false, true} {
+				name := "named"
+				if inline {
+					name = "inline"
+				}
+				t.Run(name, func(t *testing.T) {
+					if got := decodeV1Alpha2Agent(t, tt.configuration, inline); !reflect.DeepEqual(got, tt.want) {
+						t.Fatalf("normalized agent = %#v, want %#v", got, tt.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestV1Alpha2AgentFieldsRejectWrongYAMLTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+	}{
+		{name: "sandbox", field: "sandbox: true"},
+		{name: "approval", field: "approval: true"},
+		{name: "ephemeral", field: "ephemeral: 'true'"},
+		{name: "may_commit", field: "may_commit: 'true'"},
+		{name: "output_last_message", field: "output_last_message: 'true'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, inline := range []bool{false, true} {
+				name := "named"
+				if inline {
+					name = "inline"
+				}
+				t.Run(name, func(t *testing.T) {
+					configuration := "runner: codex, model: gpt-5.6-terra, " + tt.field
+					document := v1alpha2AgentDocument(configuration, inline)
+					if _, err := Decode(writeWorkflow(t, document)); err == nil {
+						t.Fatal("Decode succeeded for a malformed agent field")
+					}
+				})
+			}
+		})
+	}
+}
+
+func decodeV1Alpha2Agent(t *testing.T, configuration string, inline bool) Agent {
+	t.Helper()
+	d, err := Decode(writeWorkflow(t, v1alpha2AgentDocument(configuration, inline)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "coder"
+	if inline {
+		name = "__inline_actor__implement"
+	}
+	return d.Workflow.Spec.Agents[name]
+}
+
+func v1alpha2AgentDocument(configuration string, inline bool) string {
+	if inline {
+		return strings.Replace(v1alpha2Fixture, "actor: coder", "actor: {"+configuration+"}", 1)
+	}
+	return strings.Replace(v1alpha2Fixture, "coder: {runner: codex, model: gpt-5.6-terra}", "coder: {"+configuration+"}", 1)
+}
+
 func TestV1Alpha2InlineActorNamespaceIsRuntimeOwned(t *testing.T) {
 	tests := []struct {
 		name   string
