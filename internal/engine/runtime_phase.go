@@ -55,6 +55,9 @@ type standaloneRepairState struct {
 }
 
 func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
+	if _, err := e.reconcilePendingInvocation(); err != nil {
+		return err
+	}
 	p, err := e.phaseByID(id)
 	if err != nil {
 		return err
@@ -247,6 +250,9 @@ func phaseHasValidation(actions []workflow.PhaseAction) bool {
 	return false
 }
 func (e *Engine) recoverActive(ctx context.Context) error {
+	if _, err := e.reconcilePendingInvocation(); err != nil {
+		return err
+	}
 	var a ActivePhase
 	ok, err := e.Store.GetJSON(e.activeRecord(), &a)
 	if err != nil || !ok {
@@ -258,6 +264,30 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 	}
 	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return fmt.Errorf("cannot recover phase %s safely: %w", p.ID, err)
+	}
+	if a.FailureKind == PhaseFailureSafety {
+		// A safety failure remains terminal until an operator restores the
+		// mutation boundary. A recorded committing actor, however, is an
+		// authority violation rather than a remediable workspace condition: that
+		// actor-created commit must never be accepted by clearing state.
+		if a.CommitActor == "" {
+			a.FailureKind = ""
+			a.Validation = ""
+			a.ValidationError = ""
+			if err := e.Store.SetJSON(e.activeRecord(), a); err != nil {
+				return fmt.Errorf("record remediated safety state for phase %s: %w", p.ID, err)
+			}
+		} else {
+			head, headErr := e.Repo.Head()
+			if headErr != nil {
+				return headErr
+			}
+			return &safetyViolation{
+				err:    errors.New(a.ValidationError),
+				actor:  a.CommitActor,
+				commit: head,
+			}
+		}
 	}
 	if !e.Repo.ObjectExists(a.StartCommit + "^{commit}") {
 		return fmt.Errorf("saved phase start missing: %s", a.StartCommit)
@@ -331,6 +361,17 @@ func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt st
 		}
 		return err
 	}
+	// Reconciliation may have recorded the actor that moved HEAD while the
+	// provider was running. Refresh before writing completion so this stale
+	// caller copy cannot erase invocation-scoped authority.
+	var persisted ActivePhase
+	if ok, err := e.Store.GetJSON(e.activeRecord(), &persisted); err != nil {
+		return err
+	} else if !ok || persisted.PhaseID != p.ID {
+		return fmt.Errorf("active phase state is missing after actor %q", p.Actor)
+	} else {
+		*active = persisted
+	}
 	active.ActorCompleted = true
 	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 		return fmt.Errorf("persist successful actor completion for phase %s: %w", p.ID, err)
@@ -338,6 +379,18 @@ func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt st
 	return nil
 }
 func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase) error {
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, PendingActorInvocation{Role: "phase"})
+}
+
+func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, prompt, validation string, p *workflow.Phase) error {
+	scope := PendingActorInvocation{
+		Role:            "validation-repair",
+		ValidationScope: e.validationInvocationScope(validation, p),
+	}
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, scope)
+}
+
+func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase, invocation PendingActorInvocation) error {
 	a, ok := e.Workflow.Spec.Agents[actorName]
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
@@ -376,7 +429,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		// an adapter-specific or test-supplied TTY signal.
 		presentation = provider.PresentationPlain
 	}
-	committed, err := e.invokeAgent(ctx, actorName, a, prov, provider.Request{
+	_, err = e.invokeAgent(ctx, actorName, a, prov, provider.Request{
 		Workspace:         e.Repo.Root,
 		Model:             model,
 		Reasoning:         reasoning,
@@ -387,12 +440,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		OutputLastMessage: a.OutputLastMessage,
 		Presentation:      presentation,
 		Metadata:          metadata,
-	})
-	if committed && p != nil {
-		if recordErr := e.recordPhaseCommitActor(p, actorName); recordErr != nil {
-			return recordErr
-		}
-	}
+	}, invocation)
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
 		var safetyErr *safetyViolation
@@ -411,8 +459,8 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 // may create commits. Workflow-level settings grant workflow authority to any
 // actor; they do not inherit another actor's MayCommit value.
 //
-// Keep every actor invocation path, including future pending-invocation
-// recovery, behind invokeAgent so it uses this same rule.
+// Keep every actor invocation path behind invokeAgent so it uses this same
+// rule; pending-invocation recovery applies the same helper to its persisted actor.
 func (e *Engine) effectiveActorCommitPermission(agent workflow.Agent) bool {
 	return agent.MayCommit ||
 		e.Workflow.Spec.Workspace.AgentCommits.Allowed ||
@@ -425,13 +473,34 @@ func (e *Engine) effectiveActorCommitPermission(agent workflow.Agent) bool {
 // actor-created commits, while ordinary workspace edits remain subject to the
 // independent mutation-boundary checks and may later be checkpointed by the
 // runtime.
-func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request) (bool, error) {
+func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request, invocation PendingActorInvocation) (bool, error) {
 	before, err := e.Repo.Head()
 	if err != nil {
 		return false, fmt.Errorf("capture repository HEAD before actor %q: %w", actorName, err)
 	}
+	invocation.Version = pendingActorInvocationVersion
+	invocation.Actor = actorName
+	invocation.StartCommit = before
+	if invocation.Role == "" {
+		invocation.Role = "phase"
+	}
+	if invocation.PhaseID == "" && request.Metadata["phase"] != "" {
+		invocation.PhaseID = request.Metadata["phase"]
+	}
+	if e.invocationStateAvailable() {
+		if err := e.persistPendingInvocation(invocation); err != nil {
+			return false, err
+		}
+	}
 
 	_, providerErr := prov.Run(ctx, request)
+	if e.invocationStateAvailable() {
+		moved, reconcileErr := e.reconcilePendingInvocation()
+		if reconcileErr != nil {
+			return moved, reconcileErr
+		}
+		return moved, providerErr
+	}
 	after, headErr := e.Repo.Head()
 	if headErr != nil {
 		return false, fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
@@ -463,6 +532,9 @@ func (e *Engine) recordPhaseCommitActor(p *workflow.Phase, actorName string) err
 	return e.Store.SetJSON(e.activeRecord(), active)
 }
 func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) (runErr error) {
+	if _, err := e.reconcilePendingInvocation(); err != nil {
+		return err
+	}
 	e.logEvent("validation_start", map[string]string{"validation": name})
 	defer func() {
 		result := "success"
@@ -573,7 +645,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	}
 	e.lastFailure = boundedFailureOutput(failure)
 	e.presenter().RepairAttempt(name)
-	if err := e.runAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, p); err != nil {
+	if err := e.runRepairAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, name, p); err != nil {
 		var safetyErr *safetyViolation
 		if errors.As(err, &safetyErr) {
 			if persistErr := e.persistValidationFailure(p, name, err); persistErr != nil {
@@ -744,7 +816,11 @@ type validationFailureEvidence struct {
 }
 
 func (e *Engine) standaloneFailureRecord(validation string) string {
-	return fmt.Sprintf("validation-failures/%x", e.standaloneValidationScope(validation))
+	return e.standaloneFailureRecordForScope(e.standaloneValidationScope(validation))
+}
+
+func (e *Engine) standaloneFailureRecordForScope(scope string) string {
+	return fmt.Sprintf("validation-failures/%x", scope)
 }
 
 func (e *Engine) standaloneValidationScope(validation string) string {

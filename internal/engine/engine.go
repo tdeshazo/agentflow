@@ -93,6 +93,31 @@ type ActivePhase struct {
 	ValidationPassed        bool                `json:"validation_passed,omitempty"`
 }
 
+const pendingActorInvocationVersion = 1
+
+// PendingActorInvocation is the minimal durable authority record written
+// before a provider is allowed to run. It deliberately excludes requests and
+// their resolved content: prompts, provider output, parameters, and
+// environment values are execution inputs, not recovery authority.
+type PendingActorInvocation struct {
+	Version         int    `json:"version"`
+	Actor           string `json:"actor"`
+	StartCommit     string `json:"start_commit"`
+	Role            string `json:"role"`
+	PhaseID         string `json:"phase_id,omitempty"`
+	ValidationScope string `json:"validation_scope,omitempty"`
+}
+
+// ActorInvocationOutcome keeps the durable attribution produced while
+// reconciling a pending invocation. It is diagnostic authority metadata, not
+// validation or acceptance evidence.
+type ActorInvocationOutcome struct {
+	PendingActorInvocation
+	Commit     string `json:"commit,omitempty"`
+	HeadMoved  bool   `json:"head_moved"`
+	Authorized bool   `json:"authorized"`
+}
+
 // ProgressItemState is the durable, ordered Markdown progress baseline used
 // to prove that engine-owned acceptance changed only its declared target.
 type ProgressItemState struct {
@@ -392,6 +417,12 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if err := e.initializeOrResumeState(); err != nil {
 		return err
 	}
+	// Provider execution may have crossed a process boundary after its pending
+	// invocation was persisted. Reconcile it before any check can validate,
+	// replay, schedule, or accept repository state.
+	if _, err := e.reconcilePendingInvocation(); err != nil {
+		return err
+	}
 	if err := e.runStatePreconditions(); err != nil {
 		return err
 	}
@@ -525,8 +556,10 @@ func (e *Engine) branchRecord() string {
 func (e *Engine) activeRecord() string {
 	return configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active")
 }
-func (e *Engine) integrityRecord() string   { return "integrity" }
-func (e *Engine) runIdentityRecord() string { return "run-identity" }
+func (e *Engine) pendingInvocationRecord() string { return "pending-invocation" }
+func (e *Engine) invocationOutcomeRecord() string { return "invocation-outcome" }
+func (e *Engine) integrityRecord() string         { return "integrity" }
+func (e *Engine) runIdentityRecord() string       { return "run-identity" }
 
 func (e *Engine) resumeEnabled() bool {
 	if e.Workflow.Spec.State.Resume.Enabled == nil {
