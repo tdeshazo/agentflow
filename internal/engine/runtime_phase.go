@@ -939,7 +939,11 @@ func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max 
 }
 
 func (e *Engine) standaloneRepairRecord(validation string) string {
-	return fmt.Sprintf("validation-repairs/%x", e.standaloneValidationScope(validation))
+	return e.standaloneRepairRecordForScope(e.standaloneValidationScope(validation))
+}
+
+func (e *Engine) standaloneRepairRecordForScope(scope string) string {
+	return fmt.Sprintf("validation-repairs/%x", scope)
 }
 
 func (e *Engine) consumeStandaloneRepairAttempt(validation string, max int) (bool, error) {

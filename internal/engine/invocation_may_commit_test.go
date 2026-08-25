@@ -296,6 +296,114 @@ func TestCompletionRepairBudgetSurvivesBeforeCompletionMarker(t *testing.T) {
 	}
 }
 
+func TestV1Alpha1CompletionRecognizesLegacyUnscopedValidationState(t *testing.T) {
+	t.Run("consumed repair budget remains consumed after restart", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := completionRepairWorkflow(repo, "legacy-completion-repair-budget")
+		w.APIVersion = "agentflow.dev/v1alpha1"
+		w.Spec.Flow = []workflow.FlowStep{{Complete: "default"}}
+		p := &schedulingProvider{}
+
+		preUpgrade := newSchedulingEngine(t, w, p)
+		if err := preUpgrade.initializeState(); err != nil {
+			t.Fatal(err)
+		}
+		legacyRecord := preUpgrade.standaloneRepairRecordForScope("final")
+		if err := preUpgrade.Store.SetJSON(legacyRecord, standaloneRepairState{Attempts: 1}); err != nil {
+			t.Fatalf("construct legacy repair state: %v", err)
+		}
+
+		restarted := newSchedulingEngine(t, w, p)
+		err := restarted.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
+			t.Fatalf("restart error = %v, want legacy repair budget exhaustion", err)
+		}
+		if len(p.calls) != 0 {
+			t.Fatalf("restart granted a repair attempt: calls=%d", len(p.calls))
+		}
+		var migrated standaloneRepairState
+		if ok, err := restarted.Store.GetJSON(restarted.standaloneRepairRecordForScope("completion/default/final"), &migrated); err != nil || !ok || migrated.Attempts != 1 {
+			t.Fatalf("migrated repair state = %+v ok=%t err=%v", migrated, ok, err)
+		}
+		var legacy standaloneRepairState
+		if ok, err := restarted.Store.GetJSON(legacyRecord, &legacy); err != nil || !ok || legacy.Attempts != 1 {
+			t.Fatalf("legacy repair state was not retained: %+v ok=%t err=%v", legacy, ok, err)
+		}
+
+		again := newSchedulingEngine(t, w, p)
+		err = again.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
+			t.Fatalf("second restart error = %v, want legacy repair budget exhaustion", err)
+		}
+		if len(p.calls) != 0 {
+			t.Fatalf("idempotent migration granted a repair attempt: calls=%d", len(p.calls))
+		}
+		if ok, err := again.Store.GetJSON(again.standaloneRepairRecordForScope("completion/default/final"), &migrated); err != nil || !ok || migrated.Attempts != 1 {
+			t.Fatalf("idempotent migrated repair state = %+v ok=%t err=%v", migrated, ok, err)
+		}
+	})
+
+	t.Run("legacy safety evidence remains terminal after restart", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		w := completionRepairWorkflow(repo, "legacy-completion-safety")
+		w.APIVersion = "agentflow.dev/v1alpha1"
+		w.Spec.Flow = []workflow.FlowStep{{Complete: "default"}}
+		p := &schedulingProvider{}
+
+		preUpgrade := newSchedulingEngine(t, w, p)
+		if err := preUpgrade.initializeState(); err != nil {
+			t.Fatal(err)
+		}
+		head, err := preUpgrade.Repo.Head()
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacyRecord := preUpgrade.standaloneFailureRecordForScope("final")
+		legacyFailure := validationFailureEvidence{
+			Validation:  "final",
+			FailureKind: PhaseFailureSafety,
+			Output:      "legacy bounded safety diagnostic",
+			Actor:       "legacy-repair",
+			Commit:      head,
+		}
+		if err := preUpgrade.Store.SetJSON(legacyRecord, legacyFailure); err != nil {
+			t.Fatalf("construct legacy safety state: %v", err)
+		}
+
+		// This models a restart which enters the newly scoped completion gate
+		// directly, rather than relying only on Run's global terminal-safety
+		// scan to find the old unscoped record.
+		scopedRestart := newSchedulingEngine(t, w, p)
+		if err := scopedRestart.initializeOrResumeState(); err != nil {
+			t.Fatal(err)
+		}
+		err = scopedRestart.runCompletionValidation(context.Background(), "default", "final")
+		var safetyErr *safetyViolation
+		if !errors.As(err, &safetyErr) {
+			t.Fatalf("scoped restart error = %v, want durable safety violation", err)
+		}
+		if safetyErr.actor != legacyFailure.Actor || safetyErr.commit != legacyFailure.Commit || !strings.Contains(err.Error(), legacyFailure.Output) {
+			t.Fatalf("safety attribution changed: %+v, error=%v", safetyErr, err)
+		}
+
+		restarted := newSchedulingEngine(t, w, p)
+		err = restarted.Run(context.Background())
+		if !errors.As(err, &safetyErr) {
+			t.Fatalf("full restart error = %v, want durable safety violation", err)
+		}
+		if len(p.calls) != 0 {
+			t.Fatalf("restart ran a repair after legacy safety failure: calls=%d", len(p.calls))
+		}
+		var retained validationFailureEvidence
+		if ok, err := restarted.Store.GetJSON(legacyRecord, &retained); err != nil || !ok || retained != legacyFailure {
+			t.Fatalf("legacy safety evidence changed: %+v ok=%t err=%v", retained, ok, err)
+		}
+		if _, ok, err := restarted.Store.Resolve(restarted.standaloneFailureRecordForScope("completion/default/final")); err != nil || ok {
+			t.Fatalf("legacy safety evidence was rewritten into completion scope: ok=%t err=%v", ok, err)
+		}
+	})
+}
+
 func TestCompletionMarkerClearsCompletionRepairBudget(t *testing.T) {
 	for _, apiVersion := range []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2"} {
 		t.Run(apiVersion, func(t *testing.T) {
