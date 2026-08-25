@@ -257,8 +257,15 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 			if step.Uses == "" {
 				return fmt.Errorf("validation %q contains an empty deterministic tool reference", name)
 			}
-			if _, exists := w.Spec.Tools[step.Uses]; !exists {
+			tool, exists := w.Spec.Tools[step.Uses]
+			if !exists {
 				return fmt.Errorf("validation %q references unknown tool %q", name, step.Uses)
+			}
+			if tool.Type != "shell" {
+				return fmt.Errorf("validation %q references non-shell tool %q (type %q)", name, step.Uses, tool.Type)
+			}
+			if strings.TrimSpace(tool.Command) == "" {
+				return fmt.Errorf("validation %q references shell tool %q with an empty command", name, step.Uses)
 			}
 		}
 		if validation.OnFailure.Strategy == "" && validation.OnFailure.MaxRepairAttempts != 0 {

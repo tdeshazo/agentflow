@@ -151,6 +151,35 @@ func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
 		assertSchedulingCalls(t, p)
 	})
 
+	for _, tt := range []struct {
+		name    string
+		tool    workflow.Tool
+		wantErr string
+	}{
+		{
+			name:    "non-shell validation tool fails before any actor runs",
+			tool:    workflow.Tool{Type: "workspace-policy", Command: "true"},
+			wantErr: `validation "gate" references non-shell tool "gate"`,
+		},
+		{
+			name:    "empty validation command fails before any actor runs",
+			tool:    workflow.Tool{Type: "shell", Command: " \t\n"},
+			wantErr: `validation "gate" references shell tool "gate" with an empty command`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			p := &schedulingProvider{}
+			w := schedulingWorkflow(repo, tt.name, []string{"root"}, nil, "true")
+			w.Spec.Tools["gate"] = tt.tool
+			e := newSchedulingEngine(t, w, p)
+			if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("run error = %v, want error containing %q", err, tt.wantErr)
+			}
+			assertSchedulingCalls(t, p)
+		})
+	}
+
 	t.Run("actor failure", func(t *testing.T) {
 		repo := newDurableRepo(t)
 		p := &schedulingProvider{action: func(context.Context, provider.Request) error { return errors.New("actor stopped") }}
