@@ -28,9 +28,10 @@ type RunIdentity struct {
 // source file path. Spec is the executable workflow surface; the workflow name
 // already selects a separate Git state namespace.
 type runWorkflowDefinition struct {
-	APIVersion string `json:"api_version"`
-	Kind       string `json:"kind"`
-	Spec       any    `json:"spec"`
+	APIVersion      string                         `json:"api_version"`
+	Kind            string                         `json:"kind"`
+	Spec            any                            `json:"spec"`
+	DependencyGraph *workflow.PhaseDependencyGraph `json:"dependency_graph,omitempty"`
 }
 
 // legacyRunWorkflowSpec is the v1alpha1 identity shape before runtime-owned
@@ -339,11 +340,16 @@ func (e *Engine) expectedRunIdentity() (RunIdentity, error) {
 	if e.identityWorkflow != nil {
 		identityWorkflow = e.identityWorkflow
 	}
-	workflowDigest, err := digestCanonicalJSON(runWorkflowDefinition{
+	definition := runWorkflowDefinition{
 		APIVersion: identityWorkflow.APIVersion,
 		Kind:       identityWorkflow.Kind,
 		Spec:       runIdentitySpec(identityWorkflow.Spec),
-	})
+	}
+	if identityWorkflow.APIVersion == "agentflow.dev/v1alpha2" {
+		graph := identityWorkflow.DependencyGraph
+		definition.DependencyGraph = &graph
+	}
+	workflowDigest, err := digestCanonicalJSON(definition)
 	if err != nil {
 		return RunIdentity{}, fmt.Errorf("canonicalize workflow definition: %w", err)
 	}

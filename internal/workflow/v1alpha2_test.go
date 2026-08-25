@@ -41,7 +41,7 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 		t.Fatalf("dependencies = %#v", d.PhaseDependencies)
 	}
 	result := Validate(d)
-	if result.Status != Unsupported || result.Normalized == nil {
+	if result.Status != Executable || result.Normalized == nil {
 		t.Fatalf("status = %s, normalized = %#v, diagnostics = %#v", result.Status, result.Normalized, result.Diagnostics)
 	}
 	plan, err := BuildExpandedPlan(d)

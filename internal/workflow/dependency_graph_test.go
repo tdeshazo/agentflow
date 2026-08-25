@@ -80,7 +80,7 @@ func TestV1Alpha2DependencyGraphPreservesAuthoredOrderAndEdges(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := Validate(d)
-			if result.Status != Unsupported || result.Normalized == nil {
+			if result.Status != Executable || result.Normalized == nil {
 				t.Fatalf("status = %s, normalized = %#v, diagnostics = %#v", result.Status, result.Normalized, result.Diagnostics)
 			}
 			assertDependencyGraph(t, result.Normalized.DependencyGraph, tt.wantNodes, tt.wantEdges)

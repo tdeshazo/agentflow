@@ -93,6 +93,19 @@ func (g PhaseDependencyGraph) dependenciesForPhase(phaseIndex int) []string {
 	return dependencies
 }
 
+// Dependencies returns the declared prerequisites for phaseID in their
+// authored order. It is a read-only graph query: readiness remains a runtime
+// decision based on durable phase acceptance evidence.
+func (g PhaseDependencyGraph) Dependencies(phaseID string) []string {
+	dependencies := make([]string, 0)
+	for _, edge := range g.Edges {
+		if edge.Phase == phaseID {
+			dependencies = append(dependencies, edge.DependsOn)
+		}
+	}
+	return dependencies
+}
+
 // phaseDependenciesMap preserves the former Document field for compatibility.
 // New code must use PhaseDependencyGraph, whose slice-based representation is
 // stable and also records the required acceptance state of every edge.
