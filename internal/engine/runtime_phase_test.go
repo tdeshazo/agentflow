@@ -147,6 +147,131 @@ func TestRunAgentEnforcesMayCommitAtEachActorInvocation(t *testing.T) {
 	}
 }
 
+func TestRunAgentUsesEffectiveActorCommitPermission(t *testing.T) {
+	newV1Alpha1Workflow := func(agents map[string]workflow.Agent, workspace workflow.WorkspaceSpec) *workflow.Workflow {
+		return &workflow.Workflow{
+			APIVersion: "agentflow.dev/v1alpha1",
+			Metadata:   workflow.Metadata{Name: "actor-commit-permission"},
+			Spec: workflow.Spec{
+				Workspace: workspace,
+				Agents:    agents,
+			},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		actorName     string
+		buildWorkflow func(t *testing.T) *workflow.Workflow
+		wantAllowed   bool
+	}{
+		{
+			name:      "v1alpha1 actor may commit",
+			actorName: "worker",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: true},
+				}, workflow.WorkspaceSpec{})
+			},
+			wantAllowed: true,
+		},
+		{
+			name:      "v1alpha1 workspace agent commits allows actor",
+			actorName: "worker",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: false},
+				}, workflow.WorkspaceSpec{AgentCommits: workflow.AgentCommits{Allowed: true}})
+			},
+			wantAllowed: true,
+		},
+		{
+			name:      "v1alpha1 checkpoint agent commits allows actor",
+			actorName: "worker",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: false},
+				}, workflow.WorkspaceSpec{Checkpointing: workflow.CheckpointSpec{AgentCommitsAllowed: true}})
+			},
+			wantAllowed: true,
+		},
+		{
+			name:      "all actor commit permissions false",
+			actorName: "worker",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: false},
+				}, workflow.WorkspaceSpec{})
+			},
+		},
+		{
+			name:      "v1alpha2 may commit true",
+			actorName: "worker",
+			buildWorkflow: func(t *testing.T) *workflow.Workflow {
+				return decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: true", "true").Workflow
+			},
+			wantAllowed: true,
+		},
+		{
+			name:      "v1alpha2 may commit false",
+			actorName: "worker",
+			buildWorkflow: func(t *testing.T) *workflow.Workflow {
+				return decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: false", "true").Workflow
+			},
+		},
+		{
+			name:      "primary actor cannot borrow repair may commit",
+			actorName: "worker",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: false},
+					"repair": {Runner: "test", MayCommit: true},
+				}, workflow.WorkspaceSpec{})
+			},
+		},
+		{
+			name:      "repair actor uses its own may commit",
+			actorName: "repair",
+			buildWorkflow: func(*testing.T) *workflow.Workflow {
+				return newV1Alpha1Workflow(map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: false},
+					"repair": {Runner: "test", MayCommit: true},
+				}, workflow.WorkspaceSpec{})
+			},
+			wantAllowed: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			providerImpl := &capabilityActionProvider{action: func(_ context.Context, request provider.Request) error {
+				path := filepath.Join(request.Workspace, "actor-commit.txt")
+				if err := os.WriteFile(path, []byte("committed\n"), 0o644); err != nil {
+					return err
+				}
+				gitIn(t, request.Workspace, "add", "actor-commit.txt")
+				gitIn(t, request.Workspace, "commit", "-qm", "actor-created commit")
+				return nil
+			}}
+			e := &Engine{
+				Workflow:  test.buildWorkflow(t),
+				Repo:      gitstate.Repo{Root: repo},
+				Providers: map[string]provider.Provider{"test": providerImpl},
+			}
+
+			err := e.runAgent(context.Background(), test.actorName, "", "do work", nil)
+			var safetyErr *safetyViolation
+			if errors.As(err, &safetyErr) != !test.wantAllowed {
+				t.Fatalf("runAgent error = %v, safety violation = %t, want allowed=%t", err, errors.As(err, &safetyErr), test.wantAllowed)
+			}
+			if test.wantAllowed && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestRunAgentEnforcesMayCommitDuringRecoveredActorRerun(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "recovered-may-commit")
@@ -352,6 +477,68 @@ func TestV1Alpha2MayCommitUsesSharedLifecyclePolicy(t *testing.T) {
 
 			err = e.assertAgentCommitPolicy(&workflow.Phase{ID: "work", Actor: "worker"}, ActivePhase{StartCommit: start})
 			if test.mayCommit {
+				if err != nil {
+					t.Fatalf("commit policy error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "not allowed to commit") {
+				t.Fatalf("commit policy error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLifecycleCommitDefenseUsesWorkflowActorCommitPermission(t *testing.T) {
+	tests := []struct {
+		name        string
+		workspace   workflow.WorkspaceSpec
+		wantAllowed bool
+	}{
+		{
+			name:        "workspace agent commits allowed",
+			workspace:   workflow.WorkspaceSpec{AgentCommits: workflow.AgentCommits{Allowed: true}},
+			wantAllowed: true,
+		},
+		{
+			name:        "checkpoint agent commits allowed",
+			workspace:   workflow.WorkspaceSpec{Checkpointing: workflow.CheckpointSpec{AgentCommitsAllowed: true}},
+			wantAllowed: true,
+		},
+		{
+			name:      "all actor commit permissions false",
+			workspace: workflow.WorkspaceSpec{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			e := &Engine{
+				Workflow: &workflow.Workflow{
+					APIVersion: "agentflow.dev/v1alpha1",
+					Metadata:   workflow.Metadata{Name: "lifecycle-actor-commit-permission"},
+					Spec: workflow.Spec{
+						Workspace: test.workspace,
+						Agents: map[string]workflow.Agent{
+							"worker": {Runner: "test", MayCommit: false},
+						},
+					},
+				},
+				Repo: gitstate.Repo{Root: repo},
+			}
+			start, err := e.Repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, "actor-change.txt"), []byte("change\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			gitIn(t, repo, "add", "actor-change.txt")
+			gitIn(t, repo, "commit", "-qm", "actor change")
+
+			err = e.assertAgentCommitPolicy(&workflow.Phase{ID: "work", Actor: "worker"}, ActivePhase{StartCommit: start})
+			if test.wantAllowed {
 				if err != nil {
 					t.Fatalf("commit policy error = %v", err)
 				}
