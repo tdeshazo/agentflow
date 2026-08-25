@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestConformanceCorpus(t *testing.T) {
 	}
 }
 
-func TestV1Alpha2ConformanceExampleCompilesTheConciseContract(t *testing.T) {
+func TestV1Alpha2ConformanceExampleStrictlyDecodesAndNormalizesAgentCapabilities(t *testing.T) {
 	path := filepath.Join("testdata", "conformance", "valid", "v1alpha2-concise.yaml")
 	d, err := Decode(path)
 	if err != nil {
@@ -43,11 +44,19 @@ func TestV1Alpha2ConformanceExampleCompilesTheConciseContract(t *testing.T) {
 	if got, want := normalized.Spec.Workspace.MutationPolicy.Allowed, []string{"src/**", "tests/**"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("normalized workspace authority = %#v, want %#v", got, want)
 	}
-	if got := normalized.Spec.Agents["coder"]; got.Runner != "codex" || got.Model != "gpt-5.6-terra" {
-		t.Fatalf("coder authority = %#v", got)
+	wantCoder := Agent{
+		Runner: "codex", Model: "gpt-5.6-terra", Sandbox: "workspace-write", Approval: "never",
+		Ephemeral: true, MayCommit: true, OutputLastMessage: true,
 	}
-	if got := normalized.Spec.Agents["reviewer"]; got.Runner != "codex" || got.Model != "gpt-5.6-luna" {
-		t.Fatalf("reviewer authority = %#v", got)
+	if got := normalized.Spec.Agents["coder"]; !reflect.DeepEqual(got, wantCoder) {
+		t.Fatalf("coder authority = %#v, want %#v", got, wantCoder)
+	}
+	wantReview := Agent{
+		Runner: "codex", Model: "gpt-5.6-luna", Sandbox: "workspace-write", Approval: "never",
+		Ephemeral: true, MayCommit: false, OutputLastMessage: true,
+	}
+	if got := normalized.Spec.Agents["__inline_actor__review"]; !reflect.DeepEqual(got, wantReview) {
+		t.Fatalf("inline review authority = %#v, want %#v", got, wantReview)
 	}
 
 	validation := normalized.Spec.Validation["tests"]
@@ -74,7 +83,7 @@ func TestV1Alpha2ConformanceExampleCompilesTheConciseContract(t *testing.T) {
 	if got, want := plan.WorkspaceMutationAllowlist, []string{"src/**", "tests/**"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("expanded workspace authority = %#v, want %#v", got, want)
 	}
-	if got := []string{plan.ResolvedAgents[0].Name, plan.ResolvedAgents[1].Name}; strings.Join(got, ",") != "coder,reviewer" {
+	if got := []string{plan.ResolvedAgents[0].Name, plan.ResolvedAgents[1].Name}; strings.Join(got, ",") != "__inline_actor__review,coder" {
 		t.Fatalf("resolved actor order = %#v", got)
 	}
 	if len(plan.Phases) != 2 || plan.Phases[1].ID != "review" || len(plan.Phases[1].DependsOn) != 1 || plan.Phases[1].DependsOn[0] != "implement" {

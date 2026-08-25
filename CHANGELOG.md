@@ -9,6 +9,10 @@
   resolution, inline one-off actors, workspace allowlists, dependency-derived
   serial scheduling, bounded repair, deterministic final validation, and
   durable completion evidence.
+- Expanded v1alpha2 named and inline agents with strict decoding and shared
+  `Agent` normalization for `sandbox`, `approval`, `ephemeral`, `may_commit`,
+  and `output_last_message`; v1alpha1-only defaults such as
+  `spec.defaults.agent` remain outside the v1alpha2 contract.
 - Checked-in v1alpha2 conformance and example workflows, with v1alpha1
   compatibility regressions and expanded-plan coverage.
 - Git-object/ref-backed durable workflow state and resumable phase markers.

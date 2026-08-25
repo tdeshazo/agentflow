@@ -450,7 +450,7 @@ func TestV1Alpha2ConformanceExampleExecutesAuthorityBoundaries(t *testing.T) {
 	if err := e.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	assertSchedulingCalls(t, p, "implement:coder", "implement:coder", "review:reviewer")
+	assertSchedulingCalls(t, p, "implement:coder", "implement:coder", "review:__inline_actor__review")
 	if coderCalls != 2 {
 		t.Fatalf("coder calls = %d, want one implementation call plus exactly one repair call", coderCalls)
 	}
