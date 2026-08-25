@@ -59,6 +59,11 @@ spec:
     coder:
       runner: codex
       model: gpt-5.6-terra
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
 
   validation:
     tests:
@@ -76,6 +81,11 @@ spec:
       actor:
         runner: codex
         model: gpt-5.6-luna
+        sandbox: workspace-write
+        approval: never
+        ephemeral: true
+        may_commit: false
+        output_last_message: true
       dependsOn: [implement]
       prompt: Review the feature.
       validation: tests
@@ -104,8 +114,34 @@ acceptance boundary.
 
 `agents` is a map of named actor capabilities. A phase may select one by name,
 or may declare a phase-local actor mapping. Named and inline agents use exactly
-the same v1alpha2 schema: both require `runner` and `model`. Those fields
-identify how the actor is invoked, not whether its work is accepted.
+the same v1alpha2 schema. Both require `runner` and `model`; both also accept
+the actor capability fields below. These fields identify how the actor is
+invoked, not whether its work is accepted.
+
+The v1alpha2 capability fields preserve the meanings of the shared v1alpha1
+and runtime `Agent` type. v1alpha2 does not introduce provider-independent
+values, defaults, or other semantics for them:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sandbox` | string | Selects the provider sandbox capability. |
+| `approval` | string | Selects the provider approval policy, subject to provider support. |
+| `ephemeral` | boolean | Controls provider session/context persistence according to existing provider semantics. |
+| `may_commit` | boolean | Controls whether the actor capability may create commits according to existing AgentFlow checkpoint/workspace policy. |
+| `output_last_message` | boolean | Retains the actor's final provider message according to existing runtime semantics. |
+
+An explicit boolean `false` is a valid authored value. In particular,
+`may_commit: false`, `output_last_message: false`, and `ephemeral: false` are
+not missing fields and must not be replaced by truthy defaults. Where shared
+Agent defaults or inheritance apply, an explicit `false` remains an explicit
+override of the inherited value.
+
+These are actor execution capabilities, not acceptance authority. None of
+these fields can authorize phase acceptance, satisfy `dependsOn`, waive
+validation, widen `workspace.allowWrites`, bypass integrity or lineage checks,
+extend a repair budget, or authorize workflow completion. Those decisions
+remain owned by the existing workspace, deterministic validation, dependency,
+repair, integrity, lineage, and completion contracts.
 
 Every scalar phase actor reference must resolve to an authored entry in
 `spec.agents`. Missing actors are structural errors and fail closed before
