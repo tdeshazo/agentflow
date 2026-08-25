@@ -22,7 +22,9 @@ the section that matches the question you are trying to answer:
   [Execution authority](architecture/execution-authority.md).
 - To author or audit a workflow, read the
   [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and the
-  [concise authoring guide](guides/concise-authoring.md).
+  [concise authoring guide](guides/concise-authoring.md). The proposed
+  [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)
+  defines the next concise form; it is not yet executable.
 - To understand the current interpreter, read the
   [Go runtime reference](reference/runtime.md).
 - To contribute a change, follow the
