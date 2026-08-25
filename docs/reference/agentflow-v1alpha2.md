@@ -135,14 +135,38 @@ values, defaults, or other semantics for them:
 | `sandbox` | string | Selects the provider sandbox capability. |
 | `approval` | string | Selects the provider approval policy, subject to provider support. |
 | `ephemeral` | boolean | Controls provider session/context persistence according to existing provider semantics. |
-| `may_commit` | boolean | Controls whether the actor capability may create commits according to existing AgentFlow checkpoint/workspace policy. |
-| `output_last_message` | boolean | Requests final-message retention at the provider boundary; the current Codex adapter captures a final message for every invocation. The message is never acceptance evidence. |
+| `may_commit` | boolean | Invocation-scoped authority: whether this named actor invocation may move repository `HEAD` by creating commits. |
+| `output_last_message` | boolean | Provider-neutral capture intent: when true, ask the provider to capture and return its final message when supported; when false, do not request capture. |
 
 An explicit boolean `false` is a valid authored value. In particular,
 `may_commit: false`, `output_last_message: false`, and `ephemeral: false` are
 not missing fields and must not be replaced by truthy defaults. v1alpha2 does
 not apply inherited agent defaults: omitted boolean fields normalize to `false`,
 while an explicit `false` remains `false`.
+
+Any future `defaults.agent` inheritance feature must first introduce
+presence-aware boolean decoding. Only presence-aware decoding can distinguish
+an omitted boolean from an explicit `false` before a truthy inherited default is
+applied; without that distinction, an explicit `false` could be overwritten.
+
+`may_commit` is evaluated independently for every actor invocation. It applies
+to the primary phase actor, a validation repair actor, an actor rerun during
+recovery, a repair actor used by `completion.validation`, and any future actor
+invocation through the shared runtime. It is not inherited from a phase's
+primary actor or from another actor used by the same phase or transition.
+
+An actor-created commit without that invocation's permission is a
+repository-policy safety failure. It is not a repair invitation, cannot be
+accepted because another actor has `may_commit: true`, cannot be hidden by a
+later successful validation, cannot satisfy `dependsOn`, and cannot authorize
+completion. Runtime-owned checkpoints are not actor-created commits:
+`may_commit: false` still permits AgentFlow to checkpoint validated allowed
+dirty work.
+
+`output_last_message` only controls provider capture intent. A returned final
+message is diagnostic/presentation output; it is never deterministic validation
+evidence, `actor_completed` evidence, dependency evidence, or completion
+authority.
 
 These are actor execution capabilities, not acceptance authority. None of
 these fields can authorize phase acceptance, satisfy `dependsOn`, waive
@@ -238,6 +262,10 @@ other existing completion conditions pass. Its validation evidence, failed
 validation record, and repair budget are scoped to the completion transition,
 so they cannot be borrowed from a phase that uses the same validation name.
 
+The repair actor's `may_commit` authority is evaluated for that repair
+invocation. It is not borrowed from the actor of the phase that preceded the
+completion transition.
+
 ## Dependency-derived execution
 
 `spec.flow` is optional in v1alpha2. When it is omitted, execution is derived
@@ -291,6 +319,12 @@ The built-in Codex provider reports approval policies other than `never` as
 valid but unsupported. Runner names remain provider-neutral in v1alpha2 so
 injected Go providers can be used through the Go API; the CLI's built-in
 provider registry still determines which runner can execute a run.
+
+For the built-in Codex provider, an omitted or empty `sandbox` resolves to the
+explicit safe provider default `workspace-write`; it must not silently inherit
+arbitrary user Codex configuration. An explicitly authored sandbox value is
+passed through. This provider-specific default does not apply to injected or
+custom providers, which define their own handling of an omitted value.
 
 `v1alpha1` compatibility remains a separate contract and regression coverage
 continues to ensure that v1alpha2 fields such as `dependsOn` are not accepted

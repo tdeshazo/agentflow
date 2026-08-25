@@ -350,12 +350,19 @@ type Provider interface {
 
 `Request` describes workspace, model, reasoning effort, prompt, sandbox, and
 execution-lifetime preferences without exposing Codex-specific command-line
-arguments to the interpreter.
+arguments to the interpreter. Agent commit permission is evaluated per named
+actor invocation by the shared runtime; it is not a phase-wide provider
+setting. Providers must not treat a different actor's permission as authority
+for the current invocation.
 
 The initial provider is `codex`. It maps an AgentFlow actor to non-interactive
 `codex exec`, passes prompts on stdin, uses the declared model/reasoning/sandbox,
-and captures the final message. Workflow acceptance does not depend on the final
-message; deterministic validation still owns advancement.
+and honors `output_last_message` as capture intent. When true, the provider is
+asked to capture and return its final message when supported; when false, the
+runtime does not request that capture. A returned final message is diagnostic
+or presentation output only. Workflow acceptance does not depend on it;
+deterministic validation still owns advancement, and the message is never
+`actor_completed` evidence, dependency evidence, or completion authority.
 
 ## Executed v1alpha1 core
 
@@ -418,9 +425,14 @@ unavailable values fail closed.
 The Codex adapter uses headless `codex exec`. It supports the workflow's `never`
 approval policy and fails closed for other approval policies rather than silently
 ignoring them. It explicitly passes `-c approval_policy="never"`, which overrides
-any user configuration for that process, as well as the declared model, reasoning
-effort, sandbox, color, and ephemeral execution settings. It captures the final
-message using `--output-last-message`.
+any user configuration for that process. If the authored sandbox is omitted or
+empty, the adapter resolves it to the explicit safe default `workspace-write`;
+it does not inherit arbitrary user Codex configuration. Explicit authored
+sandbox values pass through. This default is specific to the built-in Codex
+provider and is not imposed on injected or custom providers. The adapter uses
+`output_last_message` to decide whether to request final-message capture; any
+returned message remains diagnostic/presentation output rather than workflow
+evidence or authority.
 
 ## Current limits
 
