@@ -104,6 +104,81 @@ acceptance, and before reusing a completed marker. A lifecycle or legacy
 recovery override may change procedural detail only; it cannot bypass the
 deterministic acceptance boundary.
 
+### Shared `Completion.FinalValidation` durability contract
+
+The shared `Completion` model exposes `FinalValidation`. In v1alpha1 this is
+the `spec.completion.<name>.finalValidation` field; v1alpha2's
+`spec.completion.validation` normalizes to the same field on the default
+completion. The field always denotes a completion transition, not a general
+request to run a named validation.
+
+The logical durable scope of a final validation is:
+
+```text
+completion/<completion-name>/<validation-name>
+```
+
+The scope is part of the durable identity of every final-gate artifact,
+including successful validation evidence, failed-validation state, consumed
+repair budget, and pending repair-invocation attribution. It is distinct from
+the following transitions even when they use the same validation name:
+
+| Transition | Durable identity |
+| --- | --- |
+| `Completion.FinalValidation` | `completion/<completion-name>/<validation-name>` |
+| ordinary standalone `flow.validate` | standalone validation scope, `<validation-name>` |
+| phase validation | that phase's acceptance context and phase record |
+| another completion's final validation | that completion's own `completion/<name>/...` scope |
+
+If a backend encodes a logical scope in a ref or record name, it must encode
+the complete scope string. Omitting `completion/<completion-name>/` is not a
+compatible representation of a final-gate record.
+
+For a `repair-once` final gate, the runtime must durably increment the scoped
+repair budget before invoking the repair actor. It then reruns the same
+deterministic final validation. The actor's return, output, or commit is never
+completion evidence. If revalidation succeeds, the consumed budget remains
+until the completion marker and all preceding completion evidence are durable;
+only then may the transient scoped repair-budget record be removed. A crash in
+the interval after successful revalidation and before the marker therefore
+cannot create a fresh repair attempt. On restart, a passing deterministic final
+gate continues toward completion with the budget still consumed; a failing
+gate fails with exhausted repair budget.
+
+Final validation is necessary but not sufficient for completion. Completion
+also requires every configured completion assertion, checkpoint and
+post-checkpoint requirement, mutation/scope and lineage boundary, integrity
+and cleanliness boundary, and the durable workflow-complete marker. A
+consumed repair budget is execution-policy state, never success evidence.
+
+A safety failure in a completion-scoped record is terminal for the run. It is
+not repairable, is never downgraded to an ordinary validation failure, and is
+not cleared by repair-state migration, a changed `HEAD`, later validation
+success, or an unscoped record. It remains authoritative until explicit reset
+or abandon state disposal.
+
+#### Pre-upgrade v1alpha1 compatibility
+
+Before this contract, a v1alpha1 completion final validation may have written
+legacy standalone records under the validation name. Such a record is
+ambiguous: it may have come from an ordinary flow validation or from the
+completion transition. When a v1alpha1 completion final gate is opened, a
+well-formed legacy record for the same validation name must therefore be
+recognized conservatively and migrated to the completion scope before the
+runtime decides whether repair is available. Migration preserves the consumed
+attempt count and the failure kind; it never resets attempts and never turns a
+safety failure into a validation failure.
+
+If both legacy and scoped records exist, safety state wins and repair attempts
+are combined conservatively (the greater consumed count is retained). A
+malformed, conflicting, or unclassifiable legacy record fails closed; the
+scoped record must not be treated as fresh. The legacy source is not deleted
+during migration. A migrated safety record remains terminal, and a migrated
+repair-budget source is removable only through explicit state disposal (or
+post-completion cleanup that cannot remove safety state). New v1alpha1
+standalone flow validations remain outside this completion contract; only
+pre-upgrade ambiguous records receive the conservative completion lookup.
+
 ## Durable execution and recovery
 
 The interpreter stores workflow evidence in Git objects and namespaced refs,

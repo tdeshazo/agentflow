@@ -186,6 +186,37 @@ When deterministic validation fails, the same record stores a typed
 former, while repository-policy safety failures remain terminal. Standalone or
 final validation uses the corresponding durable validation-failure record and
 the same classification.
+
+The shared `Completion.FinalValidation` durability scope is
+`completion/<completion-name>/<validation-name>` for both v1alpha1 and
+v1alpha2. It is the logical scope used when deriving the validation-evidence,
+validation-failure, repair-budget, and pending repair-invocation identities;
+it is not interchangeable with an ordinary standalone validation, a phase
+validation, or another completion using the same name. In v1alpha2 the
+concise `completion.validation` field uses the normalized default completion
+name.
+
+For a completion final gate with one repair attempt, repair-budget consumption
+is written before the repair provider starts. The deterministic final gate is
+run again after repair, but the repair actor's result or commit never supplies
+completion evidence. If that rerun passes, the consumed budget remains until
+the completion marker is durable; only then is the transient budget eligible
+for cleanup. A restart after successful rerun therefore either continues to
+completion when the gate still passes or reports exhausted repair budget when
+it fails. Completion still requires its assertions, checkpoint and
+post-checkpoint checks, scope, lineage, integrity, cleanliness, and durable
+complete marker.
+
+Completion-scoped safety state is terminal and survives repair-state
+migration, `HEAD` changes, later validation success, and unscoped records. A
+pre-upgrade v1alpha1 unscoped validation-name record is conservatively
+recognized for a matching completion final gate and migrated to the scoped
+identity with attempts and failure kind preserved before repair availability
+is evaluated. Safety wins over non-safety state; malformed or conflicting
+legacy state fails closed; migration does not delete the legacy source or
+clear safety state. New ordinary v1alpha1 `flow.validate` behavior is outside
+this completion contract.
+
 Successful deterministic validations additionally write small, digest-only
 records under `validation-evidence/`. Their key covers the validation and
 referenced tool definitions, resolved input digests, declared dependency
