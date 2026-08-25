@@ -18,6 +18,10 @@ type Workflow struct {
 	Metadata   Metadata `yaml:"metadata"`
 	Spec       Spec     `yaml:"spec"`
 	File       string   `yaml:"-"`
+	// DependencyGraph is the normalized v1alpha2 execution contract. It is
+	// deliberately outside Spec and excluded from YAML so v1alpha1 continues
+	// to reject dependsOn rather than silently acquiring a second language.
+	DependencyGraph PhaseDependencyGraph `yaml:"-"`
 }
 
 // Metadata is descriptive: it names and explains a document but does not

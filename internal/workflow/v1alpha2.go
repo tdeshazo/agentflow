@@ -209,6 +209,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			Prompt: phase.Prompt, Validation: phase.Validation,
 		})
 	}
+	w.DependencyGraph = clonePhaseDependencyGraph(graph)
 	return &Document{
 		Workflow:          w,
 		Locations:         locations,
@@ -299,11 +300,7 @@ func validateV1Alpha2(d *Document) Result {
 		return r
 	}
 	r.Normalized = normalized
-	r.Status = Unsupported
-	r.Diagnostics = append(r.Diagnostics, Diagnostic{
-		Status:  Unsupported,
-		Message: "apiVersion agentflow.dev/v1alpha2 is structurally valid but dependency execution is not supported by this runtime",
-	})
+	r.Status = Executable
 	return r
 }
 

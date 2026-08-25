@@ -3,8 +3,8 @@ package workflow
 import "fmt"
 
 // NormalizeWorkflow compiles the selected authoring layer into the shared
-// executable concepts. v1alpha2 remains marked as v1alpha2 so callers cannot
-// mistake its unimplemented dependency execution for v1alpha1 behavior.
+// executable concepts while preserving the separately modeled v1alpha2
+// dependency graph.
 func NormalizeWorkflow(d *Document) (*Document, error) {
 	if d != nil && d.V1Alpha2 != nil {
 		return normalizeV1Alpha2(d.V1Alpha2, d.Locations)
@@ -14,6 +14,11 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 	}
 	w := *d.Workflow
 	w.Spec = d.Workflow.Spec
+	graph := d.DependencyGraph
+	if len(graph.Nodes) == 0 {
+		graph = d.Workflow.DependencyGraph
+	}
+	w.DependencyGraph = clonePhaseDependencyGraph(graph)
 	w.Spec.Agents = make(map[string]Agent, len(d.Workflow.Spec.Agents))
 	for id, local := range d.Workflow.Spec.Agents {
 		w.Spec.Agents[id] = mergeAgent(d.Workflow.Spec.Defaults.Agent, local)
@@ -80,8 +85,8 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 	return &Document{
 		Workflow:          &w,
 		Locations:         d.Locations,
-		DependencyGraph:   clonePhaseDependencyGraph(d.DependencyGraph),
-		PhaseDependencies: d.DependencyGraph.phaseDependenciesMap(),
+		DependencyGraph:   clonePhaseDependencyGraph(graph),
+		PhaseDependencies: graph.phaseDependenciesMap(),
 	}, nil
 }
 

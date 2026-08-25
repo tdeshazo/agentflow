@@ -23,10 +23,10 @@ func (p *writeProvider) Run(_ context.Context, req provider.Request) (provider.R
 	return provider.Result{}, os.WriteFile(filepath.Join(req.Workspace, "work.txt"), []byte("done\n"), 0o644)
 }
 
-func TestNewRejectsV1Alpha2BeforeExecution(t *testing.T) {
-	_, err := New(&workflow.Workflow{APIVersion: "agentflow.dev/v1alpha2"}, nil, Options{})
-	if err == nil || !strings.Contains(err.Error(), "dependency scheduling is not supported") {
-		t.Fatalf("err = %v", err)
+func TestNewAcceptsV1Alpha2ForDependencyScheduling(t *testing.T) {
+	_, err := New(&workflow.Workflow{APIVersion: "agentflow.dev/v1alpha2", Metadata: workflow.Metadata{Name: "v1alpha2"}}, nil, Options{RepoRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

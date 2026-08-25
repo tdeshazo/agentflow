@@ -25,7 +25,7 @@ type Document struct {
 	// authoring representation.
 	Workflow *Workflow
 	// V1Alpha2 retains the authored form rather than pretending its concise
-	// contract was a v1alpha1 document.
+	// contract is a v1alpha1 document.
 	V1Alpha2 *V1Alpha2Workflow
 	// DependencyGraph is the normalized v1alpha2 dependency contract. It is
 	// outside Phase so v1alpha1 continues to reject the unknown dependsOn field.
@@ -153,8 +153,8 @@ func documentAPIVersion(root *yaml.Node) (string, error) {
 }
 
 // Load remains the programmatic loading entry point. Call Validate when an
-// executable workflow is required; this split lets tooling inspect a
-// spec-valid but runtime-unsupported document without constructing an engine.
+// executable workflow is required; this split lets tooling inspect a document
+// without constructing an engine.
 func Load(path string) (*Workflow, error) {
 	d, err := Decode(path)
 	if err != nil {
