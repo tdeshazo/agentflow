@@ -66,6 +66,10 @@ type Engine struct {
 type ActivePhase struct {
 	PhaseID     string `json:"phase_id"`
 	StartCommit string `json:"phase_start_commit"`
+	// CommitActor records the actor invocation that most recently moved HEAD
+	// during this phase. Acceptance uses this invocation-scoped authority rather
+	// than re-evaluating the primary phase actor after a validation repair.
+	CommitActor string `json:"commit_actor,omitempty"`
 	// ActorCompleted is durable evidence that the phase's primary actor
 	// returned successfully. Until it is true, recovery must not let
 	// deterministic validation substitute for the actor invocation.

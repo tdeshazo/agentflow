@@ -26,7 +26,11 @@ func (e *phaseValidationFailure) Unwrap() error { return e.err }
 // safetyViolation is a repository-policy failure. Repair actors may fix a bad
 // change, but they must never be asked to explain away a protected or
 // out-of-scope edit.
-type safetyViolation struct{ err error }
+type safetyViolation struct {
+	err    error
+	actor  string
+	commit string
+}
 
 func (e *safetyViolation) Error() string { return e.err.Error() }
 func (e *safetyViolation) Unwrap() error { return e.err }
@@ -372,7 +376,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		// an adapter-specific or test-supplied TTY signal.
 		presentation = provider.PresentationPlain
 	}
-	err = e.invokeAgent(ctx, actorName, a, prov, provider.Request{
+	committed, err := e.invokeAgent(ctx, actorName, a, prov, provider.Request{
 		Workspace:    e.Repo.Root,
 		Model:        model,
 		Reasoning:    reasoning,
@@ -383,6 +387,11 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		Presentation: presentation,
 		Metadata:     metadata,
 	})
+	if committed && p != nil {
+		if recordErr := e.recordPhaseCommitActor(p, actorName); recordErr != nil {
+			return recordErr
+		}
+	}
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
 		var safetyErr *safetyViolation
@@ -402,21 +411,42 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 // It deliberately observes only HEAD: may_commit governs actor-created
 // commits, while ordinary workspace edits remain subject to the independent
 // mutation-boundary checks and may later be checkpointed by the runtime.
-func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request) error {
+func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request) (bool, error) {
 	before, err := e.Repo.Head()
 	if err != nil {
-		return fmt.Errorf("capture repository HEAD before actor %q: %w", actorName, err)
+		return false, fmt.Errorf("capture repository HEAD before actor %q: %w", actorName, err)
 	}
 
 	_, providerErr := prov.Run(ctx, request)
 	after, headErr := e.Repo.Head()
 	if headErr != nil {
-		return fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
+		return false, fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
 	}
 	if before != after && !agent.MayCommit {
-		return &safetyViolation{err: fmt.Errorf("repository policy: actor %q moved HEAD but may_commit is false", actorName)}
+		return true, &safetyViolation{
+			err:    fmt.Errorf("repository policy: actor %q moved HEAD but may_commit is false", actorName),
+			actor:  actorName,
+			commit: after,
+		}
 	}
-	return providerErr
+	return before != after, providerErr
+}
+
+// recordPhaseCommitActor persists the authority that was actually exercised
+// by a successful or partially successful actor invocation. It is deliberately
+// separate from the phase's primary actor: a validation repair may be the
+// actor that legitimately created the accepted commit.
+func (e *Engine) recordPhaseCommitActor(p *workflow.Phase, actorName string) error {
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil {
+		return err
+	}
+	if !ok || active.PhaseID != p.ID {
+		return fmt.Errorf("active phase state is missing while recording actor %q commit", actorName)
+	}
+	active.CommitActor = actorName
+	return e.Store.SetJSON(e.activeRecord(), active)
 }
 func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) (runErr error) {
 	e.logEvent("validation_start", map[string]string{"validation": name})
@@ -439,6 +469,11 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	}
 	if !ok {
 		return fmt.Errorf("unknown validation %q", name)
+	}
+	if p == nil {
+		if err := e.standaloneCommitSafety(name); err != nil {
+			return err
+		}
 	}
 	key, cacheable, keyErr := e.validationEvidenceKey(name, v, p)
 	if keyErr != nil {
@@ -525,6 +560,12 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	e.lastFailure = boundedFailureOutput(failure)
 	e.presenter().RepairAttempt(name)
 	if err := e.runAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, p); err != nil {
+		var safetyErr *safetyViolation
+		if errors.As(err, &safetyErr) {
+			if persistErr := e.persistValidationFailure(p, name, err); persistErr != nil {
+				return persistErr
+			}
+		}
 		return err
 	}
 	steps := v.OnFailure.Then
@@ -561,9 +602,37 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	return nil
 }
 
+func (e *Engine) standaloneCommitSafety(name string) error {
+	var prior validationFailureEvidence
+	ok, err := e.Store.GetJSON(e.standaloneFailureRecord(name), &prior)
+	if err != nil || !ok || prior.FailureKind != PhaseFailureSafety || prior.Commit == "" {
+		return err
+	}
+	head, err := e.Repo.Head()
+	if err != nil {
+		return err
+	}
+	if head != prior.Commit {
+		return nil
+	}
+	return &safetyViolation{err: errors.New(prior.Output), actor: prior.Actor, commit: prior.Commit}
+}
+
 func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failure error) error {
 	if p == nil {
 		record := e.standaloneFailureRecord(name)
+		var prior validationFailureEvidence
+		if ok, err := e.Store.GetJSON(record, &prior); err != nil {
+			return err
+		} else if ok && prior.FailureKind == PhaseFailureSafety && prior.Commit != "" {
+			head, headErr := e.Repo.Head()
+			if headErr != nil {
+				return headErr
+			}
+			if head == prior.Commit {
+				return &safetyViolation{err: errors.New(prior.Output), actor: prior.Actor, commit: prior.Commit}
+			}
+		}
 		kind := PhaseFailureValidation
 		var safetyErr *safetyViolation
 		if errors.As(failure, &safetyErr) {
@@ -571,6 +640,7 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 		}
 		return e.Store.SetJSON(record, validationFailureEvidence{
 			Validation: name, FailureKind: kind, Output: errorOutput(failure),
+			Actor: safetyErrActor(safetyErr), Commit: safetyErrCommit(safetyErr),
 		})
 	}
 	var active ActivePhase
@@ -585,7 +655,24 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	}
 	active.Validation = name
 	active.ValidationError = errorOutput(failure)
+	if errors.As(failure, &safetyErr) && safetyErr.actor != "" {
+		active.CommitActor = safetyErr.actor
+	}
 	return e.Store.SetJSON(e.activeRecord(), active)
+}
+
+func safetyErrActor(err *safetyViolation) string {
+	if err == nil {
+		return ""
+	}
+	return err.actor
+}
+
+func safetyErrCommit(err *safetyViolation) string {
+	if err == nil {
+		return ""
+	}
+	return err.commit
 }
 
 func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
@@ -638,6 +725,8 @@ type validationFailureEvidence struct {
 	Validation  string           `json:"validation"`
 	FailureKind PhaseFailureKind `json:"failure_kind"`
 	Output      string           `json:"output,omitempty"`
+	Actor       string           `json:"actor,omitempty"`
+	Commit      string           `json:"commit,omitempty"`
 }
 
 func (e *Engine) standaloneFailureRecord(validation string) string {

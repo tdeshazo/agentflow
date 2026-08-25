@@ -147,6 +147,15 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				}
 				return &phaseValidationFailure{err: err}
 			}
+			// A validation repair can be the invocation that moved HEAD. The
+			// repair records that authority durably, so refresh the in-memory
+			// lifecycle record before the final acceptance policy check.
+			var persisted ActivePhase
+			if ok, err := e.Store.GetJSON(e.activeRecord(), &persisted); err != nil {
+				return err
+			} else if ok && persisted.PhaseID == phase.ID {
+				active.CommitActor = persisted.CommitActor
+			}
 			active.ValidationPassed = true
 		}
 		if action.AssertProgressUnchanged {
@@ -282,9 +291,13 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 		// is therefore authorized to create its checkpoint.
 		return nil
 	}
-	agent, ok := e.Workflow.Spec.Agents[phase.Actor]
+	actorName := phase.Actor
+	if active.CommitActor != "" {
+		actorName = active.CommitActor
+	}
+	agent, ok := e.Workflow.Spec.Agents[actorName]
 	if !ok {
-		return fmt.Errorf("unknown actor %q", phase.Actor)
+		return fmt.Errorf("unknown actor %q", actorName)
 	}
 	allowed := agent.MayCommit || e.Workflow.Spec.Workspace.AgentCommits.Allowed || e.Workflow.Spec.Workspace.Checkpointing.AgentCommitsAllowed
 	if allowed {
@@ -306,7 +319,7 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 		}
 	}
 	if head != active.StartCommit {
-		return fmt.Errorf("phase %s created commits but actor %q is not allowed to commit", phase.ID, phase.Actor)
+		return fmt.Errorf("phase %s created commits but actor %q is not allowed to commit", phase.ID, actorName)
 	}
 	return nil
 }

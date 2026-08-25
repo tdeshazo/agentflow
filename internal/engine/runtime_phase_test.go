@@ -148,7 +148,8 @@ func TestRunAgentEnforcesMayCommitDuringRecoveredActorRerun(t *testing.T) {
 		return nil
 	}
 
-	if err := newDurableEngine(t, w, providerImpl).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "interrupted before work") {
+	e := newDurableEngine(t, w, providerImpl)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "interrupted before work") {
 		t.Fatalf("initial interrupted run error = %v", err)
 	}
 	err := newDurableEngine(t, w, providerImpl).Run(context.Background())
@@ -156,6 +157,7 @@ func TestRunAgentEnforcesMayCommitDuringRecoveredActorRerun(t *testing.T) {
 	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "may_commit is false") {
 		t.Fatalf("recovered actor commit error = %v", err)
 	}
+	assertNoDurablePhaseOrCompletionMarkers(t, e, "change")
 	if providerImpl.calls != 2 {
 		t.Fatalf("provider calls = %d, want initial invocation plus recovered rerun", providerImpl.calls)
 	}
@@ -190,6 +192,7 @@ func TestRunAgentEnforcesMayCommitForValidationRepairActor(t *testing.T) {
 	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), `actor "repair"`) {
 		t.Fatalf("repair actor commit error = %v", err)
 	}
+	assertNoDurablePhaseOrCompletionMarkers(t, e, "change")
 	if providerImpl.calls != 2 {
 		t.Fatalf("provider calls = %d, want phase actor plus repair actor", providerImpl.calls)
 	}
