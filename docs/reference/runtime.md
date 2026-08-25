@@ -136,6 +136,7 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/branch
 refs/agentflow/workflow-<hex-encoded-workflow-name>/active
 refs/agentflow/workflow-<hex-encoded-workflow-name>/integrity
 refs/agentflow/workflow-<hex-encoded-workflow-name>/run-identity
+refs/agentflow/workflow-<hex-encoded-workflow-name>/pending-invocation
 refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/complete
@@ -144,7 +145,8 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/validation-evidence/<run>/<k
 
 The names above are the defaults. `spec.state.records` may configure the base,
 branch, active-phase, completed-phase, human, completion, and integrity record
-names; the interpreter uses those names within the same workflow namespace.
+names; the pending-invocation record is runtime-owned and remains in the same
+workflow namespace.
 
 Commit-valued records point directly at repository commits. Structured records
 such as the active phase, branch name, and integrity baseline are JSON blobs
@@ -168,6 +170,12 @@ after the primary phase provider returns successfully. A green deterministic
 gate is not a substitute for that evidence, so recovery reruns an actor whose
 completion was never durably recorded and resumes acceptance without replaying
 an actor whose completion was recorded.
+Before any actor provider call, AgentFlow also persists a pending-invocation
+record containing the actor name, invocation-start `HEAD`, invocation
+role/context, applicable phase ID, and validation identity/scope when required
+for repair or completion. This record is execution attribution only. Prompts,
+model output, provider final messages, parameter values, environment values,
+and secrets are not persisted.
 For engine-owned progress and bookkeeping transitions it also records the
 pre-transition checklist/file-state digests plus a pending/applied marker
 before changing Markdown. A restart can therefore finish only an exact
@@ -175,7 +183,9 @@ declared transition from one of the durable intermediate states; it cannot
 reinterpret an unrelated checkbox, status, or same-file edit as accepted work.
 When deterministic validation fails, the same record stores a typed
 `failure_kind` (`validation` or `safety`); repair budgeting applies only to the
-former, while repository-policy safety failures remain terminal.
+former, while repository-policy safety failures remain terminal. Standalone or
+final validation uses the corresponding durable validation-failure record and
+the same classification.
 Successful deterministic validations additionally write small, digest-only
 records under `validation-evidence/`. Their key covers the validation and
 referenced tool definitions, resolved input digests, declared dependency
@@ -239,18 +249,25 @@ requires a deterministic phase validation before acceptance.
 
 For a mutable AI phase, the runtime performs this fixed contract:
 
-1. require a clean implementation boundary and validate branch/base lineage,
+1. reconcile any pending actor invocation before replay, validation, acceptance,
+   dependency scheduling, or completion;
+2. reject a persisted terminal safety failure before ordinary execution;
+3. require a clean implementation boundary and validate branch/base lineage,
    protected integrity, and mutation scope;
-2. capture the phase-start commit and progress snapshot, then persist the active
+4. capture the phase-start commit and progress snapshot, then persist the active
    phase before invoking the actor;
-3. persist `actor_completed` immediately after the actor returns successfully;
-4. run deterministic validation and applicable progress/net-change assertions;
+5. persist the pending invocation before `provider.Run`, inspect `HEAD` after it
+   returns even on provider error, attribute any movement to that actor, enforce
+   the effective commit rule, and durably record the result before clearing the
+   pending record;
+6. persist `actor_completed` immediately after the actor returns successfully;
+7. run deterministic validation and applicable progress/net-change assertions;
    for `advanceProgress: true`, verify the actor did not edit progress and then
    let the engine advance exactly the declared criterion;
-5. checkpoint accepted allowed work, requiring a clean tree and rechecking
+8. checkpoint accepted allowed work, requiring a clean tree and rechecking
    lineage, integrity, and scope;
-6. write the completed-phase commit marker; and
-7. clear active state only after the marker is valid.
+9. write the completed-phase commit marker; and
+10. clear active state only after the marker is valid.
 
 The optional lifecycle `checkpoint` names an existing checkpoint tool for
 workflow-specific semantics. Omitting it uses the runtime Git checkpoint.
@@ -261,13 +278,18 @@ clean checkpoint boundary. Legacy `phaseDefaults`, phase `after` actions, and
 treated as explicit procedural escape hatches; their markers are still subject
 to the runtime acceptance contract.
 
-Interrupted recovery is derived from the active record. A valid completed
-marker wins over stale active state. If `actor_completed` is true, recovery
-repeats deterministic acceptance without replaying the actor. Otherwise the
-runtime checks retained partial commits and dirty worktree changes with the
-phase gate before rerunning the actor. A passing preflight does not substitute
-for actor-completion evidence, and a safety failure is terminal. Recovery never
-deletes partial commits or working-tree changes.
+Interrupted recovery first reconciles the pending invocation record. If the
+record's start commit differs from current `HEAD`, the movement is attributed
+to its persisted actor and checked against the effective actor commit
+permission. This reconciliation happens before any actor replay, deterministic
+validation, phase acceptance, dependency scheduling, or completion. A valid
+completed marker wins over stale active state. If `actor_completed` is true,
+recovery repeats deterministic acceptance without replaying the actor.
+Otherwise the runtime checks retained partial commits and dirty worktree changes
+with the phase gate before rerunning the actor. A passing preflight does not
+substitute for actor-completion or pending-invocation evidence, and a safety
+failure is terminal. Recovery never deletes partial commits or working-tree
+changes.
 
 The runtime applies the same policy boundary before and after actor/tool work,
 at checkpoint and acceptance, and before reusing a completed marker. This keeps
@@ -307,11 +329,11 @@ after the primary error. The normal operator sequence is:
 4. Rerun the same `agentflow run` invocation. AgentFlow uses its normal durable
    recovery checks to resume retained phase work when safe.
 
-For a `safety-failed/terminal` state, automatic actor/repair work has stopped
-for the current unsafe workspace condition, but the durable run is not
-abandoned: restore policy compliance and rerun. `reset` is only for
-intentionally abandoning the durable run, and is not required merely because a
-safety failure occurred.
+For a `safety-failed/terminal` state, the durable run cannot continue ordinary
+execution. Restoring policy compliance, moving or reverting `HEAD`, cleaning
+the workspace, or obtaining a later passing validation does not clear the
+persisted safety decision. The explicit `reset`/abandon mechanism is required
+to discard that terminal state and begin a new run.
 
 Pass `--json` for one machine-readable object instead of the default text. It
 contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
@@ -323,7 +345,7 @@ object is indented for readability. Redirected, piped, buffered, and other
 non-terminal stdout remains compact JSON; both forms end with one newline.
 Actionable failures also include stable `recovery` and `next_action` fields:
 validation failures use `automatic-on-rerun`/`rerun`, while safety failures use
-`operator-action-required`/`remediate-then-rerun`.
+`operator-action-required`/`reset-or-abandon`.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
 
@@ -355,10 +377,19 @@ type Provider interface {
 execution-lifetime preferences without exposing Codex-specific command-line
 arguments to the interpreter. The authored `Agent.Sandbox` value is copied to
 the provider-neutral `Request.Sandbox` value; an empty value is not defaulted by
-the engine. Agent commit permission is evaluated per named
-actor invocation by the shared runtime; it is not a phase-wide provider
-setting. Providers must not treat a different actor's permission as authority
-for the current invocation.
+the engine. The shared runtime evaluates actor-created commit permission as:
+
+```text
+agent.MayCommit
+OR spec.workspace.agent_commits.allowed
+OR spec.workspace.checkpointing.agent_commits_allowed
+```
+
+The first source is the current invocation's `Agent.MayCommit`; the latter two
+are workflow-level authorities. The rule is evaluated per named actor
+invocation, not per phase, and providers must not treat a different actor's
+permission as authority for the current invocation. Runtime-owned checkpoint
+commits are outside this actor-created commit rule.
 
 The initial provider is `codex`. It maps an AgentFlow actor to non-interactive
 `codex exec`, passes prompts on stdin, uses the declared model/reasoning/sandbox,
