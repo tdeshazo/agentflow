@@ -162,9 +162,11 @@ kind: AgentWorkflow
 ```
 
 `v1alpha1` remains supported and experimental. `v1alpha2` is the concise
-AgentFlow evolution: its core form strictly decodes, validates as executable,
-normalizes to the existing authority model, derives a deterministic serial
-schedule, and records durable phase/completion evidence. It does not change
+AgentFlow evolution: its core form strictly decodes, validates against the
+current runtime surface, normalizes to the existing authority model, derives a
+deterministic serial schedule, and records durable phase/completion evidence.
+Structurally valid workflows using an unsupported built-in approval policy are
+reported as unsupported; custom provider policies remain provider-defined. It does not change
 v1alpha1 behavior; representative v1alpha1 regressions remain in the
 conformance suite. The v1alpha2 contract shares the core agent capability
 fields, but intentionally does not claim the full v1alpha1 schema, including

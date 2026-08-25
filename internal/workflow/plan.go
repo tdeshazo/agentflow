@@ -62,6 +62,8 @@ type PlannedPhase struct {
 func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 	if result := Validate(d); result.Status == Invalid {
 		return ExpandedPlan{}, fmt.Errorf("workflow is invalid")
+	} else if result.Status == Unsupported {
+		return ExpandedPlan{}, fmt.Errorf("workflow is unsupported by this runtime")
 	}
 	n, err := NormalizeWorkflow(d)
 	if err != nil {

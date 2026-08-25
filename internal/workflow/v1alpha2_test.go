@@ -81,6 +81,46 @@ func TestV1Alpha2ExpandedPlanExposesEffectiveActorCapabilities(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2ValidationReportsUnsupportedAgentCapabilities(t *testing.T) {
+	tests := []struct {
+		name   string
+		field  string
+		path   string
+		inline bool
+	}{
+		{name: "named unsupported approval", field: "runner: codex, model: capability-model, approval: on-request", path: "spec.agents.coder.approval"},
+		{name: "inline unsupported approval", field: "runner: codex, model: capability-model, approval: on-request", path: "spec.phases[0].actor.approval", inline: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configuration := tt.field
+			if !strings.Contains(configuration, "model:") {
+				configuration += ", model: capability-model"
+			}
+			result := ValidateFile(writeWorkflow(t, v1alpha2AgentDocument(configuration, tt.inline)))
+			if result.Status != Unsupported {
+				t.Fatalf("status = %s, want %s; diagnostics = %#v", result.Status, Unsupported, result.Diagnostics)
+			}
+			for _, diagnostic := range result.Diagnostics {
+				if diagnostic.Path == tt.path && strings.Contains(diagnostic.Message, "not implemented") {
+					return
+				}
+			}
+			t.Fatalf("diagnostics = %#v, want unsupported path %q", result.Diagnostics, tt.path)
+		})
+	}
+}
+
+func TestV1Alpha2ExpandedPlanRejectsUnsupportedAgentCapabilities(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, v1alpha2AgentDocument("runner: codex, model: capability-model, approval: on-request", false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildExpandedPlan(d); err == nil || !strings.Contains(err.Error(), "unsupported by this runtime") {
+		t.Fatalf("expanded plan error = %v", err)
+	}
+}
+
 func TestV1Alpha2PhaseActorForms(t *testing.T) {
 	t.Run("named scalar actor", func(t *testing.T) {
 		d, err := Decode(writeWorkflow(t, v1alpha2Fixture))
