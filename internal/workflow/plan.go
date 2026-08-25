@@ -9,17 +9,18 @@ import (
 // ExpandedPlan is a read-only explanation of the actual executable contract.
 // It intentionally contains no provider invocation or mutable tool operation.
 type ExpandedPlan struct {
-	Workflow                string              `yaml:"workflow"`
-	ResolvedAgents          []PlannedAgent      `yaml:"resolvedAgents"`
-	ResolvedLifecycle       LifecyclePolicy     `yaml:"resolvedLifecycle"`
-	SafetyEnforcementPoints []string            `yaml:"safetyEnforcementPoints"`
-	RecoveryBehavior        []string            `yaml:"recoveryBehavior"`
-	Validations             []PlannedValidation `yaml:"validations"`
-	Phases                  []PlannedPhase      `yaml:"phases"`
-	ProgressTransitions     []string            `yaml:"progressTransitions"`
-	CheckpointBehavior      string              `yaml:"checkpointBehavior"`
-	HumanGates              []string            `yaml:"humanGates"`
-	CompletionContract      []string            `yaml:"completionContract"`
+	Workflow                string               `yaml:"workflow"`
+	ResolvedAgents          []PlannedAgent       `yaml:"resolvedAgents"`
+	ResolvedLifecycle       LifecyclePolicy      `yaml:"resolvedLifecycle"`
+	SafetyEnforcementPoints []string             `yaml:"safetyEnforcementPoints"`
+	RecoveryBehavior        []string             `yaml:"recoveryBehavior"`
+	Validations             []PlannedValidation  `yaml:"validations"`
+	DependencyGraph         PhaseDependencyGraph `yaml:"dependencyGraph"`
+	Phases                  []PlannedPhase       `yaml:"phases"`
+	ProgressTransitions     []string             `yaml:"progressTransitions"`
+	CheckpointBehavior      string               `yaml:"checkpointBehavior"`
+	HumanGates              []string             `yaml:"humanGates"`
+	CompletionContract      []string             `yaml:"completionContract"`
 }
 type PlannedValidation struct {
 	Name            string   `yaml:"name"`
@@ -77,6 +78,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 	}
 	plan := ExpandedPlan{
 		Workflow:                w.Metadata.Name,
+		DependencyGraph:         clonePhaseDependencyGraph(n.DependencyGraph),
 		ResolvedLifecycle:       resolvedLifecycle,
 		SafetyEnforcementPoints: []string{"before actor and tool work", "after actor and tool work", "before checkpoint", "before acceptance marker reuse", "during interrupted-phase recovery"},
 		RecoveryBehavior:        []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
@@ -114,7 +116,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			PostRepairSteps: postRepair,
 		})
 	}
-	for _, p := range w.Spec.Phases {
+	for phaseIndex, p := range w.Spec.Phases {
 		validation := p.Validation
 		if validation == "" {
 			validation = w.Spec.Lifecycle.Validation
@@ -147,7 +149,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		}
 		plan.Phases = append(plan.Phases, PlannedPhase{
 			ID: p.ID, Kind: p.Kind, Actor: p.Actor,
-			DependsOn: append([]string(nil), n.PhaseDependencies[p.ID]...), Reasoning: p.Reasoning,
+			DependsOn: n.DependencyGraph.dependenciesForPhase(phaseIndex), Reasoning: p.Reasoning,
 			RequiresChange: p.RequiresChange, CriterionID: criterionID,
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
 			Bookkeeping: p.Bookkeeping, Acceptance: acceptance,

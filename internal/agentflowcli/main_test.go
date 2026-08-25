@@ -42,6 +42,43 @@ func TestPlanExpandedCLI(t *testing.T) {
 	}
 }
 
+func TestPlanExpandedCLIExposesV1Alpha2DependencyGraph(t *testing.T) {
+	workflowFile := filepath.Join(t.TempDir(), "workflow.yaml")
+	body := `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: dependency-plan}
+spec:
+  workspace: {allowWrites: [src/**]}
+  agents:
+    coder: {runner: codex, model: gpt-5.6-terra}
+    reviewer: {runner: codex, model: gpt-5.6-luna}
+  validation: {tests: {run: "true"}}
+  phases:
+    - {id: implement, actor: coder, prompt: implement, validation: tests}
+    - {id: review, actor: reviewer, prompt: review, validation: tests, dependsOn: [implement]}
+  completion: {validation: tests}
+`
+	if err := os.WriteFile(workflowFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"plan", "--expanded", "-f", workflowFile})
+	})
+	for _, want := range []string{
+		"dependencyGraph:",
+		"authoredOrder: 0",
+		"phase: review",
+		"dependsOn: implement",
+		"satisfiedWhen: deterministically accepted",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("plan output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestStatusJSONCLI(t *testing.T) {
 	repo := t.TempDir()
 	for _, args := range [][]string{
