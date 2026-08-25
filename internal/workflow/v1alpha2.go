@@ -9,8 +9,11 @@ import (
 )
 
 const (
-	v1alpha1APIVersion = "agentflow.dev/v1alpha1"
-	v1alpha2APIVersion = "agentflow.dev/v1alpha2"
+	v1alpha1APIVersion   = "agentflow.dev/v1alpha1"
+	v1alpha2APIVersion   = "agentflow.dev/v1alpha2"
+	v1alpha2RepairPrompt = `Diagnose and repair the deterministic validation failure below. Do not weaken or remove validation.
+
+{{ validation.failure.log }}`
 )
 
 // V1Alpha2Workflow is the explicit concise authoring contract. It is not a
@@ -310,7 +313,10 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			v.OnFailure = FailurePolicy{
 				Strategy:          "repair-once",
 				MaxRepairAttempts: 1,
-				Repair:            Repair{Actor: validation.Repair.Once},
+				Repair: Repair{
+					Actor:  validation.Repair.Once,
+					Prompt: v1alpha2RepairPrompt,
+				},
 			}
 		}
 		w.Spec.Validation[name] = v

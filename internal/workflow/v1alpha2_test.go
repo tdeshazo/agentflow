@@ -584,6 +584,10 @@ func TestV1Alpha2RepairNormalizesToBoundedDeterministicValidation(t *testing.T) 
 	if v.OnFailure.Repair.Actor != "coder" {
 		t.Fatalf("repair actor = %q, want coder", v.OnFailure.Repair.Actor)
 	}
+	prompt := v.OnFailure.Repair.Prompt
+	if strings.TrimSpace(prompt) == "" || !strings.Contains(prompt, "{{ validation.failure.log }}") {
+		t.Fatalf("repair prompt = %q, want non-empty prompt containing validation failure log", prompt)
+	}
 	if len(v.Steps) != 1 || v.Steps[0].Uses != v1Alpha2ValidationToolName("tests") {
 		t.Fatalf("deterministic validation steps = %#v", v.Steps)
 	}
