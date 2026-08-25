@@ -140,6 +140,20 @@ Integrity rules and path allowlists solve different problems: an allowed path ma
 
 May permit agent-created commits and/or automatically checkpoint successful uncommitted work. A strong checkpoint policy asserts scope before staging, stages only allowed dirty files, commits if needed, requires a clean tree afterward, and reasserts scope.
 
+The shared effective permission for an actor-created commit is:
+
+```text
+Agent.MayCommit
+OR spec.workspace.agent_commits.allowed
+OR spec.workspace.checkpointing.agent_commits_allowed
+```
+
+`Agent.MayCommit` (`may_commit`) belongs to the actor invocation. The two
+workspace fields are workflow authority and are not borrowed from another
+actor. The invocation and checkpoint/acceptance boundaries use the same rule.
+Runtime-owned checkpoint commits are separate from actor-created commits and
+do not consume actor commit authority.
+
 ## `spec.agents`
 
 Named AI execution capabilities. Typical fields select runner, model, sandbox, approval policy, ephemeral context, commit permission, and final-message capture.
@@ -389,7 +403,9 @@ A strong recovery contract:
 6. resumes deterministic validation/checkpoint/marker work without replaying the actor when `actor_completed` is present;
 7. preflights retained commits and working-tree changes before rerunning an actor,
    preserves them, and never deletes them as a recovery side effect;
-8. keeps deterministic validation repair budgets and repository-policy failures bounded or terminal as configured.
+8. keeps deterministic validation repair budgets bounded, while a persisted
+   repository-policy safety failure remains terminal until explicit
+   reset/abandon state disposal.
 
 ## `spec.flow`
 

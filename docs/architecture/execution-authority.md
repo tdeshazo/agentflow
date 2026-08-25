@@ -26,24 +26,41 @@ repair budget, or write the workflow-complete transition.
 
 ### Shared Agent capability contract
 
-`may_commit` is invocation-scoped authority. It answers whether the specifically
-named actor invocation may move repository `HEAD` by creating commits. It does
-not belong to the surrounding phase merely because that phase has a primary
-actor. The check applies independently to the primary phase actor, a
-validation-repair actor, an actor rerun during recovery, a repair actor invoked
-by `completion.validation`, and every future actor invocation through the
-shared runtime.
+The effective permission for an actor-created commit is the disjunction of the
+three existing shared authority sources:
 
-An actor-created commit without that actor invocation's permission is a
-repository-policy safety failure. It is terminal for the safety boundary: it
-does not become a repair invitation, is not accepted because another actor has
+```text
+effectiveActorCommitPermission(agent) =
+    agent.MayCommit
+    OR spec.workspace.agent_commits.allowed
+    OR spec.workspace.checkpointing.agent_commits_allowed
+```
+
+`Agent.MayCommit` is authored as `may_commit` and is scoped to the specifically
+named actor invocation. The two workspace fields are workflow authority: they
+authorize actor-created commits for the workflow, independently of whether
+another actor has `MayCommit: true`. No actor may borrow another actor's
+`MayCommit` value. The invocation boundary and the checkpoint/acceptance
+boundary must use this same rule.
+
+The rule applies independently to the primary phase actor, a validation-repair
+actor, an actor rerun during recovery, a repair actor invoked by
+`completion.validation`, and every future actor invocation through the shared
+runtime. It answers only whether that invocation may move repository `HEAD` by
+creating commits; it does not authorize workspace paths, integrity changes,
+validation, acceptance, dependency release, or completion.
+
+An actor-created commit when all applicable sources are false is a
+repository-policy safety failure. It is terminal for the current run: it does
+not become a repair invitation, is not accepted because another actor has
 `may_commit: true`, is not hidden by later successful validation, cannot satisfy
 `dependsOn`, and cannot authorize completion.
 
 Runtime-owned checkpoints are distinct from actor-created commits. An
-invocation with `may_commit: false` still permits AgentFlow to checkpoint
-validated, allowed dirty work. That runtime commit does not grant the actor
-commit authority or change the invocation that was authorized.
+invocation with effective actor commit permission false still permits AgentFlow
+to checkpoint validated, allowed dirty work when the checkpoint contract allows
+it. That runtime commit does not consume actor commit authority or change the
+invocation that was authorized.
 
 `output_last_message` is provider-neutral capture intent. When true, the
 runtime asks the provider to capture and return its final message when the
@@ -91,15 +108,47 @@ deterministic acceptance boundary.
 
 The interpreter stores workflow evidence in Git objects and namespaced refs,
 including base/branch lineage, an active-phase record, completed phase markers,
-human-gate evidence, integrity baselines, run identity, and the final completion
-marker. Successful deterministic validations also have digest-only,
-content-addressed evidence keyed by their definition, resolved inputs,
-declared dependencies, relevant file contents, policy, run identity, and
-acceptance context. A lookup still performs the safety boundary first, so this
-evidence survives process interruption without becoming authority across a
-changed tree, lineage, integrity boundary, scope, or repair policy. These
-records survive process interruption without a separate state database and are
-tied to repository commits or current workspace identity as appropriate.
+human-gate evidence, integrity baselines, run identity, a pending actor
+invocation record, and the final completion marker. Successful deterministic
+validations also have digest-only, content-addressed evidence keyed by their
+definition, resolved inputs, declared dependencies, relevant file contents,
+policy, run identity, and acceptance context. A lookup still performs the
+safety boundary first, so this evidence survives process interruption without
+becoming authority across a changed tree, lineage, integrity boundary, scope,
+or repair policy. These records survive process interruption without a separate
+state database and are tied to repository commits or current workspace identity
+as appropriate.
+
+Before any provider invocation, the runtime durably writes a versioned pending
+invocation record containing only non-secret execution attribution:
+
+- the actor name;
+- the repository `HEAD` at invocation start;
+- the invocation role/context;
+- the phase ID, when applicable; and
+- the validation identity or scope, when required for a repair or completion
+  invocation.
+
+It never stores the prompt, model output, provider final message, parameter
+values, environment values, or secrets. The record is written before
+`provider.Run` begins and is retained until the authority result and any
+required phase attribution are durable. Pending invocation evidence identifies
+which invocation caused `HEAD` movement; it is never phase acceptance evidence.
+
+After provider return, including a provider error, the runtime compares current
+`HEAD` with the recorded start commit. If it moved, the movement is attributed
+to the persisted actor and checked with the effective actor commit permission
+rule. This applies to primary actors, validation repair actors, recovered
+primary reruns, completion-validation repair actors, and all future actor calls
+through the shared boundary.
+
+On restart, pending invocation reconciliation occurs before actor replay,
+deterministic validation, phase acceptance, dependency scheduling, or
+completion. If `HEAD` moved during the interrupted invocation, reconciliation
+performs the same attribution and permission check before any later action. If
+the movement is unauthorized, reconciliation durably records a terminal safety
+failure. If `HEAD` did not move, the pending record can be closed after that
+fact is durably recorded. Reconciliation is execution recovery, not acceptance.
 
 Recovery validates the saved base and branch lineage. It preserves useful
 partial commits and worktree changes. If an active phase lacks durable
@@ -107,5 +156,30 @@ partial commits and worktree changes. If an active phase lacks durable
 invocation's own capabilities; if the actor returned successfully and only
 deterministic acceptance was interrupted, recovery resumes acceptance without
 replaying the actor. Completed markers are trusted only while their commits
-remain valid ancestors of the current `HEAD`. Safety failures remain terminal,
-while only configured validation failures may consume a bounded repair attempt.
+remain valid ancestors of the current `HEAD`.
+
+### Terminal safety state
+
+`failure_kind: safety` in the active-phase record and a safety failure in the
+standalone/final validation failure record are durable decisions for the
+current run. Once present, they block actor execution and replay, validation
+repair, deterministic acceptance, checkpointing, phase completion, dependency
+release, and final completion. Moving `HEAD`, reverting a commit, cleaning the
+workspace, or later passing validation does not clear the decision. Safety
+failures never create another repair opportunity.
+
+The explicit reset/abandon mechanism is the only way to discard terminal safety
+state and begin a new run. Ordinary reruns may continue only from recoverable
+deterministic validation failures; they cannot bypass or silently clear a
+persisted safety failure.
+
+### Shared acceptance invariants
+
+These authority domains remain separate in both `v1alpha1` and `v1alpha2`,
+which normalize to the same executable runtime model:
+
+- deterministic validation owns advancement;
+- actor/model output never authorizes acceptance;
+- an actor-created commit never satisfies `dependsOn` by itself;
+- successful repair actor execution is not acceptance; and
+- successful completion requires the deterministic final validation gate.

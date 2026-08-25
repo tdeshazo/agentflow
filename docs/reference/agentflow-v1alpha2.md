@@ -154,9 +154,20 @@ presence-aware boolean decoding. Only presence-aware decoding can distinguish an
 omitted boolean from an explicit `false` before a truthy inherited default is
 applied; without that distinction, an explicit `false` could be overwritten.
 
-`may_commit` is evaluated independently for every actor invocation. It applies
-to the primary phase actor, a validation repair actor, an actor rerun during
-recovery, a repair actor used by `completion.validation`, and any future actor
+The effective actor-created commit permission is evaluated independently for
+every actor invocation using the shared runtime rule:
+
+```text
+Agent.MayCommit
+OR spec.workspace.agent_commits.allowed
+OR spec.workspace.checkpointing.agent_commits_allowed
+```
+
+`Agent.MayCommit` is the current invocation's actor authority. The two
+`spec.workspace` fields are workflow-level authorities; they do not mean that
+one actor borrowed another actor's `MayCommit` value. The rule applies to the
+primary phase actor, a validation repair actor, an actor rerun during recovery,
+a repair actor used by `completion.validation`, and any future actor
 invocation through the shared runtime. It is not inherited from a phase's
 primary actor or from another actor used by the same phase or transition.
 
@@ -166,7 +177,8 @@ accepted because another actor has `may_commit: true`, cannot be hidden by a
 later successful validation, cannot satisfy `dependsOn`, and cannot authorize
 completion. Runtime-owned checkpoints are not actor-created commits:
 `may_commit: false` still permits AgentFlow to checkpoint validated allowed
-dirty work.
+dirty work; a runtime-owned checkpoint commit is not an actor-created commit
+and does not consume actor commit authority.
 
 `output_last_message` only controls provider capture intent. A returned final
 message is diagnostic/presentation output; it is never deterministic validation
