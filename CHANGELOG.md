@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Made the expanded execution plan explicitly report invocation-scoped
+  `may_commit` enforcement after provider errors and distinguish runtime-owned
+  checkpoint commits from actor-created commits.
+
 ### Added
 
 - Experimental Go interpreter for the executable `v1alpha1` core.
