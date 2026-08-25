@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -23,9 +24,8 @@ type phaseValidationFailure struct{ err error }
 func (e *phaseValidationFailure) Error() string { return e.err.Error() }
 func (e *phaseValidationFailure) Unwrap() error { return e.err }
 
-// safetyViolation is a repository-policy failure. Repair actors may fix a bad
-// change, but they must never be asked to explain away a protected or
-// out-of-scope edit.
+// safetyViolation is a repository-policy failure. Its durable record is
+// terminal for the current run and must never be repaired or accepted.
 type safetyViolation struct {
 	err    error
 	actor  string
@@ -258,36 +258,15 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 	if err != nil || !ok {
 		return err
 	}
+	if a.FailureKind == PhaseFailureSafety {
+		return safetyViolationFromActive(a)
+	}
 	p, err := e.phaseByID(a.PhaseID)
 	if err != nil {
 		return err
 	}
 	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return fmt.Errorf("cannot recover phase %s safely: %w", p.ID, err)
-	}
-	if a.FailureKind == PhaseFailureSafety {
-		// A safety failure remains terminal until an operator restores the
-		// mutation boundary. A recorded committing actor, however, is an
-		// authority violation rather than a remediable workspace condition: that
-		// actor-created commit must never be accepted by clearing state.
-		if a.CommitActor == "" {
-			a.FailureKind = ""
-			a.Validation = ""
-			a.ValidationError = ""
-			if err := e.Store.SetJSON(e.activeRecord(), a); err != nil {
-				return fmt.Errorf("record remediated safety state for phase %s: %w", p.ID, err)
-			}
-		} else {
-			head, headErr := e.Repo.Head()
-			if headErr != nil {
-				return headErr
-			}
-			return &safetyViolation{
-				err:    errors.New(a.ValidationError),
-				actor:  a.CommitActor,
-				commit: head,
-			}
-		}
 	}
 	if !e.Repo.ObjectExists(a.StartCommit + "^{commit}") {
 		return fmt.Errorf("saved phase start missing: %s", a.StartCommit)
@@ -560,6 +539,8 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		if err := e.standaloneCommitSafety(name); err != nil {
 			return err
 		}
+	} else if err := e.activePhaseSafety(p); err != nil {
+		return err
 	}
 	key, cacheable, keyErr := e.validationEvidenceKey(name, v, p)
 	if keyErr != nil {
@@ -691,17 +672,10 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 func (e *Engine) standaloneCommitSafety(name string) error {
 	var prior validationFailureEvidence
 	ok, err := e.Store.GetJSON(e.standaloneFailureRecord(name), &prior)
-	if err != nil || !ok || prior.FailureKind != PhaseFailureSafety || prior.Commit == "" {
+	if err != nil || !ok || prior.FailureKind != PhaseFailureSafety {
 		return err
 	}
-	head, err := e.Repo.Head()
-	if err != nil {
-		return err
-	}
-	if head != prior.Commit {
-		return nil
-	}
-	return &safetyViolation{err: errors.New(prior.Output), actor: prior.Actor, commit: prior.Commit}
+	return safetyViolationFromEvidence(prior)
 }
 
 func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failure error) error {
@@ -710,14 +684,8 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 		var prior validationFailureEvidence
 		if ok, err := e.Store.GetJSON(record, &prior); err != nil {
 			return err
-		} else if ok && prior.FailureKind == PhaseFailureSafety && prior.Commit != "" {
-			head, headErr := e.Repo.Head()
-			if headErr != nil {
-				return headErr
-			}
-			if head == prior.Commit {
-				return &safetyViolation{err: errors.New(prior.Output), actor: prior.Actor, commit: prior.Commit}
-			}
+		} else if ok && prior.FailureKind == PhaseFailureSafety {
+			return safetyViolationFromEvidence(prior)
 		}
 		kind := PhaseFailureValidation
 		var safetyErr *safetyViolation
@@ -733,6 +701,9 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
 	if err != nil || !ok || active.PhaseID != p.ID {
 		return err
+	}
+	if active.FailureKind == PhaseFailureSafety {
+		return safetyViolationFromActive(active)
 	}
 	active.FailureKind = PhaseFailureValidation
 	var safetyErr *safetyViolation
@@ -773,6 +744,9 @@ func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
 	if !ok || active.PhaseID != p.ID {
 		return nil
 	}
+	if active.FailureKind == PhaseFailureSafety {
+		return nil
+	}
 	active.FailureKind = PhaseFailureSafety
 	if active.Validation == "" {
 		active.Validation = "workspace-policy"
@@ -789,6 +763,9 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			return err
 		}
 		if ok && active.PhaseID == p.ID {
+			if active.FailureKind == PhaseFailureSafety {
+				return safetyViolationFromActive(active)
+			}
 			if active.Validation != name {
 				return nil
 			}
@@ -798,8 +775,13 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			return e.Store.SetJSON(e.activeRecord(), active)
 		}
 	}
-	if _, ok, err := e.Store.Resolve(e.standaloneFailureRecord(name)); err != nil || !ok {
+	var prior validationFailureEvidence
+	ok, err := e.Store.GetJSON(e.standaloneFailureRecord(name), &prior)
+	if err != nil || !ok {
 		return err
+	}
+	if prior.FailureKind == PhaseFailureSafety {
+		return safetyViolationFromEvidence(prior)
 	}
 	if err := e.Store.Delete(e.standaloneFailureRecord(name)); err != nil {
 		return err
@@ -813,6 +795,79 @@ type validationFailureEvidence struct {
 	Output      string           `json:"output,omitempty"`
 	Actor       string           `json:"actor,omitempty"`
 	Commit      string           `json:"commit,omitempty"`
+}
+
+func safetyViolationFromActive(active ActivePhase) *safetyViolation {
+	return &safetyViolation{
+		err:   durableSafetyError(active.ValidationError),
+		actor: active.CommitActor,
+	}
+}
+
+func safetyViolationFromEvidence(evidence validationFailureEvidence) *safetyViolation {
+	return &safetyViolation{
+		err:    durableSafetyError(evidence.Output),
+		actor:  evidence.Actor,
+		commit: evidence.Commit,
+	}
+}
+
+func durableSafetyError(output string) error {
+	if output == "" {
+		return errors.New("repository policy: durable safety failure requires explicit reset or abandon")
+	}
+	return errors.New(output)
+}
+
+// terminalStandaloneSafetyFailure prevents a persisted flow or completion
+// safety decision from being bypassed by resuming an earlier phase. The record
+// itself, not current repository contents, is the authority for this run.
+func (e *Engine) terminalStandaloneSafetyFailure() error {
+	scopes := map[string]struct{}{}
+	for name := range e.Workflow.Spec.Validation {
+		scopes[name] = struct{}{}
+	}
+	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
+		for completion, c := range e.Workflow.Spec.Completion {
+			if c.FinalValidation != "" {
+				scopes["completion/"+completion+"/"+c.FinalValidation] = struct{}{}
+			}
+		}
+	}
+	orderedScopes := make([]string, 0, len(scopes))
+	for scope := range scopes {
+		orderedScopes = append(orderedScopes, scope)
+	}
+	sort.Strings(orderedScopes)
+	for _, scope := range orderedScopes {
+		var evidence validationFailureEvidence
+		ok, err := e.Store.GetJSON(e.standaloneFailureRecordForScope(scope), &evidence)
+		if err != nil {
+			return err
+		}
+		if ok && evidence.FailureKind == PhaseFailureSafety {
+			return safetyViolationFromEvidence(evidence)
+		}
+	}
+	return nil
+}
+
+func (e *Engine) terminalActiveSafetyFailure() error {
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil || !ok || active.FailureKind != PhaseFailureSafety {
+		return err
+	}
+	return safetyViolationFromActive(active)
+}
+
+func (e *Engine) activePhaseSafety(p *workflow.Phase) error {
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil || !ok || active.PhaseID != p.ID || active.FailureKind != PhaseFailureSafety {
+		return err
+	}
+	return safetyViolationFromActive(active)
 }
 
 func (e *Engine) standaloneFailureRecord(validation string) string {

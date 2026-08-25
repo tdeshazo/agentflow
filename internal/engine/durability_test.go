@@ -748,15 +748,62 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	if err := os.Remove(filepath.Join(repo, "not-allowed.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
-		t.Fatalf("rerun after operator remediation = %v", err)
+	gitIn(t, repo, "add", "work.txt")
+	gitIn(t, repo, "commit", "-qm", "manual remediation")
+	if err := newDurableEngine(t, w, p).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "out-of-scope file changed") {
+		t.Fatalf("rerun after manual remediation = %v, want durable safety failure", err)
 	}
 	if p.calls != 1 {
-		t.Fatalf("operator remediation replayed completed actor: calls = %d", p.calls)
+		t.Fatalf("manual remediation replayed actor: calls = %d", p.calls)
 	}
-	if _, ok, err := e.Store.Resolve("phases/change"); err != nil || !ok {
-		t.Fatalf("remediated safety failure did not retain and accept phase state: ok=%v err=%v", ok, err)
+	if _, ok, err := e.Store.Resolve("phases/change"); err != nil || ok {
+		t.Fatalf("manual remediation accepted rejected phase state: ok=%v err=%v", ok, err)
 	}
+}
+
+func TestRecoverActiveSafetyStopsBeforeValidationAndRepair(t *testing.T) {
+	repo := newDurableRepo(t)
+	counter := filepath.Join(t.TempDir(), "validation-ran")
+	w := durableWorkflow(repo, "active-safety-terminal")
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test"}
+	w.Spec.Validation["phaseGate"] = repairValidation()
+	w.Spec.Tools["gate"] = workflow.Tool{Type: "shell", Command: "printf x >> " + counter}
+	p := &durableProvider{}
+	e := newDurableEngine(t, w, p)
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := e.phaseByID("change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := e.newActivePhaseFor(phase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.FailureKind = PhaseFailureSafety
+	active.Validation = "phaseGate"
+	active.ValidationError = "persisted repository-policy safety failure"
+	active.RepairAttempts = map[string]int{"phaseGate": 1}
+	if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+
+	var safetyErr *safetyViolation
+	if err := e.recoverActive(context.Background()); !errors.As(err, &safetyErr) {
+		t.Fatalf("recovery error = %v, want durable safety failure", err)
+	}
+	if _, err := os.Stat(counter); !os.IsNotExist(err) {
+		t.Fatalf("recovery ran retained-state validation: stat error = %v", err)
+	}
+	if p.calls != 0 {
+		t.Fatalf("recovery invoked an actor %d times", p.calls)
+	}
+	var persisted ActivePhase
+	if ok, err := e.Store.GetJSON(e.activeRecord(), &persisted); err != nil || !ok || persisted.FailureKind != PhaseFailureSafety || persisted.RepairAttempts["phaseGate"] != 1 {
+		t.Fatalf("persisted terminal state = %+v ok=%v err=%v", persisted, ok, err)
+	}
+	assertNoDurablePhaseOrCompletionMarkers(t, e, "change")
 }
 
 func TestFailureRecoveryGuidanceRequiresDurableActionableState(t *testing.T) {

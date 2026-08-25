@@ -414,6 +414,12 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			return err
 		}
 	}
+	if err := e.terminalActiveSafetyFailure(); err != nil {
+		return err
+	}
+	if err := e.terminalStandaloneSafetyFailure(); err != nil {
+		return err
+	}
 	if err := e.initializeOrResumeState(); err != nil {
 		return err
 	}
@@ -421,6 +427,12 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	// invocation was persisted. Reconcile it before any check can validate,
 	// replay, schedule, or accept repository state.
 	if _, err := e.reconcilePendingInvocation(); err != nil {
+		return err
+	}
+	if err := e.terminalActiveSafetyFailure(); err != nil {
+		return err
+	}
+	if err := e.terminalStandaloneSafetyFailure(); err != nil {
 		return err
 	}
 	if err := e.runStatePreconditions(); err != nil {
