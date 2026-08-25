@@ -464,6 +464,29 @@ A robust completion contract commonly requires:
 
 The complete marker should be written last, after every required assertion and checkpoint.
 
+### `Completion.FinalValidation` durability
+
+`spec.completion.<name>.finalValidation` has the same completion-scoped repair
+durability as v1alpha2. Its durable scope is
+`completion/<completion-name>/<validation-name>`, including final-validation
+evidence, failure state, consumed `repair-once` budget, and pending repair
+attribution. A phase validation or an ordinary `flow.validate` with the same
+name does not share that scope.
+
+The runtime consumes the scoped repair budget before invoking the repair actor,
+then reruns the deterministic final validation. Provider output, return status,
+and commits are never completion authority. If revalidation succeeds, the
+budget remains until the completion marker is durable; only then is the
+transient repair state cleared. A restart before the marker therefore cannot
+obtain another repair attempt: it reruns the deterministic final gate and either
+continues to completion or fails with exhausted budget.
+
+Pre-upgrade v1alpha1 unscoped repair or terminal safety records are recognized
+conservatively and migrated/retained without resetting consumed authority.
+This compatibility rule does not give generic standalone `flow.validate` the
+same transition-scoped durability; new standalone validation remains outside
+the completion scope.
+
 ## Operational invariants
 
 The examples embody these general invariants:

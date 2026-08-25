@@ -321,6 +321,7 @@ func TestV1Alpha1CompletionRecognizesLegacyUnscopedValidationState(t *testing.T)
 		if len(p.calls) != 0 {
 			t.Fatalf("restart granted a repair attempt: calls=%d", len(p.calls))
 		}
+		assertNoSchedulingCompletion(t, restarted)
 		var migrated standaloneRepairState
 		if ok, err := restarted.Store.GetJSON(restarted.standaloneRepairRecordForScope("completion/default/final"), &migrated); err != nil || !ok || migrated.Attempts != 1 {
 			t.Fatalf("migrated repair state = %+v ok=%t err=%v", migrated, ok, err)
@@ -394,6 +395,7 @@ func TestV1Alpha1CompletionRecognizesLegacyUnscopedValidationState(t *testing.T)
 		if len(p.calls) != 0 {
 			t.Fatalf("restart ran a repair after legacy safety failure: calls=%d", len(p.calls))
 		}
+		assertNoSchedulingCompletion(t, restarted)
 		var retained validationFailureEvidence
 		if ok, err := restarted.Store.GetJSON(legacyRecord, &retained); err != nil || !ok || retained != legacyFailure {
 			t.Fatalf("legacy safety evidence changed: %+v ok=%t err=%v", retained, ok, err)

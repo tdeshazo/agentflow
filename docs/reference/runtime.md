@@ -187,16 +187,18 @@ former, while repository-policy safety failures remain terminal. Standalone or
 final validation uses the corresponding durable validation-failure record and
 the same classification.
 
-The shared `Completion.FinalValidation` durability scope is
-`completion/<completion-name>/<validation-name>` for both v1alpha1 and
-v1alpha2. It is the logical scope used when deriving the validation-evidence,
+The shared `Completion.FinalValidation` durability scope is now explicit for
+v1alpha1 `spec.completion.<name>.finalValidation` as well as v1alpha2
+`completion.validation`: it is
+`completion/<completion-name>/<validation-name>`. This is the logical scope
+used when deriving the validation-evidence,
 validation-failure, repair-budget, and pending repair-invocation identities;
 it is not interchangeable with an ordinary standalone validation, a phase
 validation, or another completion using the same name. In v1alpha2 the
 concise `completion.validation` field uses the normalized default completion
 name.
 
-For a completion final gate with one repair attempt, repair-budget consumption
+For either API version, a completion final gate with one repair attempt, repair-budget consumption
 is written before the repair provider starts. The deterministic final gate is
 run again after repair, but the repair actor's result or commit never supplies
 completion evidence. If that rerun passes, the consumed budget remains until
