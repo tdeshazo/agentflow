@@ -62,7 +62,10 @@ validation.
 `repair.once` permits exactly one named repair attempt and then reruns the same
 validation. `dependsOn` requires durable deterministic acceptance of every
 referenced phase, and the completion validation is a separate final transition.
-The expanded plan makes these normalized boundaries inspectable before a run.
+The expanded plan makes these normalized boundaries inspectable before a run. In
+particular, it lists each resolved actor capability, states that `may_commit` is
+enforced after every actor invocation even when the provider returns an error,
+and identifies checkpoints as runtime-owned commits rather than actor commits.
 
 See the [v1alpha2 reference](../reference/agentflow-v1alpha2.md) and the
 [checked-in conformance example](../../internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml).

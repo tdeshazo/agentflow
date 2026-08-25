@@ -348,4 +348,6 @@ agentflow plan --expanded -f examples/feature.agent-workflow.yaml
 The expanded plan exposes resolved named actors, the workspace authority,
 bounded repair behavior, dependency edges and their acceptance condition, the
 phase acceptance boundary, deterministic final validation, and durable
-completion behavior.
+completion behavior. Its safety section also makes the per-invocation
+`may_commit` check explicit—even when a provider returns an error—and labels
+checkpoint commits as runtime-owned rather than actor-created.

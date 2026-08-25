@@ -84,9 +84,16 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		WorkspaceMutationAllowlist: append([]string{}, w.Spec.Workspace.MutationPolicy.Allowed...),
 		DependencyGraph:            clonePhaseDependencyGraph(n.DependencyGraph),
 		ResolvedLifecycle:          resolvedLifecycle,
-		SafetyEnforcementPoints:    []string{"before actor and tool work", "after actor and tool work", "before checkpoint", "before acceptance marker reuse", "during interrupted-phase recovery"},
-		RecoveryBehavior:           []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
-		CheckpointBehavior:         "runtime checkpoints accepted allowed dirty work, rechecks lineage, integrity, scope, and cleanliness, then writes the commit-valued phase marker",
+		SafetyEnforcementPoints: []string{
+			"before actor and tool work",
+			"after every actor invocation, including provider errors: enforce may_commit for the invoked actor against observed HEAD",
+			"after actor and tool work",
+			"before checkpoint",
+			"before acceptance marker reuse",
+			"during interrupted-phase recovery",
+		},
+		RecoveryBehavior:   []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
+		CheckpointBehavior: "runtime checkpoints accepted allowed dirty work; its commit is runtime-owned, not an actor may_commit exercise; it rechecks lineage, integrity, scope, and cleanliness before the commit-valued phase marker",
 	}
 	for _, name := range sortedKeys(w.Spec.Agents) {
 		a := w.Spec.Agents[name]

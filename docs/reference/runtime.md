@@ -115,12 +115,15 @@ Environment-backed parameter defaults continue to work through the workflow.
 `plan --expanded` validates the authored document, normalizes concise defaults
 or the v1alpha2 form, and rejects invalid or unsupported runtime surfaces before
 building the plan; it does not open a repository or invoke actors/tools. Its YAML output exposes
-the resolved lifecycle and executor defaults, recovery, safety boundaries,
+the resolved lifecycle and executor defaults, recovery, safety boundaries
+(including per-invocation `may_commit` enforcement after provider errors),
 each gate's repair actor and bounded rerun contract, each phase's resolved
 actor/reasoning, validation, mutation/progress flags, bookkeeping transitions,
 and acceptance ordering. For v1alpha2 it also exposes the normalized
 dependency graph, including the durable acceptance condition on each edge,
-plus the checkpoint contract, human gates, and completion contract.
+plus the checkpoint contract, human gates, and completion contract. A
+checkpoint commit is explicitly reported as runtime-owned; it does not consume
+or imply an actor's `may_commit` authority.
 
 ## Git-backed state
 
