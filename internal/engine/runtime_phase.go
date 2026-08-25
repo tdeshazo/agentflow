@@ -372,7 +372,7 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		// an adapter-specific or test-supplied TTY signal.
 		presentation = provider.PresentationPlain
 	}
-	_, err = prov.Run(ctx, provider.Request{
+	err = e.invokeAgent(ctx, actorName, a, prov, provider.Request{
 		Workspace:    e.Repo.Root,
 		Model:        model,
 		Reasoning:    reasoning,
@@ -385,10 +385,38 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 	})
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
+		var safetyErr *safetyViolation
+		if errors.As(err, &safetyErr) {
+			if persistErr := e.persistSafetyFailure(p, err); persistErr != nil {
+				return persistErr
+			}
+		}
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
 	}
 	e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "success"})
 	return nil
+}
+
+// invokeAgent is the shared repository-authority boundary for every named
+// actor invocation, including primary actors, repairs, and recovered reruns.
+// It deliberately observes only HEAD: may_commit governs actor-created
+// commits, while ordinary workspace edits remain subject to the independent
+// mutation-boundary checks and may later be checkpointed by the runtime.
+func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request) error {
+	before, err := e.Repo.Head()
+	if err != nil {
+		return fmt.Errorf("capture repository HEAD before actor %q: %w", actorName, err)
+	}
+
+	_, providerErr := prov.Run(ctx, request)
+	after, headErr := e.Repo.Head()
+	if headErr != nil {
+		return fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
+	}
+	if before != after && !agent.MayCommit {
+		return &safetyViolation{err: fmt.Errorf("repository policy: actor %q moved HEAD but may_commit is false", actorName)}
+	}
+	return providerErr
 }
 func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) (runErr error) {
 	e.logEvent("validation_start", map[string]string{"validation": name})

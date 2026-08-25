@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 	"github.com/tdeshazo/agentflow/provider/codex"
@@ -49,6 +51,7 @@ func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 					},
 				},
 				Providers: map[string]provider.Provider{"test": providerImpl},
+				Repo:      gitstate.Repo{Root: newDurableRepo(t)},
 				detached:  test.detached,
 			}
 
@@ -59,6 +62,140 @@ func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 				t.Fatalf("presentation intent = %q, want %q", providerImpl.request.Presentation, test.want)
 			}
 		})
+	}
+}
+
+func TestRunAgentEnforcesMayCommitAtEachActorInvocation(t *testing.T) {
+	providerFailure := errors.New("provider failed after committing")
+	for _, test := range []struct {
+		name            string
+		actorName       string
+		actorMayCommit  bool
+		commitCount     int
+		providerFailure error
+		wantSafety      bool
+	}{
+		{name: "uncommitted workspace edit is allowed", actorName: "worker"},
+		{name: "disallowed actor commit", actorName: "worker", commitCount: 1, wantSafety: true},
+		{name: "disallowed repair actor commit", actorName: "repair", commitCount: 1, wantSafety: true},
+		{name: "disallowed actor commit after provider error", actorName: "worker", commitCount: 1, providerFailure: providerFailure, wantSafety: true},
+		{name: "allowed actor may create multiple commits", actorName: "worker", actorMayCommit: true, commitCount: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			providerImpl := &capabilityActionProvider{action: func(_ context.Context, request provider.Request) error {
+				if test.commitCount == 0 {
+					if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+						return err
+					}
+				}
+				for i := 0; i < test.commitCount; i++ {
+					path := fmt.Sprintf("commit-%d.txt", i)
+					if err := os.WriteFile(filepath.Join(request.Workspace, path), []byte("committed\n"), 0o644); err != nil {
+						return err
+					}
+					gitIn(t, request.Workspace, "add", path)
+					gitIn(t, request.Workspace, "commit", "-qm", fmt.Sprintf("actor commit %d", i))
+				}
+				return test.providerFailure
+			}}
+			e := &Engine{
+				Workflow: &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{
+					"worker": {Runner: "test", MayCommit: test.actorMayCommit},
+					"repair": {Runner: "test"},
+				}}},
+				Repo:      gitstate.Repo{Root: repo},
+				Providers: map[string]provider.Provider{"test": providerImpl},
+			}
+
+			err := e.runAgent(context.Background(), test.actorName, "", "do work", nil)
+			var safetyErr *safetyViolation
+			if errors.As(err, &safetyErr) != test.wantSafety {
+				t.Fatalf("runAgent error = %v, safety violation = %t, want %t", err, errors.As(err, &safetyErr), test.wantSafety)
+			}
+			if test.wantSafety {
+				if !strings.Contains(err.Error(), fmt.Sprintf("actor %q", test.actorName)) {
+					t.Fatalf("policy error does not identify invoked actor: %v", err)
+				}
+				return
+			}
+			if test.providerFailure != nil && !errors.Is(err, test.providerFailure) {
+				t.Fatalf("provider error = %v, want %v", err, test.providerFailure)
+			}
+			if test.providerFailure == nil && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRunAgentEnforcesMayCommitDuringRecoveredActorRerun(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "recovered-may-commit")
+	worker := w.Spec.Agents["worker"]
+	worker.MayCommit = false
+	w.Spec.Agents["worker"] = worker
+	providerImpl := &durableProvider{}
+	providerImpl.action = func(_ context.Context, request provider.Request) error {
+		if providerImpl.calls == 1 {
+			return errors.New("interrupted before work")
+		}
+		if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+			return err
+		}
+		gitIn(t, request.Workspace, "add", "work.txt")
+		gitIn(t, request.Workspace, "commit", "-qm", "recovered actor commit")
+		return nil
+	}
+
+	if err := newDurableEngine(t, w, providerImpl).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "interrupted before work") {
+		t.Fatalf("initial interrupted run error = %v", err)
+	}
+	err := newDurableEngine(t, w, providerImpl).Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "may_commit is false") {
+		t.Fatalf("recovered actor commit error = %v", err)
+	}
+	if providerImpl.calls != 2 {
+		t.Fatalf("provider calls = %d, want initial invocation plus recovered rerun", providerImpl.calls)
+	}
+}
+
+func TestRunAgentEnforcesMayCommitForValidationRepairActor(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "repair-may-commit")
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", MayCommit: false}
+	validation := w.Spec.Validation["phaseGate"]
+	validation.OnFailure = workflow.FailurePolicy{
+		Strategy:          "repair-once",
+		MaxRepairAttempts: 1,
+		Repair:            workflow.Repair{Actor: "repair", Prompt: "repair the work"},
+	}
+	w.Spec.Validation["phaseGate"] = validation
+	providerImpl := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["actor"] != "repair" {
+			return nil
+		}
+		if err := os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+			return err
+		}
+		gitIn(t, request.Workspace, "add", "work.txt")
+		gitIn(t, request.Workspace, "commit", "-qm", "repair actor commit")
+		return nil
+	}}
+
+	e := newDurableEngine(t, w, providerImpl)
+	err := e.Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), `actor "repair"`) {
+		t.Fatalf("repair actor commit error = %v", err)
+	}
+	if providerImpl.calls != 2 {
+		t.Fatalf("provider calls = %d, want phase actor plus repair actor", providerImpl.calls)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || active.FailureKind != PhaseFailureSafety {
+		t.Fatalf("repair safety state = %+v ok=%v err=%v", active, ok, err)
 	}
 }
 
@@ -109,6 +246,7 @@ func TestRunAgentV1Alpha2ProviderCapabilitiesMatchSharedAgent(t *testing.T) {
 	sharedAgent := workflow.Agent{
 		Runner: "codex", Model: "capability-model", Sandbox: "workspace-write", Approval: "never", Ephemeral: true, MayCommit: true, OutputLastMessage: true,
 	}
+	repo := newDurableRepo(t)
 	var providerRequests []provider.Request
 	for _, test := range []struct {
 		name  string
@@ -122,6 +260,7 @@ func TestRunAgentV1Alpha2ProviderCapabilitiesMatchSharedAgent(t *testing.T) {
 			e := &Engine{
 				Workflow:  &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{"worker": test.agent}}},
 				Providers: map[string]provider.Provider{"codex": providerImpl},
+				Repo:      gitstate.Repo{Root: repo},
 			}
 			if err := e.runAgent(context.Background(), "worker", "", "do work", nil); err != nil {
 				t.Fatal(err)
@@ -209,6 +348,7 @@ func TestV1Alpha2OutputLastMessageUsesSharedExecutionSemantics(t *testing.T) {
 	// Codex adapter captures its final message for every invocation, and phase
 	// acceptance deliberately ignores provider.Result. Preserve that behavior
 	// for normalized v1alpha2 agents instead of inventing a second path.
+	repo := newDurableRepo(t)
 	var providerRequests []provider.Request
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
@@ -233,6 +373,7 @@ func TestV1Alpha2OutputLastMessageUsesSharedExecutionSemantics(t *testing.T) {
 					e := &Engine{
 						Workflow:  &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{"worker": test.agent}}},
 						Providers: map[string]provider.Provider{"codex": providerImpl},
+						Repo:      gitstate.Repo{Root: repo},
 					}
 					if err := e.runAgent(context.Background(), "worker", "", "do work", nil); err != nil {
 						t.Fatal(err)
