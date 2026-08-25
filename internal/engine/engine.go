@@ -49,8 +49,8 @@ type Engine struct {
 	outputBridge       *observability.OutputBridge
 	outputRestore      func()
 	// completionValidation scopes the validation evidence and bounded repair
-	// state for a v1alpha2 final validation. A phase gate and the final gate
-	// may deliberately have the same name, but they are different authority
+	// state for a final validation. A phase gate and the final gate may
+	// deliberately have the same name, but they are different authority
 	// transitions and therefore must never share durable proof.
 	completionValidation string
 	detached             bool

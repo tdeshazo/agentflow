@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +122,8 @@ func TestValidationRepairErrorAfterUnauthorizedCommitIsSafetyFailure(t *testing.
 	}
 }
 
-func TestV1Alpha2CompletionValidationUsesRepairInvocationAuthority(t *testing.T) {
+func TestCompletionValidationUsesRepairInvocationAuthority(t *testing.T) {
+	apiVersions := []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2"}
 	tests := []struct {
 		name            string
 		repairMayCommit bool
@@ -130,66 +132,74 @@ func TestV1Alpha2CompletionValidationUsesRepairInvocationAuthority(t *testing.T)
 		{name: "authorized completion repair", repairMayCommit: true},
 		{name: "unauthorized completion repair fails closed", repairMayCommit: false, wantSafety: true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			repo := newDurableRepo(t)
-			w := v1Alpha2CompletionRepairWorkflow(repo, "completion-authority-"+strings.ReplaceAll(tt.name, " ", "-"))
-			w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "worker-model", MayCommit: false}
-			w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model", MayCommit: tt.repairMayCommit}
-			p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
-				if request.Metadata["actor"] != "repair" {
-					return nil
-				}
-				if err := os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644); err != nil {
-					return err
-				}
-				gitIn(t, request.Workspace, "add", "completion.txt")
-				gitIn(t, request.Workspace, "commit", "-qm", "completion repair commit")
-				return nil
-			}}
-			e := newSchedulingEngine(t, w, p)
-			if err := e.initializeState(); err != nil {
-				t.Fatal(err)
-			}
-			e.completionValidation = "default"
-			failureRecord := e.standaloneFailureRecord("final")
-			e.completionValidation = ""
-			err := e.runCompletionValidation(context.Background(), "default", "final")
-			if tt.wantSafety {
-				var safetyErr *safetyViolation
-				if !errors.As(err, &safetyErr) {
-					t.Fatalf("completion repair error = %v, want safety violation", err)
-				}
-				assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
-				var failure validationFailureEvidence
-				ok, readErr := e.Store.GetJSON(failureRecord, &failure)
-				if readErr != nil || !ok || failure.FailureKind != PhaseFailureSafety {
-					t.Fatalf("completion safety evidence = %+v ok=%v err=%v", failure, ok, readErr)
-				}
-				if err := e.runToolUses(context.Background(), w.Spec.Validation["final"].Steps, nil); err != nil {
-					t.Fatalf("final deterministic validation after rejected repair = %v", err)
-				}
-				gitIn(t, repo, "revert", "--no-edit", "HEAD")
-				if err := os.WriteFile(filepath.Join(repo, "completion.txt"), []byte("done\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				gitIn(t, repo, "add", "completion.txt")
-				gitIn(t, repo, "commit", "-qm", "manual completion remediation")
-				restarted := newSchedulingEngine(t, w, p)
-				if err := restarted.Run(context.Background()); !errors.As(err, &safetyErr) {
-					t.Fatalf("restarted workflow error = %v, want durable safety failure", err)
-				}
-				if pCalls := len(p.calls); pCalls != 1 {
-					t.Fatalf("restart invoked a repair actor: calls = %d", pCalls)
-				}
-				assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, ok, err := e.Store.Resolve(failureRecord); err != nil || ok {
-				t.Fatalf("successful completion repair left failure evidence: ok=%v err=%v", ok, err)
+	for _, apiVersion := range apiVersions {
+		t.Run(apiVersion, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					repo := newDurableRepo(t)
+					w := completionRepairWorkflow(repo, "completion-authority-"+strings.ReplaceAll(tt.name, " ", "-"))
+					w.APIVersion = apiVersion
+					w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "worker-model", MayCommit: false}
+					w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model", MayCommit: tt.repairMayCommit}
+					p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+						if request.Metadata["actor"] != "repair" {
+							return nil
+						}
+						if err := os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644); err != nil {
+							return err
+						}
+						gitIn(t, request.Workspace, "add", "completion.txt")
+						gitIn(t, request.Workspace, "commit", "-qm", "completion repair commit")
+						return nil
+					}}
+					e := newSchedulingEngine(t, w, p)
+					if err := e.initializeState(); err != nil {
+						t.Fatal(err)
+					}
+					failureRecord := e.standaloneFailureRecordForScope("completion/default/final")
+					e.completionValidation = "outer"
+					err := e.runCompletionValidation(context.Background(), "default", "final")
+					if e.completionValidation != "outer" {
+						t.Fatalf("completion validation scope was not restored: %q", e.completionValidation)
+					}
+					e.completionValidation = ""
+					if tt.wantSafety {
+						var safetyErr *safetyViolation
+						if !errors.As(err, &safetyErr) {
+							t.Fatalf("completion repair error = %v, want safety violation", err)
+						}
+						assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
+						var failure validationFailureEvidence
+						ok, readErr := e.Store.GetJSON(failureRecord, &failure)
+						if readErr != nil || !ok || failure.FailureKind != PhaseFailureSafety {
+							t.Fatalf("completion safety evidence = %+v ok=%v err=%v", failure, ok, readErr)
+						}
+						if err := e.runToolUses(context.Background(), w.Spec.Validation["final"].Steps, nil); err != nil {
+							t.Fatalf("final deterministic validation after rejected repair = %v", err)
+						}
+						gitIn(t, repo, "revert", "--no-edit", "HEAD")
+						if err := os.WriteFile(filepath.Join(repo, "completion.txt"), []byte("done\n"), 0o644); err != nil {
+							t.Fatal(err)
+						}
+						gitIn(t, repo, "add", "completion.txt")
+						gitIn(t, repo, "commit", "-qm", "manual completion remediation")
+						restarted := newSchedulingEngine(t, w, p)
+						if err := restarted.Run(context.Background()); !errors.As(err, &safetyErr) {
+							t.Fatalf("restarted workflow error = %v, want durable safety failure", err)
+						}
+						if pCalls := len(p.calls); pCalls != 1 {
+							t.Fatalf("restart invoked a repair actor: calls = %d", pCalls)
+						}
+						assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
+						return
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, ok, err := e.Store.Resolve(failureRecord); err != nil || ok {
+						t.Fatalf("successful completion repair left failure evidence: ok=%v err=%v", ok, err)
+					}
+				})
 			}
 		})
 	}
@@ -245,39 +255,80 @@ func TestValidationRepairMutationSafetyBecomesTerminalImmediately(t *testing.T) 
 }
 
 func TestCompletionRepairBudgetSurvivesBeforeCompletionMarker(t *testing.T) {
-	repo := newDurableRepo(t)
-	w := v1Alpha2CompletionRepairWorkflow(repo, "completion-repair-budget")
-	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model"}
-	p := &schedulingProvider{action: func(_ context.Context, request provider.Request) error {
-		if request.Metadata["actor"] == "repair" {
-			return os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644)
-		}
-		return nil
-	}}
-	e := newSchedulingEngine(t, w, p)
-	if err := e.initializeState(); err != nil {
-		t.Fatal(err)
+	for _, apiVersion := range []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2"} {
+		t.Run(apiVersion, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			w := completionRepairWorkflow(repo, "completion-repair-budget")
+			w.APIVersion = apiVersion
+			w.Spec.Flow = []workflow.FlowStep{{Complete: "default"}}
+			w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model"}
+			p := &schedulingProvider{action: func(_ context.Context, request provider.Request) error {
+				if request.Metadata["actor"] == "repair" {
+					return os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644)
+				}
+				return nil
+			}}
+			e := newSchedulingEngine(t, w, p)
+			if err := e.initializeState(); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.runPhase(context.Background(), "root"); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.runCompletionValidation(context.Background(), "default", "final"); err != nil {
+				t.Fatal(err)
+			}
+			repairRecord := fmt.Sprintf("validation-repairs/%x", "completion/default/final")
+			if _, ok, err := e.Store.Resolve(repairRecord); err != nil || !ok {
+				t.Fatalf("completion repair budget was cleared before completion marker: ok=%t err=%v", ok, err)
+			}
+			if err := os.Remove(filepath.Join(repo, "completion.txt")); err != nil {
+				t.Fatal(err)
+			}
+			restarted := newSchedulingEngine(t, w, p)
+			if err := restarted.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
+				t.Fatalf("restart error = %v, want exhausted repair budget", err)
+			}
+			if len(p.calls) != 2 {
+				t.Fatalf("restart granted another completion repair attempt: calls=%d", len(p.calls))
+			}
+		})
 	}
-	if err := e.runPhase(context.Background(), "root"); err != nil {
-		t.Fatal(err)
-	}
-	e.completionValidation = "default"
-	if err := e.runCompletionValidation(context.Background(), "default", "final"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := e.Store.Resolve(e.standaloneRepairRecord("final")); err != nil || !ok {
-		t.Fatalf("completion repair budget was cleared before completion marker: ok=%t err=%v", ok, err)
-	}
-	e.completionValidation = ""
-	if err := os.Remove(filepath.Join(repo, "completion.txt")); err != nil {
-		t.Fatal(err)
-	}
-	restarted := newSchedulingEngine(t, w, p)
-	if err := restarted.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
-		t.Fatalf("restart error = %v, want exhausted repair budget", err)
-	}
-	if len(p.calls) != 2 {
-		t.Fatalf("restart granted another completion repair attempt: calls=%d", len(p.calls))
+}
+
+func TestCompletionMarkerClearsCompletionRepairBudget(t *testing.T) {
+	for _, apiVersion := range []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2"} {
+		t.Run(apiVersion, func(t *testing.T) {
+			repo := newDurableRepo(t)
+			w := completionRepairWorkflow(repo, "completion-repair-cleanup")
+			w.APIVersion = apiVersion
+			w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model", MayCommit: true}
+			p := &schedulingProvider{action: func(_ context.Context, request provider.Request) error {
+				if request.Metadata["actor"] != "repair" {
+					return nil
+				}
+				if err := os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644); err != nil {
+					return err
+				}
+				gitIn(t, request.Workspace, "add", "completion.txt")
+				gitIn(t, request.Workspace, "commit", "-qm", "completion repair")
+				return nil
+			}}
+			e := newSchedulingEngine(t, w, p)
+			if err := e.initializeState(); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.runCompletion(context.Background(), "default"); err != nil {
+				t.Fatal(err)
+			}
+			if ok, _, err := e.validCommitMarker(e.workflowCompleteMarker()); err != nil || !ok {
+				t.Fatalf("completion marker: ok=%t err=%v", ok, err)
+			}
+			repairRecord := fmt.Sprintf("validation-repairs/%x", "completion/default/final")
+			if _, ok, err := e.Store.Resolve(repairRecord); err != nil || ok {
+				t.Fatalf("completion repair budget remained after completion marker: ok=%t err=%v", ok, err)
+			}
+		})
 	}
 }
 
@@ -295,7 +346,7 @@ func assertNoDurablePhaseOrCompletionMarkers(t *testing.T, e *Engine, phaseID st
 	}
 }
 
-func v1Alpha2CompletionRepairWorkflow(repo, name string) *workflow.Workflow {
+func completionRepairWorkflow(repo, name string) *workflow.Workflow {
 	w := schedulingWorkflow(repo, name, []string{"root"}, nil, "true")
 	w.Spec.Workspace.MutationPolicy.Allowed = []string{"*"}
 	w.Spec.Validation["final"] = workflow.Validation{

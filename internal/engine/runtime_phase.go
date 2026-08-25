@@ -851,11 +851,9 @@ func (e *Engine) terminalStandaloneSafetyFailure() error {
 	for name := range e.Workflow.Spec.Validation {
 		scopes[name] = struct{}{}
 	}
-	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
-		for completion, c := range e.Workflow.Spec.Completion {
-			if c.FinalValidation != "" {
-				scopes["completion/"+completion+"/"+c.FinalValidation] = struct{}{}
-			}
+	for completion, c := range e.Workflow.Spec.Completion {
+		if c.FinalValidation != "" {
+			scopes[completionValidationScope(completion, c.FinalValidation)] = struct{}{}
 		}
 	}
 	orderedScopes := make([]string, 0, len(scopes))
@@ -904,9 +902,13 @@ func (e *Engine) standaloneFailureRecordForScope(scope string) string {
 
 func (e *Engine) standaloneValidationScope(validation string) string {
 	if e.completionValidation != "" {
-		return "completion/" + e.completionValidation + "/" + validation
+		return completionValidationScope(e.completionValidation, validation)
 	}
 	return validation
+}
+
+func completionValidationScope(completion, validation string) string {
+	return "completion/" + completion + "/" + validation
 }
 
 // consumeRepairAttempt persists the applicable repair budget before invoking a
