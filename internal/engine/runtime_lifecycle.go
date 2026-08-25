@@ -191,6 +191,12 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		}
 		if action.Checkpoint != "" {
 			if err := e.assertAgentCommitPolicy(phase, *active); err != nil {
+				var safetyErr *safetyViolation
+				if errors.As(err, &safetyErr) {
+					if persistErr := e.persistSafetyFailure(phase, err); persistErr != nil {
+						return persistErr
+					}
+				}
 				return err
 			}
 			active.CheckpointPending = true
@@ -225,6 +231,12 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 				// still receive the same durable checkpoint barrier before a phase
 				// can become complete.
 				if err := e.assertAgentCommitPolicy(phase, *active); err != nil {
+					var safetyErr *safetyViolation
+					if errors.As(err, &safetyErr) {
+						if persistErr := e.persistSafetyFailure(phase, err); persistErr != nil {
+							return persistErr
+						}
+					}
 					return err
 				}
 				active.CheckpointPending = true
@@ -299,14 +311,14 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
 	}
-	if e.effectiveActorCommitPermission(agent) {
-		return nil
-	}
 	head, err := e.Repo.Head()
 	if err != nil {
 		return err
 	}
 	if active.CheckpointPending {
+		return nil
+	}
+	if e.effectiveActorCommitPermission(agent) {
 		return nil
 	}
 	if active.CheckpointCommit != "" {
@@ -318,7 +330,11 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 		}
 	}
 	if head != active.StartCommit {
-		return fmt.Errorf("phase %s created commits but actor %q is not allowed to commit", phase.ID, actorName)
+		return &safetyViolation{
+			err:    fmt.Errorf("phase %s created commits but actor %q is not allowed to commit", phase.ID, actorName),
+			actor:  actorName,
+			commit: head,
+		}
 	}
 	return nil
 }

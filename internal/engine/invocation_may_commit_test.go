@@ -212,6 +212,75 @@ func TestMayCommitFalseActorCanUseRuntimeCheckpointForAllowedDirtyWork(t *testin
 	}
 }
 
+func TestValidationRepairMutationSafetyBecomesTerminalImmediately(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "repair-mutation-safety")
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", MayCommit: false}
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", MayCommit: false}
+	w.Spec.Validation["phaseGate"] = repairValidation()
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["actor"] == "repair" {
+			return os.WriteFile(filepath.Join(request.Workspace, "not-allowed.txt"), []byte("unsafe\n"), 0o644)
+		}
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("partial\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	var safetyErr *safetyViolation
+	if err := e.Run(context.Background()); !errors.As(err, &safetyErr) {
+		t.Fatalf("repair mutation error = %v, want safety violation", err)
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || active.FailureKind != PhaseFailureSafety {
+		t.Fatalf("repair mutation safety state = %+v ok=%t err=%v", active, ok, err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want primary plus repair", p.calls)
+	}
+	if err := newDurableEngine(t, w, p).Run(context.Background()); !errors.As(err, &safetyErr) {
+		t.Fatalf("restart error = %v, want durable safety violation", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("durable repair mutation replayed an actor: calls=%d", p.calls)
+	}
+}
+
+func TestCompletionRepairBudgetSurvivesBeforeCompletionMarker(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := v1Alpha2CompletionRepairWorkflow(repo, "completion-repair-budget")
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test", Model: "repair-model"}
+	p := &schedulingProvider{action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["actor"] == "repair" {
+			return os.WriteFile(filepath.Join(request.Workspace, "completion.txt"), []byte("done\n"), 0o644)
+		}
+		return nil
+	}}
+	e := newSchedulingEngine(t, w, p)
+	if err := e.initializeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runPhase(context.Background(), "root"); err != nil {
+		t.Fatal(err)
+	}
+	e.completionValidation = "default"
+	if err := e.runCompletionValidation(context.Background(), "default", "final"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := e.Store.Resolve(e.standaloneRepairRecord("final")); err != nil || !ok {
+		t.Fatalf("completion repair budget was cleared before completion marker: ok=%t err=%v", ok, err)
+	}
+	e.completionValidation = ""
+	if err := os.Remove(filepath.Join(repo, "completion.txt")); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newSchedulingEngine(t, w, p)
+	if err := restarted.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "exhausted repair budget") {
+		t.Fatalf("restart error = %v, want exhausted repair budget", err)
+	}
+	if len(p.calls) != 2 {
+		t.Fatalf("restart granted another completion repair attempt: calls=%d", len(p.calls))
+	}
+}
+
 func assertNoDurablePhaseOrCompletionMarkers(t *testing.T, e *Engine, phaseID string) {
 	t.Helper()
 	p, err := e.phaseByID(phaseID)
