@@ -169,8 +169,18 @@ func TestV1Alpha2CompletionValidationUsesRepairInvocationAuthority(t *testing.T)
 				if err := e.runToolUses(context.Background(), w.Spec.Validation["final"].Steps, nil); err != nil {
 					t.Fatalf("final deterministic validation after rejected repair = %v", err)
 				}
-				if err := e.runCompletionValidation(context.Background(), "default", "final"); !errors.As(err, &safetyErr) {
-					t.Fatalf("replayed completion validation error = %v, want durable safety failure", err)
+				gitIn(t, repo, "revert", "--no-edit", "HEAD")
+				if err := os.WriteFile(filepath.Join(repo, "completion.txt"), []byte("done\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitIn(t, repo, "add", "completion.txt")
+				gitIn(t, repo, "commit", "-qm", "manual completion remediation")
+				restarted := newSchedulingEngine(t, w, p)
+				if err := restarted.Run(context.Background()); !errors.As(err, &safetyErr) {
+					t.Fatalf("restarted workflow error = %v, want durable safety failure", err)
+				}
+				if pCalls := len(p.calls); pCalls != 1 {
+					t.Fatalf("restart invoked a repair actor: calls = %d", pCalls)
 				}
 				assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
 				return

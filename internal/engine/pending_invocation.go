@@ -116,6 +116,12 @@ func (e *Engine) persistPendingInvocationSafety(pending PendingActorInvocation, 
 		return nil
 	}
 	record := e.standaloneFailureRecordForScope(pending.ValidationScope)
+	var prior validationFailureEvidence
+	if ok, err := e.Store.GetJSON(record, &prior); err != nil {
+		return err
+	} else if ok && prior.FailureKind == PhaseFailureSafety {
+		return nil
+	}
 	if err := e.Store.SetJSON(record, validationFailureEvidence{
 		Validation:  pending.ValidationScope,
 		FailureKind: PhaseFailureSafety,
