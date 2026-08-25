@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
@@ -93,6 +95,9 @@ func (e *Engine) phaseDependencyAccepted(phaseID string) (bool, error) {
 }
 
 func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
+	if err := validateV1Alpha2ScheduleContract(e.Workflow); err != nil {
+		return err
+	}
 	scheduler := NewReadyNodeScheduler(e.Workflow.DependencyGraph)
 	for {
 		next, err := scheduler.Next(e.phaseDependencyAccepted)
@@ -113,4 +118,162 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// validateV1Alpha2ScheduleContract is the runtime fail-closed boundary for
+// callers that construct or mutate a normalized Workflow directly. File-based
+// callers normally pass through workflow.Validate first, but Decode and the
+// Go API intentionally remain separate from semantic validation. No actor may
+// run until the graph, references, and bounded acceptance policy are coherent.
+func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
+	if w == nil {
+		return fmt.Errorf("empty v1alpha2 workflow")
+	}
+	if len(w.Spec.Workspace.MutationPolicy.Allowed) == 0 {
+		return fmt.Errorf("v1alpha2 workspace allowWrites must declare at least one path")
+	}
+	for i, path := range w.Spec.Workspace.MutationPolicy.Allowed {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("v1alpha2 workspace allowWrites[%d] must not be empty", i)
+		}
+	}
+
+	phaseIndexes := make(map[string]int, len(w.Spec.Phases))
+	for i, phase := range w.Spec.Phases {
+		if phase.ID == "" {
+			return fmt.Errorf("phase %d has empty id", i)
+		}
+		if _, exists := phaseIndexes[phase.ID]; exists {
+			return fmt.Errorf("duplicate phase id %q", phase.ID)
+		}
+		phaseIndexes[phase.ID] = i
+		if phase.Kind != "implementation" {
+			return fmt.Errorf("phase %q has unsupported v1alpha2 kind %q", phase.ID, phase.Kind)
+		}
+		if phase.Actor == "" {
+			return fmt.Errorf("phase %q has no actor", phase.ID)
+		}
+		if _, exists := w.Spec.Agents[phase.Actor]; !exists {
+			return fmt.Errorf("phase %q references unknown actor %q", phase.ID, phase.Actor)
+		}
+		if phase.Validation == "" {
+			return fmt.Errorf("phase %q has no deterministic validation", phase.ID)
+		}
+		if _, exists := w.Spec.Validation[phase.Validation]; !exists {
+			return fmt.Errorf("phase %q references unknown validation %q", phase.ID, phase.Validation)
+		}
+	}
+	agentNames := make([]string, 0, len(w.Spec.Agents))
+	for name := range w.Spec.Agents {
+		agentNames = append(agentNames, name)
+	}
+	sort.Strings(agentNames)
+	for _, name := range agentNames {
+		agent := w.Spec.Agents[name]
+		if name == "" {
+			return fmt.Errorf("v1alpha2 agent name must not be empty")
+		}
+		if strings.TrimSpace(agent.Runner) == "" || strings.TrimSpace(agent.Model) == "" {
+			return fmt.Errorf("agent %q requires runner and model", name)
+		}
+	}
+
+	graph := w.DependencyGraph
+	if len(graph.Nodes) != len(w.Spec.Phases) {
+		return fmt.Errorf("dependency graph has %d nodes for %d phases", len(graph.Nodes), len(w.Spec.Phases))
+	}
+	for i, node := range graph.Nodes {
+		if node.ID != w.Spec.Phases[i].ID || node.AuthoredOrder != i {
+			return fmt.Errorf("dependency graph node %d does not match authored phase order", i)
+		}
+	}
+	seenEdges := make(map[[2]string]bool, len(graph.Edges))
+	adjacency := make(map[string][]string, len(graph.Nodes))
+	for i, edge := range graph.Edges {
+		if edge.SatisfiedWhen != workflow.PhaseDependencyAccepted {
+			return fmt.Errorf("dependency edge %d does not require deterministic phase acceptance", i)
+		}
+		if _, exists := phaseIndexes[edge.Phase]; !exists {
+			return fmt.Errorf("dependency edge %d references unknown phase %q", i, edge.Phase)
+		}
+		if _, exists := phaseIndexes[edge.DependsOn]; !exists {
+			return fmt.Errorf("phase %q references unknown dependency %q", edge.Phase, edge.DependsOn)
+		}
+		if edge.Phase == edge.DependsOn {
+			return fmt.Errorf("phase %q must not depend on itself", edge.Phase)
+		}
+		edgeKey := [2]string{edge.Phase, edge.DependsOn}
+		if seenEdges[edgeKey] {
+			return fmt.Errorf("duplicate dependency %q for phase %q", edge.DependsOn, edge.Phase)
+		}
+		seenEdges[edgeKey] = true
+		adjacency[edge.Phase] = append(adjacency[edge.Phase], edge.DependsOn)
+	}
+
+	state := make(map[string]uint8, len(phaseIndexes))
+	var visit func(string) error
+	visit = func(id string) error {
+		state[id] = 1
+		for _, dependency := range adjacency[id] {
+			switch state[dependency] {
+			case 1:
+				return fmt.Errorf("dependency cycle involving phase %q", dependency)
+			case 0:
+				if err := visit(dependency); err != nil {
+					return err
+				}
+			}
+		}
+		state[id] = 2
+		return nil
+	}
+	for _, phase := range w.Spec.Phases {
+		if state[phase.ID] == 0 {
+			if err := visit(phase.ID); err != nil {
+				return err
+			}
+		}
+	}
+
+	completion, exists := w.Spec.Completion["default"]
+	if !exists || completion.FinalValidation == "" {
+		return fmt.Errorf("v1alpha2 completion requires a deterministic final validation")
+	}
+	if _, exists := w.Spec.Validation[completion.FinalValidation]; !exists {
+		return fmt.Errorf("completion references unknown validation %q", completion.FinalValidation)
+	}
+	validationNames := make([]string, 0, len(w.Spec.Validation))
+	for name := range w.Spec.Validation {
+		validationNames = append(validationNames, name)
+	}
+	sort.Strings(validationNames)
+	for _, name := range validationNames {
+		validation := w.Spec.Validation[name]
+		if len(validation.Steps) == 0 {
+			return fmt.Errorf("validation %q has no deterministic steps", name)
+		}
+		steps := append(append([]workflow.ToolUse{}, validation.Steps...), validation.OnFailure.Then...)
+		for _, step := range steps {
+			if step.Uses == "" {
+				return fmt.Errorf("validation %q contains an empty deterministic tool reference", name)
+			}
+			if _, exists := w.Spec.Tools[step.Uses]; !exists {
+				return fmt.Errorf("validation %q references unknown tool %q", name, step.Uses)
+			}
+		}
+		if validation.OnFailure.Strategy == "" && validation.OnFailure.MaxRepairAttempts != 0 {
+			return fmt.Errorf("validation %q declares a repair budget without repair-once", name)
+		}
+		if validation.OnFailure.Strategy == "repair-once" {
+			if validation.OnFailure.MaxRepairAttempts != 1 {
+				return fmt.Errorf("validation %q repair-once requires exactly one attempt", name)
+			}
+			if _, exists := w.Spec.Agents[validation.OnFailure.Repair.Actor]; !exists || validation.OnFailure.Repair.Actor == "" {
+				return fmt.Errorf("validation %q references unknown repair actor %q", name, validation.OnFailure.Repair.Actor)
+			}
+		} else if validation.OnFailure.Strategy != "" {
+			return fmt.Errorf("validation %q has unsupported repair strategy %q", name, validation.OnFailure.Strategy)
+		}
+	}
+	return nil
 }

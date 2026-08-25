@@ -71,6 +71,18 @@ func TestV1Alpha2SerialReadyNodeScheduler(t *testing.T) {
 }
 
 func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
+	t.Run("invalid references fail before any actor runs", func(t *testing.T) {
+		repo := newDurableRepo(t)
+		p := &schedulingProvider{}
+		w := schedulingWorkflow(repo, "invalid-reference-preflight", []string{"root", "child"}, map[string][]string{"child": {"root"}}, "true")
+		w.Spec.Phases[1].Actor = "missing"
+		e := newSchedulingEngine(t, w, p)
+		if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), `phase "child" references unknown actor "missing"`) {
+			t.Fatalf("run error = %v", err)
+		}
+		assertSchedulingCalls(t, p)
+	})
+
 	t.Run("actor failure", func(t *testing.T) {
 		repo := newDurableRepo(t)
 		p := &schedulingProvider{action: func(context.Context, provider.Request) error { return errors.New("actor stopped") }}
@@ -409,8 +421,8 @@ func schedulingWorkflow(repo, name string, ids []string, dependencies map[string
 			},
 			Workspace: workflow.WorkspaceSpec{Root: repo, MutationPolicy: workflow.MutationPolicy{Allowed: []string{"*"}}, Checkpointing: workflow.CheckpointSpec{CommitMessage: "checkpoint: {{ phase.label }}"}},
 			Agents: map[string]workflow.Agent{
-				"worker": {Runner: "test", MayCommit: true},
-				"repair": {Runner: "test", MayCommit: true},
+				"worker": {Runner: "test", Model: "test-model", MayCommit: true},
+				"repair": {Runner: "test", Model: "test-model", MayCommit: true},
 			},
 			Tools:      map[string]workflow.Tool{"gate": {Type: "shell", Command: gateCommand}},
 			Validation: map[string]workflow.Validation{"gate": {Steps: []workflow.ToolUse{{Uses: "gate"}}}},

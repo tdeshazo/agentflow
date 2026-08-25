@@ -18,6 +18,7 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 	if len(graph.Nodes) == 0 {
 		graph = d.Workflow.DependencyGraph
 	}
+	graph = clonePhaseDependencyGraph(graph)
 	w.DependencyGraph = clonePhaseDependencyGraph(graph)
 	w.Spec.Agents = make(map[string]Agent, len(d.Workflow.Spec.Agents))
 	for id, local := range d.Workflow.Spec.Agents {

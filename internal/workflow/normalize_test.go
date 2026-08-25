@@ -83,6 +83,32 @@ func TestNormalizeWorkflowResolvesConciseDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkflowReindexesProgrammaticDependencyGraph(t *testing.T) {
+	document := &Document{Workflow: &Workflow{
+		APIVersion: "agentflow.dev/v1alpha2",
+		DependencyGraph: PhaseDependencyGraph{
+			Nodes: []PhaseDependencyNode{
+				{ID: "first", AuthoredOrder: 0},
+				{ID: "second", AuthoredOrder: 1},
+			},
+			Edges: []PhaseDependencyEdge{{
+				Phase: "second", DependsOn: "first", SatisfiedWhen: PhaseDependencyAccepted,
+			}},
+		},
+	}}
+
+	normalized, err := NormalizeWorkflow(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := normalized.PhaseDependencies["second"]; len(got) != 1 || got[0] != "first" {
+		t.Fatalf("normalized dependency projection = %#v", normalized.PhaseDependencies)
+	}
+	if got := normalized.DependencyGraph.dependenciesForPhase(1); len(got) != 1 || got[0] != "first" {
+		t.Fatalf("normalized dependency graph = %#v", normalized.DependencyGraph)
+	}
+}
+
 func TestNormalizeWorkflowCompilesLegacyLoopDispatchTextToStableIDs(t *testing.T) {
 	d, err := Decode(writeWorkflow(t, `
 apiVersion: agentflow.dev/v1alpha1
