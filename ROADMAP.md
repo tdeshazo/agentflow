@@ -55,7 +55,7 @@ through dogfooding.
 The repository already has the core of an executable `v1alpha1` direction:
 
 - a field-level `agentflow.dev/v1alpha1` specification guide;
-- a documented v1alpha2 authoring-contract direction that preserves the
+- an executable v1alpha2 concise authoring contract that preserves the
   v1alpha1 authority model;
 - a complete reference YAML definition;
 - a concrete workflow translated from an imperative orchestration script;
@@ -151,17 +151,21 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 ---
 
-## Priority 3.5 — v1alpha2 authoring contract
+## Priority 3.5 — v1alpha2 concise authoring and conformance
 
-**Goal:** Define the next concise AgentFlow authoring surface before changing
-parser, normalization, scheduler, or runtime behavior.
+**Status: achieved.** The concise AgentFlow evolution is strictly decoded,
+validated as executable, normalized to the existing authority model, and
+covered by checked-in conformance and runtime tests.
+
+**Goal:** Define and prove the concise AgentFlow authoring surface before
+extending its scheduler or runtime topology.
 
 The v1alpha2 contract is an evolution of AgentFlow, not a vocabulary reset.
 It preserves the existing `workspace`, `agents`, `validation`, `phases`, and
 `completion` nouns, keeps `validation` singular, and normalizes concise
 authoring into the existing executable authority concepts wherever possible.
 
-### Documentation/design scope
+### Delivered scope
 
 - Define the `agentflow.dev/v1alpha2` / `AgentWorkflow` top level and the
   concise `workspace.allowWrites`, named `agents`, named `validation` gates,
@@ -183,6 +187,10 @@ authoring into the existing executable authority concepts wherever possible.
   evidence is not inherited from prior successful phase validation.
 - State explicitly that model/actor output never authorizes advancement or
   completion, and that v1alpha1 retains its existing behavior.
+- Check in the representative `feature` example and prove strict decoding,
+  executable validation, workspace authority, actor resolution, one repair
+  attempt with deterministic rerun, dependency readiness, final validation,
+  and durable completion evidence.
 
 ### Exit criteria
 
@@ -190,10 +198,10 @@ authoring into the existing executable authority concepts wherever possible.
   indexes and repository front door.
 - The contract includes a complete representative YAML form and an explicit
   normalization/authority mapping.
-- The roadmap and contract state that no parser, normalizer, scheduler, or
-  runtime behavior changes are included in this phase.
-- Review can evaluate v1alpha2 semantics without treating the current
-  v1alpha1 interpreter as if it already supports the new syntax.
+- The roadmap and contract state that v1alpha2 is executable with a
+  deterministic serial scheduler; parallel execution remains later work.
+- Review can evaluate v1alpha2 semantics and its normalized authority model
+  without changing v1alpha1 behavior.
 
 ## Priority 4 — Runtime-owned orchestration and concise SDL authoring
 
@@ -489,9 +497,9 @@ The recommended implementation order is:
 1. **Schema and diagnostics** — make the language mechanically precise.
 2. **`v1alpha1` runtime parity** — close the documented/runtime gap.
 3. **Self-hosting MVP** — use AgentFlow plus the Go interpreter to make a real, validated, resumable change to AgentFlow itself.
-4. **v1alpha2 authoring contract** — review and accept the concise dependency/validation/completion semantics before implementation changes.
+4. **v1alpha2 concise authoring and conformance** — completed strict decoding, normalization, dependency-derived serial execution, and durable acceptance coverage.
 5. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
-6. **DAG scheduler** — implement dependency-derived serial execution first, then add bounded concurrency without weakening acceptance authority.
+6. **DAG scheduler** — extend the proven v1alpha2 serial scheduler with bounded concurrency without weakening acceptance authority.
 7. **Typed artifacts/evidence** — strengthen contracts between phases beyond deterministic validation evidence.
 8. **Extensibility and security** — broaden executors while keeping authority enforceable.
 9. **Trace and composition** — make larger systems explainable and reusable.

@@ -1,10 +1,11 @@
 # AgentFlow v1alpha2 authoring contract
 
 This document defines the concise authoring contract for
-`agentflow.dev/v1alpha2`. The reference implementation explicitly decodes and
-structurally validates this core form, then normalizes it to shared executable
-concepts for diagnostics and expanded plans. It deliberately reports v1alpha2
-as unsupported for execution until dependency scheduling is implemented.
+`agentflow.dev/v1alpha2`. It is a concise AgentFlow evolution: the reference
+implementation strictly decodes the form, validates it as executable, and
+normalizes it to AgentFlow's shared authority model before planning or
+execution. The runtime uses the declared phase dependencies with a
+deterministic serial scheduler.
 
 v1alpha2 is an evolution of AgentFlow's existing vocabulary and authority
 boundaries. It keeps `workspace`, `agents`, `validation`, `phases`, and
@@ -15,9 +16,10 @@ workflow vocabulary.
 
 `agentflow.dev/v1alpha1` remains supported with its existing behavior. A
 v1alpha1 document is not silently interpreted as v1alpha2, and v1alpha2 does
-not change the meaning of any v1alpha1 field. Implementations must select the
+not change the meaning of any v1alpha1 field. Implementations select the
 contract from `apiVersion` and fail closed when a document uses fields or
-references outside the selected contract.
+references outside the selected contract. The checked-in conformance example
+is [`internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml`](../../internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml).
 
 The v1alpha2 form is intentionally concise. Its fields normalize to
 AgentFlow's existing executable authority concepts wherever possible:
@@ -201,10 +203,9 @@ Independent phases may be represented in the graph, but they are still
 executed serially. Future concurrency work must preserve the same dependency
 and acceptance semantics and requires a separate contract/runtime change.
 
-If an explicit `flow` is supplied by a future v1alpha2 implementation, it may
-constrain presentation or ordering but must not weaken `dependsOn`: an
-explicit flow entry cannot make a phase ready before all of its dependencies
-are deterministically accepted.
+The v1alpha2 core does not include `spec.flow`. The dependency graph is the
+source of its serial schedule; a later scheduling extension must preserve the
+same readiness and acceptance boundary.
 
 ## Authority invariants
 
@@ -219,16 +220,34 @@ The following are normative for v1alpha2:
 - Final completion requires the distinct named completion validation.
 - Structural ambiguity or an unsafe reference fails closed.
 
-These rules are authoring semantics, not prompt conventions. A later
-implementation must make them visible in validation diagnostics and its
-expanded execution plan before it executes any actor.
+These rules are authoring semantics, not prompt conventions. Validation
+diagnostics and the expanded execution plan make them visible before any actor
+executes.
 
-## Out of scope for this phase
+## Current runtime boundary
 
-This phase does not implement:
+The v1alpha2 core is executable, but its initial scheduler is deliberately
+serial. It does not yet provide:
 
-- changes to v1alpha1 behavior; or
-- parallel phase execution.
+- parallel execution of independent phases;
+- implicit mutation authority outside `workspace.allowWrites`; or
+- acceptance based on actor output, commits, or an unvalidated workspace.
 
-Those changes belong on the roadmap after this authoring contract is reviewed
-and accepted.
+`v1alpha1` compatibility remains a separate contract and regression coverage
+continues to ensure that v1alpha2 fields such as `dependsOn` are not accepted
+under v1alpha1.
+
+## CLI inspection
+
+Validate and inspect the normalized contract without opening a repository or
+invoking an actor:
+
+```sh
+agentflow validate -f examples/feature.agent-workflow.yaml
+agentflow plan --expanded -f examples/feature.agent-workflow.yaml
+```
+
+The expanded plan exposes resolved named actors, the workspace authority,
+bounded repair behavior, dependency edges and their acceptance condition, the
+phase acceptance boundary, deterministic final validation, and durable
+completion behavior.

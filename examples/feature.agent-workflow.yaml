@@ -1,0 +1,39 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+
+metadata:
+  name: feature
+
+spec:
+  workspace:
+    allowWrites: [src/**, tests/**]
+
+  agents:
+    coder:
+      runner: codex
+      model: gpt-5.6-terra
+
+    reviewer:
+      runner: codex
+      model: gpt-5.6-luna
+
+  validation:
+    tests:
+      run: make test
+      repair:
+        once: coder
+
+  phases:
+    - id: implement
+      actor: coder
+      prompt: Implement the feature.
+      validation: tests
+
+    - id: review
+      actor: reviewer
+      dependsOn: [implement]
+      prompt: Review the feature.
+      validation: tests
+
+  completion:
+    validation: tests

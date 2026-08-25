@@ -49,8 +49,18 @@ go run . plan --expanded -f workflow.yaml
 ```
 
 The validator distinguishes invalid documents from documents that are valid but
-unsupported by this runtime. The shipped definitions can all be checked with
-`./scripts/check.sh`.
+unsupported by this runtime. The v1alpha2 concise form is executable when it
+uses the supported `codex` actors and shell validations; `plan --expanded`
+shows the normalized workspace authority, named actors, repair budget,
+dependency graph, acceptance boundary, and final completion validation. The
+shipped definitions can all be checked with `./scripts/check.sh`.
+
+For the checked-in v1alpha2 example:
+
+```sh
+go run . validate -f internal/workflow/testdata/conformance/valid/v1alpha2-concise.yaml
+go run . plan --expanded -f examples/feature.agent-workflow.yaml
+```
 
 Use the expanded plan when reviewing concise authoring defaults. It shows the
 normalized executable lifecycle and safety/repair/completion contract without
