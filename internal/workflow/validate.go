@@ -11,6 +11,9 @@ import (
 // Validate performs document-only checks. It intentionally does not expand
 // templates, resolve a repository, create Git state, or construct an engine.
 func Validate(d *Document) Result {
+	if d != nil && d.V1Alpha2 != nil {
+		return validateV1Alpha2(d)
+	}
 	authored := validateOnly(d)
 	if authored.Status == Invalid {
 		return authored

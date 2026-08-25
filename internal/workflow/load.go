@@ -20,8 +20,17 @@ type Locations map[string]Position
 // Document pairs the executable model with its source locations. It is the
 // single input to semantic validation; the validator never re-decodes YAML.
 type Document struct {
-	Workflow  *Workflow
-	Locations Locations
+	// Workflow is the shared executable projection. For v1alpha1 it is the
+	// decoded document; for v1alpha2 it is produced from the version-specific
+	// authoring representation.
+	Workflow *Workflow
+	// V1Alpha2 retains the authored form rather than pretending its concise
+	// contract was a v1alpha1 document.
+	V1Alpha2 *V1Alpha2Workflow
+	// PhaseDependencies belongs to the v1alpha2 authoring contract. It is kept
+	// outside Phase so v1alpha1 continues to reject the unknown dependsOn field.
+	PhaseDependencies map[string][]string
+	Locations         Locations
 }
 
 type Status string
@@ -61,11 +70,11 @@ type Result struct {
 	Diagnostics []Diagnostic
 }
 
-// Decode uses KnownFields so an executable spelling error cannot be silently
-// discarded by the Go runtime. Concise authoring syntax is inspected on the
-// parsed YAML tree first. Workflows that do not use shorthand are decoded from
-// their original bytes exactly as before; only shorthand documents are
-// rewritten to the canonical v1alpha1 shape before strict decoding.
+// Decode dispatches from apiVersion before decoding the selected contract.
+// v1alpha1 retains its existing concise authoring rewrite; v1alpha2 is decoded
+// directly from the original bytes, retaining its separate authoring form.
+// Every selected decoder uses KnownFields so executable spelling errors cannot
+// be silently discarded by the Go runtime.
 // Decode does no repository inspection or other workspace mutation.
 func Decode(path string) (*Document, error) {
 	b, err := os.ReadFile(path)
@@ -77,21 +86,67 @@ func Decode(path string) (*Document, error) {
 		return nil, fmt.Errorf("parse workflow YAML: %w", err)
 	}
 
-	decodeBytes := b
-	if rewritten, changed, err := rewriteConciseAuthoring(&root); err != nil {
+	apiVersion, err := documentAPIVersion(&root)
+	if err != nil {
 		return nil, fmt.Errorf("decode workflow: %w", err)
-	} else if changed {
-		decodeBytes = rewritten
 	}
+	locations := indexLocations(&root)
+	file, _ := filepath.Abs(path)
 
-	var w Workflow
-	dec := yaml.NewDecoder(bytes.NewReader(decodeBytes))
-	dec.KnownFields(true)
-	if err := dec.Decode(&w); err != nil {
-		return nil, fmt.Errorf("decode workflow: %w", err)
+	switch apiVersion {
+	case "agentflow.dev/v1alpha1":
+		decodeBytes := b
+		if rewritten, changed, err := rewriteConciseAuthoring(&root); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		} else if changed {
+			decodeBytes = rewritten
+		}
+		var w Workflow
+		if err := decodeKnownBytes(decodeBytes, &w); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
+		w.File = file
+		return &Document{Workflow: &w, Locations: locations}, nil
+	case "agentflow.dev/v1alpha2":
+		if err := rejectV1Alpha2MergeKeys(&root); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
+		var authored V1Alpha2Workflow
+		if err := decodeKnownBytes(b, &authored); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
+		authored.File = file
+		normalized, err := normalizeV1Alpha2(&authored, locations)
+		if err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
+		normalized.V1Alpha2 = &authored
+		return normalized, nil
+	default:
+		return nil, fmt.Errorf("decode workflow: unsupported apiVersion %q", apiVersion)
 	}
-	w.File, _ = filepath.Abs(path)
-	return &Document{Workflow: &w, Locations: indexLocations(&root)}, nil
+}
+
+func decodeKnownBytes(b []byte, out any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	return dec.Decode(out)
+}
+
+func documentAPIVersion(root *yaml.Node) (string, error) {
+	doc := documentMapping(root)
+	if doc == nil {
+		return "", fmt.Errorf("workflow document must be a mapping")
+	}
+	value, ok := mappingValue(doc, "apiVersion")
+	if !ok {
+		return "", fmt.Errorf("apiVersion is required")
+	}
+	apiVersion, ok := scalarValueFollowingAliases(value)
+	if !ok {
+		return "", fmt.Errorf("apiVersion must be a string")
+	}
+	return apiVersion, nil
 }
 
 // Load remains the programmatic loading entry point. Call Validate when an

@@ -2,10 +2,13 @@ package workflow
 
 import "fmt"
 
-// NormalizeWorkflow compiles the optional authoring layer into the ordinary v1alpha1
-// executable model. The returned workflow contains every inherited agent,
-// phase, lifecycle, and repair value and is safe to hand to the engine.
+// NormalizeWorkflow compiles the selected authoring layer into the shared
+// executable concepts. v1alpha2 remains marked as v1alpha2 so callers cannot
+// mistake its unimplemented dependency execution for v1alpha1 behavior.
 func NormalizeWorkflow(d *Document) (*Document, error) {
+	if d != nil && d.V1Alpha2 != nil {
+		return normalizeV1Alpha2(d.V1Alpha2, d.Locations)
+	}
 	if d == nil || d.Workflow == nil {
 		return nil, fmt.Errorf("empty workflow document")
 	}
