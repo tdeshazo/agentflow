@@ -92,6 +92,9 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 			return moved, err
 		}
 	}
+	if err := e.runInterruptionHook(interruptionAfterAuthority, pending); err != nil {
+		return moved, err
+	}
 	if err := e.Store.Delete(e.pendingInvocationRecord()); err != nil {
 		return moved, fmt.Errorf("clear pending actor invocation for %q: %w", pending.Actor, err)
 	}
@@ -99,6 +102,13 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 		return moved, violation
 	}
 	return moved, nil
+}
+
+func (e *Engine) runInterruptionHook(point interruptionPoint, pending PendingActorInvocation) error {
+	if e.interruptionHook == nil {
+		return nil
+	}
+	return e.interruptionHook(point, pending)
 }
 
 func (e *Engine) persistPendingInvocationSafety(pending PendingActorInvocation, violation *safetyViolation) error {

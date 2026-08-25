@@ -470,10 +470,16 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		if err := e.persistPendingInvocation(invocation); err != nil {
 			return false, err
 		}
+		if err := e.runInterruptionHook(interruptionAfterPendingInvocation, invocation); err != nil {
+			return false, err
+		}
 	}
 
 	_, providerErr := prov.Run(ctx, request)
 	if e.invocationStateAvailable() {
+		if err := e.runInterruptionHook(interruptionAfterProviderReturn, invocation); err != nil {
+			return false, err
+		}
 		moved, reconcileErr := e.reconcilePendingInvocation()
 		if reconcileErr != nil {
 			return moved, reconcileErr

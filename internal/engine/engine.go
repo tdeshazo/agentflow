@@ -59,7 +59,19 @@ type Engine struct {
 	// It prevents a later invocation that fails during initialization or input
 	// compatibility checks from borrowing an older active record for guidance.
 	recoveryEligible bool
+	// interruptionHook is a deterministic crash-window seam used by the
+	// conformance suite. It is intentionally unexported: provider contracts
+	// must not depend on test-only interruption behavior.
+	interruptionHook func(interruptionPoint, PendingActorInvocation) error
 }
+
+type interruptionPoint string
+
+const (
+	interruptionAfterPendingInvocation interruptionPoint = "after-pending-invocation"
+	interruptionAfterProviderReturn    interruptionPoint = "after-provider-return"
+	interruptionAfterAuthority         interruptionPoint = "after-authority-reconciliation"
+)
 
 // ActivePhase is the durable record of a phase's current execution state,
 // including checkpoints, validation status, and repair attempts.
@@ -404,13 +416,25 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	// A reset is the intentional escape hatch from a prior run identity. For
 	// every other run, reject incompatible inputs before even basic checks can
 	// consult or advance durable acceptance evidence.
+	identityOK := false
 	if !reset {
-		if _, err := e.verifyStoredRunIdentity(); err != nil {
+		var err error
+		identityOK, err = e.verifyStoredRunIdentity()
+		if err != nil {
 			return err
 		}
 	}
 	if reset {
 		if err := e.Reset(); err != nil {
+			return err
+		}
+	}
+	// Reconcile a pending provider boundary only after the run identity has
+	// matched. This also cleans a record left behind after authority was
+	// durably recorded but before pending-invocation cleanup. Terminal safety
+	// is still checked before any validation or provider execution below.
+	if identityOK {
+		if _, err := e.reconcilePendingInvocation(); err != nil {
 			return err
 		}
 	}
@@ -423,9 +447,9 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if err := e.initializeOrResumeState(); err != nil {
 		return err
 	}
-	// Provider execution may have crossed a process boundary after its pending
-	// invocation was persisted. Reconcile it before any check can validate,
-	// replay, schedule, or accept repository state.
+	// A pending record may have been created by an invocation that initialized
+	// state in this same process. The earlier identity-gated reconciliation is
+	// normally sufficient; this second idempotent check covers that case.
 	if _, err := e.reconcilePendingInvocation(); err != nil {
 		return err
 	}

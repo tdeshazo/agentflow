@@ -278,18 +278,35 @@ clean checkpoint boundary. Legacy `phaseDefaults`, phase `after` actions, and
 treated as explicit procedural escape hatches; their markers are still subject
 to the runtime acceptance contract.
 
-Interrupted recovery first reconciles the pending invocation record. If the
-record's start commit differs from current `HEAD`, the movement is attributed
-to its persisted actor and checked against the effective actor commit
-permission. This reconciliation happens before any actor replay, deterministic
-validation, phase acceptance, dependency scheduling, or completion. A valid
-completed marker wins over stale active state. If `actor_completed` is true,
-recovery repeats deterministic acceptance without replaying the actor.
+After the stored run identity matches, interrupted recovery first reconciles the
+pending invocation record. If the record's start commit differs from current
+`HEAD`, the movement is attributed to its persisted actor and checked against
+that actor invocation's effective commit permission. This reconciliation
+happens before any actor replay, deterministic validation, phase acceptance,
+dependency scheduling, or completion. The pending record is removed only after
+the attribution outcome and any terminal safety evidence are durable, so a
+restart at either side of cleanup repeats idempotent reconciliation without
+replaying an actor or consuming another repair budget. A run-identity mismatch
+stops before pending state can authorize recovery. A valid completed marker wins
+over stale active state. If `actor_completed` is true, recovery repeats
+deterministic acceptance without replaying the actor.
 Otherwise the runtime checks retained partial commits and dirty worktree changes
 with the phase gate before rerunning the actor. A passing preflight does not
 substitute for actor-completion or pending-invocation evidence, and a safety
 failure is terminal. Recovery never deletes partial commits or working-tree
 changes.
+
+The conformance suite exercises the provider boundary with deterministic fake
+providers and explicit interruption seams. It covers interruption after the
+pending record is written, after an actor commit but before the fake provider
+returns, after provider return but before authority reconciliation, and after
+authority reconciliation but before pending-record cleanup. In every window,
+restart has one outcome: attribute the commit to the persisted actor, accept it
+only after successful deterministic revalidation when authorized, or persist
+terminal safety when unauthorized. Actor-created commits never satisfy phase
+acceptance, `dependsOn`, or final completion by themselves. Runtime-owned
+checkpoint commits remain separately authorized for allowed dirty work even
+when the current actor has `may_commit: false`.
 
 The runtime applies the same policy boundary before and after actor/tool work,
 at checkpoint and acceptance, and before reusing a completed marker. This keeps
