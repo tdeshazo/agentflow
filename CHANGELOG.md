@@ -10,6 +10,10 @@
 
 ### Added
 
+- Deterministic adversarial conformance coverage for pending actor attribution,
+  bounded repair recovery, completion repair recovery, invocation-scoped
+  commit authority, terminal safety, dependency/acceptance separation, and
+  redacted workflow-scoped pending state across v1alpha1 and v1alpha2.
 - Experimental Go interpreter for the executable `v1alpha1` core.
 - Concise `agentflow.dev/v1alpha2` authoring with strict decoding, named actor
   resolution, inline one-off actors, workspace allowlists, dependency-derived

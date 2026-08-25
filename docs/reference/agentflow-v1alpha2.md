@@ -279,6 +279,13 @@ other existing completion conditions pass. Its validation evidence, failed
 validation record, and repair budget are scoped to the completion transition,
 so they cannot be borrowed from a phase that uses the same validation name.
 
+If completion repair is interrupted after it creates a commit, restart first
+recovers the pending repair actor identity. An authorized commit is still only
+retained workspace state until the final deterministic validation runs and
+passes; an unauthorized commit persists standalone terminal safety. Neither
+case invokes a second repair attempt or writes completion evidence from the
+commit alone.
+
 The repair actor's `may_commit` authority is evaluated for that repair
 invocation. It is not borrowed from the actor of the phase that preceded the
 completion transition.
