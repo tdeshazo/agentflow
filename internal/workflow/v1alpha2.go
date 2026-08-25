@@ -202,17 +202,19 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		}
 		w.Spec.Validation[name] = v
 	}
-	dependencies := make(map[string][]string, len(authored.Spec.Phases))
+	graph := buildV1Alpha2PhaseDependencyGraph(authored.Spec.Phases)
 	for _, phase := range authored.Spec.Phases {
 		w.Spec.Phases = append(w.Spec.Phases, Phase{
 			ID: phase.ID, Kind: "implementation", Actor: phase.Actor,
 			Prompt: phase.Prompt, Validation: phase.Validation,
 		})
-		if len(phase.DependsOn) > 0 {
-			dependencies[phase.ID] = append([]string(nil), phase.DependsOn...)
-		}
 	}
-	return &Document{Workflow: w, Locations: locations, PhaseDependencies: dependencies}, nil
+	return &Document{
+		Workflow:          w,
+		Locations:         locations,
+		DependencyGraph:   graph,
+		PhaseDependencies: graph.phaseDependenciesMap(),
+	}, nil
 }
 
 func v1Alpha2ValidationToolName(name string) string {
@@ -384,15 +386,14 @@ func (v v1alpha2Validator) roots() {
 }
 
 func (v v1alpha2Validator) references() {
-	phaseIndex := make(map[string]int, len(v.w.Spec.Phases))
+	graph := buildV1Alpha2PhaseDependencyGraph(v.w.Spec.Phases)
+	phaseIndex := graph.phaseIndex()
 	for i, phase := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d]", i)
 		if phase.ID == "" {
 			v.add(path+".id", "is required")
-		} else if _, exists := phaseIndex[phase.ID]; exists {
+		} else if phaseIndex[phase.ID] != i {
 			v.add(path+".id", "duplicate phase id %q", phase.ID)
-		} else {
-			phaseIndex[phase.ID] = i
 		}
 		if phase.Actor == "" {
 			v.add(path+".actor", "is required")
@@ -410,7 +411,9 @@ func (v v1alpha2Validator) references() {
 	}
 	for i, phase := range v.w.Spec.Phases {
 		seen := map[string]bool{}
-		for j, dependency := range phase.DependsOn {
+		for _, edge := range graph.edgesForPhase(i) {
+			dependency := edge.DependsOn
+			j := edge.dependencyIndex
 			path := fmt.Sprintf("spec.phases[%d].dependsOn[%d]", i, j)
 			if dependency == "" {
 				v.add(path, "must not be empty")
@@ -432,7 +435,7 @@ func (v v1alpha2Validator) references() {
 	} else {
 		v.validation("spec.completion.validation", v.w.Spec.Completion.Validation)
 	}
-	v.dependencyCycles(phaseIndex)
+	v.dependencyCycles(graph, phaseIndex)
 }
 
 func (v v1alpha2Validator) agent(path, name string) {
@@ -447,28 +450,43 @@ func (v v1alpha2Validator) validation(path, name string) {
 	}
 }
 
-func (v v1alpha2Validator) dependencyCycles(phaseIndex map[string]int) {
-	state := make(map[string]uint8, len(phaseIndex))
-	var visit func(string)
-	visit = func(id string) {
-		switch state[id] {
-		case 1:
-			v.add(fmt.Sprintf("spec.phases[%d].dependsOn", phaseIndex[id]), "dependency cycle includes phase %q", id)
-			return
-		case 2:
-			return
-		}
-		state[id] = 1
-		for _, dependency := range v.w.Spec.Phases[phaseIndex[id]].DependsOn {
-			if _, ok := phaseIndex[dependency]; ok {
-				visit(dependency)
+func (v v1alpha2Validator) dependencyCycles(graph PhaseDependencyGraph, phaseIndex map[string]int) {
+	state := make([]uint8, len(graph.Nodes))
+	stack := make([]int, 0, len(graph.Nodes))
+	stackPosition := make(map[int]int, len(graph.Nodes))
+	var visit func(int)
+	visit = func(index int) {
+		state[index] = 1
+		stackPosition[index] = len(stack)
+		stack = append(stack, index)
+		for _, edge := range graph.edgesForPhase(index) {
+			dependencyIndex, exists := phaseIndex[edge.DependsOn]
+			if !exists || dependencyIndex == index {
+				continue
+			}
+			switch state[dependencyIndex] {
+			case 0:
+				visit(dependencyIndex)
+			case 1:
+				cycle := make([]string, 0, len(stack)-stackPosition[dependencyIndex]+1)
+				for _, member := range stack[stackPosition[dependencyIndex]:] {
+					cycle = append(cycle, graph.Nodes[member].ID)
+				}
+				cycle = append(cycle, graph.Nodes[dependencyIndex].ID)
+				v.add(
+					fmt.Sprintf("spec.phases[%d].dependsOn", dependencyIndex),
+					"dependency cycle: %s",
+					strings.Join(cycle, " -> "),
+				)
 			}
 		}
-		state[id] = 2
+		stack = stack[:len(stack)-1]
+		delete(stackPosition, index)
+		state[index] = 2
 	}
-	for _, phase := range v.w.Spec.Phases {
-		if _, ok := phaseIndex[phase.ID]; ok {
-			visit(phase.ID)
+	for index := range graph.Nodes {
+		if state[index] == 0 {
+			visit(index)
 		}
 	}
 }

@@ -77,7 +77,12 @@ func NormalizeWorkflow(d *Document) (*Document, error) {
 		}
 		w.Spec.Validation[id] = v
 	}
-	return &Document{Workflow: &w, Locations: d.Locations}, nil
+	return &Document{
+		Workflow:          &w,
+		Locations:         d.Locations,
+		DependencyGraph:   clonePhaseDependencyGraph(d.DependencyGraph),
+		PhaseDependencies: d.DependencyGraph.phaseDependenciesMap(),
+	}, nil
 }
 
 // criterionIDForDispatchKey compiles the legacy display-text loop selector to

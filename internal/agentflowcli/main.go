@@ -282,17 +282,6 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if result.Status == workflow.Invalid {
 		return diagnosticsError(result)
 	}
-	if result.Status == workflow.Unsupported {
-		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
-	}
-	if *detach {
-		pid, err := launchDetachedRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
-		if err != nil {
-			return err
-		}
-		clioutput.NewPresenter(os.Stdout).Line(clioutput.RoleSuccess, "detached workflow %q started (pid %d)", result.Document.Workflow.Metadata.Name, pid)
-		return nil
-	}
 	if cmd == "plan" {
 		if !*expanded {
 			return fmt.Errorf("plan requires --expanded")
@@ -308,6 +297,17 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(out)
+	}
+	if result.Status == workflow.Unsupported {
+		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
+	}
+	if *detach {
+		pid, err := launchDetachedRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		clioutput.NewPresenter(os.Stdout).Line(clioutput.RoleSuccess, "detached workflow %q started (pid %d)", result.Document.Workflow.Metadata.Name, pid)
+		return nil
 	}
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}

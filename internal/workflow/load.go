@@ -27,8 +27,11 @@ type Document struct {
 	// V1Alpha2 retains the authored form rather than pretending its concise
 	// contract was a v1alpha1 document.
 	V1Alpha2 *V1Alpha2Workflow
-	// PhaseDependencies belongs to the v1alpha2 authoring contract. It is kept
+	// DependencyGraph is the normalized v1alpha2 dependency contract. It is
 	// outside Phase so v1alpha1 continues to reject the unknown dependsOn field.
+	DependencyGraph PhaseDependencyGraph
+	// PhaseDependencies is retained for source compatibility. New consumers
+	// must use DependencyGraph, which preserves order and acceptance semantics.
 	PhaseDependencies map[string][]string
 	Locations         Locations
 }
