@@ -27,6 +27,7 @@ type ValidationEvidence struct {
 	Algorithm            string `json:"algorithm"`
 	Key                  string `json:"key"`
 	Validation           string `json:"validation"`
+	Completion           string `json:"completion,omitempty"`
 	RunIdentityDigest    string `json:"run_identity_digest"`
 	DefinitionDigest     string `json:"definition_digest"`
 	ResolvedInputsDigest string `json:"resolved_inputs_digest"`
@@ -40,6 +41,7 @@ type validationEvidenceKey struct {
 	Version              int    `json:"version"`
 	Algorithm            string `json:"algorithm"`
 	Validation           string `json:"validation"`
+	Completion           string `json:"completion,omitempty"`
 	RunIdentityDigest    string `json:"run_identity_digest"`
 	DefinitionDigest     string `json:"definition_digest"`
 	ResolvedInputsDigest string `json:"resolved_inputs_digest"`
@@ -164,7 +166,7 @@ func (e *Engine) validationEvidenceKey(name string, v workflow.Validation, p *wo
 	}
 	key := validationEvidenceKey{
 		Version: validationEvidenceVersion, Algorithm: validationEvidenceAlgorithm,
-		Validation: name, RunIdentityDigest: runIdentityDigest,
+		Validation: name, Completion: e.completionValidation, RunIdentityDigest: runIdentityDigest,
 		DefinitionDigest: definitionDigest, ResolvedInputsDigest: resolvedInputsDigest,
 		WorkspaceDigest: workspaceDigest, PolicyDigest: policyDigest,
 		DependenciesDigest: dependenciesDigest, PhaseDigest: phaseDigest,
@@ -391,7 +393,7 @@ func (e *Engine) persistValidationEvidence(key validationEvidenceKey) error {
 	}
 	evidence := ValidationEvidence{
 		Version: key.Version, Algorithm: key.Algorithm, Key: digest,
-		Validation: key.Validation, RunIdentityDigest: key.RunIdentityDigest,
+		Validation: key.Validation, Completion: key.Completion, RunIdentityDigest: key.RunIdentityDigest,
 		DefinitionDigest: key.DefinitionDigest, ResolvedInputsDigest: key.ResolvedInputsDigest,
 		WorkspaceDigest: key.WorkspaceDigest, PolicyDigest: key.PolicyDigest,
 		DependenciesDigest: key.DependenciesDigest, PhaseDigest: key.PhaseDigest,
