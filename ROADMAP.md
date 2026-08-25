@@ -55,6 +55,8 @@ through dogfooding.
 The repository already has the core of an executable `v1alpha1` direction:
 
 - a field-level `agentflow.dev/v1alpha1` specification guide;
+- a documented v1alpha2 authoring-contract direction that preserves the
+  v1alpha1 authority model;
 - a complete reference YAML definition;
 - a concrete workflow translated from an imperative orchestration script;
 - an experimental Go interpreter;
@@ -149,6 +151,50 @@ This is the MVP gate for the project. Priorities after this point are improvemen
 
 ---
 
+## Priority 3.5 — v1alpha2 authoring contract
+
+**Goal:** Define the next concise AgentFlow authoring surface before changing
+parser, normalization, scheduler, or runtime behavior.
+
+The v1alpha2 contract is an evolution of AgentFlow, not a vocabulary reset.
+It preserves the existing `workspace`, `agents`, `validation`, `phases`, and
+`completion` nouns, keeps `validation` singular, and normalizes concise
+authoring into the existing executable authority concepts wherever possible.
+
+### Documentation/design scope
+
+- Define the `agentflow.dev/v1alpha2` / `AgentWorkflow` top level and the
+  concise `workspace.allowWrites`, named `agents`, named `validation` gates,
+  dependency-aware `phases`, and `completion.validation` form.
+- Specify that `workspace.allowWrites` is mutation authority normalized to the
+  existing workspace mutation policy.
+- Specify deterministic shell validation through `validation.<name>.run`.
+- Specify `repair.once: <actor>` as exactly one repair attempt followed by
+  deterministic revalidation; repair actor success never accepts work.
+- Specify that `phase.dependsOn` requires deterministic acceptance of every
+  referenced phase. Actor return, actor output, commits, and unvalidated
+  workspace state do not satisfy dependencies.
+- Specify fail-closed handling for unknown dependencies, self-dependencies,
+  duplicate phase IDs, cycles, missing actors, and missing validations.
+- Specify dependency-derived execution when explicit `flow` is omitted,
+  beginning with a deterministic serial scheduler. Parallel execution is not
+  part of the initial v1alpha2 contract.
+- Specify `completion.validation` as a distinct deterministic final gate whose
+  evidence is not inherited from prior successful phase validation.
+- State explicitly that model/actor output never authorizes advancement or
+  completion, and that v1alpha1 retains its existing behavior.
+
+### Exit criteria
+
+- The v1alpha2 authoring contract is documented and linked from the reference
+  indexes and repository front door.
+- The contract includes a complete representative YAML form and an explicit
+  normalization/authority mapping.
+- The roadmap and contract state that no parser, normalizer, scheduler, or
+  runtime behavior changes are included in this phase.
+- Review can evaluate v1alpha2 semantics without treating the current
+  v1alpha1 interpreter as if it already supports the new syntax.
+
 ## Priority 4 — Runtime-owned orchestration and concise SDL authoring
 
 **Goal:** Make AgentFlow workflows materially more concise than equivalent imperative orchestrators by keeping workflow-specific policy in YAML while moving generic lifecycle mechanics into the runtime.
@@ -231,13 +277,15 @@ topology.
 
 ## Priority 5 — Explicit dependency graph and scheduler
 
-**Goal:** Move beyond a serialized phase list while retaining deterministic advancement and recovery.
+**Goal:** Extend the reviewed v1alpha2 dependency contract beyond its initial
+serial scheduler while retaining deterministic advancement and recovery.
 
 ### Scope
 
 - Model execution dependencies explicitly.
 - Build a ready-node scheduler for DAG execution.
-- Support bounded parallel execution of independent nodes.
+- Add bounded parallel execution of independent phases only after the initial
+  v1alpha2 serial semantics are proven.
 - Add fan-out/fan-in semantics.
 - Define failure propagation, cancellation, skipped-node behavior, and downstream invalidation.
 - Preserve deterministic validation and checkpoint rules when independent branches mutate different resources.
@@ -441,11 +489,12 @@ The recommended implementation order is:
 1. **Schema and diagnostics** — make the language mechanically precise.
 2. **`v1alpha1` runtime parity** — close the documented/runtime gap.
 3. **Self-hosting MVP** — use AgentFlow plus the Go interpreter to make a real, validated, resumable change to AgentFlow itself.
-4. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
-5. **DAG scheduler** — add dependency-driven concurrency on top of concise, proven sequential semantics.
-6. **Typed artifacts/evidence** — strengthen contracts between nodes beyond deterministic validation evidence.
-7. **Extensibility and security** — broaden executors while keeping authority enforceable.
-8. **Trace and composition** — make larger systems explainable and reusable.
-9. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
+4. **v1alpha2 authoring contract** — review and accept the concise dependency/validation/completion semantics before implementation changes.
+5. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
+6. **DAG scheduler** — implement dependency-derived serial execution first, then add bounded concurrency without weakening acceptance authority.
+7. **Typed artifacts/evidence** — strengthen contracts between phases beyond deterministic validation evidence.
+8. **Extensibility and security** — broaden executors while keeping authority enforceable.
+9. **Trace and composition** — make larger systems explainable and reusable.
+10. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
 
 The roadmap should be updated when implementation, research, or self-hosting experience materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.q

@@ -27,6 +27,9 @@ organizes the documentation by purpose:
   deterministic checks, focused commands, and contributor workflow.
 - [AgentWorkflow v1alpha1 reference](docs/reference/agentflow-v1alpha1.md)
   documents field semantics.
+- [AgentWorkflow v1alpha2 authoring contract](docs/reference/agentflow-v1alpha2.md)
+  defines the proposed concise form and its dependency/acceptance semantics;
+  it is design-only until implementation work is scheduled.
 - [Go runtime reference](docs/reference/runtime.md) documents the current
   interpreter and its limits.
 - [Planning](docs/planning/README.md) navigates the canonical root
@@ -146,8 +149,9 @@ apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
 ```
 
-`v1alpha1` is experimental. Field names and semantics may evolve before a
-stable release.
+`v1alpha1` remains the currently supported executable identifier and is
+experimental. `v1alpha2` is currently an authoring-contract proposal; it does
+not change v1alpha1 behavior or imply parser/runtime support.
 
 ## Publishing
 
