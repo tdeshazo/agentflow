@@ -45,6 +45,18 @@ type V1Alpha2Agent struct {
 	Model  string `yaml:"model"`
 }
 
+// UnmarshalYAML keeps named and inline v1alpha2 agents on exactly the same
+// strict authoring schema.
+func (a *V1Alpha2Agent) UnmarshalYAML(n *yaml.Node) error {
+	type plain V1Alpha2Agent
+	var out plain
+	if err := decodeKnownNode(n, &out); err != nil {
+		return err
+	}
+	*a = V1Alpha2Agent(out)
+	return nil
+}
+
 type V1Alpha2Validation struct {
 	Run     string               `yaml:"run"`
 	Repair  V1Alpha2RepairPolicy `yaml:"repair"`
@@ -149,12 +161,45 @@ func (p V1Alpha2RepairPolicy) onceDeclared() bool {
 	return p.present["once"] || p.Once != ""
 }
 
+// V1Alpha2Actor is an authoring-only scalar-or-inline-agent choice. Both forms
+// lower to the shared Workflow agent map and scalar Phase.Actor reference.
+type V1Alpha2Actor struct {
+	Name   string
+	Inline *V1Alpha2Agent
+}
+
+// UnmarshalYAML accepts either a named actor reference or the same mapping
+// accepted by V1Alpha2Agent.
+func (a *V1Alpha2Actor) UnmarshalYAML(n *yaml.Node) error {
+	resolved, err := resolveYAMLNode(n)
+	if err != nil {
+		return err
+	}
+	switch resolved.Kind {
+	case yaml.ScalarNode:
+		if resolved.Tag != "!!str" {
+			return fmt.Errorf("line %d: phase actor must be a named agent string or an inline agent mapping", n.Line)
+		}
+		*a = V1Alpha2Actor{Name: resolved.Value}
+		return nil
+	case yaml.MappingNode:
+		var inline V1Alpha2Agent
+		if err := decodeKnownNode(resolved, &inline); err != nil {
+			return err
+		}
+		*a = V1Alpha2Actor{Inline: &inline}
+		return nil
+	default:
+		return fmt.Errorf("line %d: phase actor must be a named agent string or an inline agent mapping", n.Line)
+	}
+}
+
 type V1Alpha2Phase struct {
-	ID         string   `yaml:"id"`
-	Actor      string   `yaml:"actor"`
-	Prompt     string   `yaml:"prompt"`
-	Validation string   `yaml:"validation"`
-	DependsOn  []string `yaml:"dependsOn"`
+	ID         string        `yaml:"id"`
+	Actor      V1Alpha2Actor `yaml:"actor"`
+	Prompt     string        `yaml:"prompt"`
+	Validation string        `yaml:"validation"`
+	DependsOn  []string      `yaml:"dependsOn"`
 }
 
 type V1Alpha2Completion struct {
@@ -164,6 +209,9 @@ type V1Alpha2Completion struct {
 func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Document, error) {
 	if authored == nil {
 		return nil, fmt.Errorf("empty v1alpha2 workflow")
+	}
+	if err := rejectV1Alpha2ReservedActorNamespace(authored); err != nil {
+		return nil, err
 	}
 	w := &Workflow{
 		APIVersion: authored.APIVersion,
@@ -203,9 +251,21 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		w.Spec.Validation[name] = v
 	}
 	graph := buildV1Alpha2PhaseDependencyGraph(authored.Spec.Phases)
-	for _, phase := range authored.Spec.Phases {
+	for i, phase := range authored.Spec.Phases {
+		actorName := phase.Actor.Name
+		if phase.Actor.Inline != nil {
+			phaseKey := fmt.Sprintf("phase_%d", i)
+			if strings.TrimSpace(phase.ID) != "" {
+				phaseKey = phase.ID
+			}
+			actorName = inlineActorPrefix + phaseKey
+			if _, exists := w.Spec.Agents[actorName]; exists {
+				return nil, fmt.Errorf("inline actor for phase %q conflicts with generated agent name %q", phaseKey, actorName)
+			}
+			w.Spec.Agents[actorName] = Agent{Runner: phase.Actor.Inline.Runner, Model: phase.Actor.Inline.Model}
+		}
 		w.Spec.Phases = append(w.Spec.Phases, Phase{
-			ID: phase.ID, Kind: "implementation", Actor: phase.Actor,
+			ID: phase.ID, Kind: "implementation", Actor: actorName,
 			Prompt: phase.Prompt, Validation: phase.Validation,
 		})
 	}
@@ -216,6 +276,26 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		DependencyGraph:   graph,
 		PhaseDependencies: graph.phaseDependenciesMap(),
 	}, nil
+}
+
+func rejectV1Alpha2ReservedActorNamespace(authored *V1Alpha2Workflow) error {
+	for _, name := range sortedKeys(authored.Spec.Agents) {
+		if strings.HasPrefix(name, inlineActorPrefix) {
+			return fmt.Errorf("agent name %q uses reserved prefix %q", name, inlineActorPrefix)
+		}
+	}
+	for _, name := range sortedKeys(authored.Spec.Validation) {
+		repair := authored.Spec.Validation[name].Repair
+		if strings.HasPrefix(repair.Once, inlineActorPrefix) {
+			return fmt.Errorf("validation.%s.repair.once references reserved inline actor name %q", name, repair.Once)
+		}
+	}
+	for i, phase := range authored.Spec.Phases {
+		if phase.Actor.Inline == nil && strings.HasPrefix(phase.Actor.Name, inlineActorPrefix) {
+			return fmt.Errorf("phases[%d].actor references reserved inline actor name %q", i, phase.Actor.Name)
+		}
+	}
+	return nil
 }
 
 func v1Alpha2ValidationToolName(name string) string {
@@ -392,10 +472,12 @@ func (v v1alpha2Validator) references() {
 		} else if phaseIndex[phase.ID] != i {
 			v.add(path+".id", "duplicate phase id %q", phase.ID)
 		}
-		if phase.Actor == "" {
+		if phase.Actor.Inline != nil {
+			v.agentFields(path+".actor", *phase.Actor.Inline)
+		} else if phase.Actor.Name == "" {
 			v.add(path+".actor", "is required")
 		} else {
-			v.agent(path+".actor", phase.Actor)
+			v.agent(path+".actor", phase.Actor.Name)
 		}
 		if strings.TrimSpace(phase.Prompt) == "" {
 			v.add(path+".prompt", "is required")
@@ -438,6 +520,15 @@ func (v v1alpha2Validator) references() {
 func (v v1alpha2Validator) agent(path, name string) {
 	if _, ok := v.w.Spec.Agents[name]; !ok {
 		v.add(path, "unknown agent %q", name)
+	}
+}
+
+func (v v1alpha2Validator) agentFields(path string, agent V1Alpha2Agent) {
+	if agent.Runner == "" {
+		v.add(path+".runner", "is required")
+	}
+	if agent.Model == "" {
+		v.add(path+".model", "is required")
 	}
 }
 

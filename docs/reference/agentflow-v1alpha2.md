@@ -28,6 +28,7 @@ AgentFlow's existing executable authority concepts wherever possible:
 | --- | --- |
 | `workspace.allowWrites` | Workspace mutation allowlist/policy |
 | `agents.<name>` | Named actor capability |
+| Mapping-valued `phases[].actor` | Phase-local actor capability lowered to an internal named agent |
 | `validation.<name>.run` | Deterministic shell validation gate |
 | `validation.<name>.repair.once` | One bounded repair attempt followed by the same validation |
 | `phases[].validation` | Phase acceptance validation |
@@ -59,10 +60,6 @@ spec:
       runner: codex
       model: gpt-5.6-terra
 
-    reviewer:
-      runner: codex
-      model: gpt-5.6-luna
-
   validation:
     tests:
       run: make test
@@ -76,7 +73,9 @@ spec:
       validation: tests
 
     - id: review
-      actor: reviewer
+      actor:
+        runner: codex
+        model: gpt-5.6-luna
       dependsOn: [implement]
       prompt: Review the feature.
       validation: tests
@@ -103,13 +102,23 @@ acceptance boundary.
 
 ### `spec.agents`
 
-`agents` is a map of named actor capabilities. A phase selects an actor with
-`actor`. The v1alpha2 core requires the selected actor to declare a `runner`
-and `model`; the runner and model identify how the actor is invoked, not
-whether its work is accepted.
+`agents` is a map of named actor capabilities. A phase may select one by name,
+or may declare a phase-local actor mapping. Named and inline agents use exactly
+the same v1alpha2 schema: both require `runner` and `model`. Those fields
+identify how the actor is invoked, not whether its work is accepted.
 
-Every phase actor reference must resolve to an entry in `spec.agents`.
-Missing actors are structural errors and fail closed before actor execution.
+Every scalar phase actor reference must resolve to an authored entry in
+`spec.agents`. Missing actors are structural errors and fail closed before
+actor execution.
+
+An inline actor is lowered into the ordinary shared `Workflow` agent map, and
+the executable phase receives a scalar reference to that generated agent.
+There is no second runtime actor representation. The generated name is
+deterministic: `__inline_actor__` followed by the phase ID (or its authored
+index when the ID is absent). The prefix is runtime-owned. Authored agent
+names, scalar phase actor references, and `repair.once` references must not use
+it, including through YAML aliases. Generated-name collisions and unknown
+inline-agent fields fail closed.
 
 ### `spec.validation`
 
@@ -143,7 +152,8 @@ terminal and do not become repair invitations.
 `phases` is an ordered list of named units of actor work. Each phase has:
 
 - `id`, which must be unique within the workflow;
-- `actor`, naming a declared agent;
+- `actor`, either naming a declared agent or declaring one inline with the
+  v1alpha2 agent schema;
 - `prompt`, describing the bounded work intent; and
 - `validation`, naming a declared deterministic validation.
 

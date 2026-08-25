@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,240 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	}
 	if len(plan.Phases) != 2 || len(plan.Phases[1].DependsOn) != 1 || plan.Phases[1].DependsOn[0] != "implement" {
 		t.Fatalf("planned phases = %#v", plan.Phases)
+	}
+}
+
+func TestV1Alpha2PhaseActorForms(t *testing.T) {
+	t.Run("named scalar actor", func(t *testing.T) {
+		d, err := Decode(writeWorkflow(t, v1alpha2Fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := d.V1Alpha2.Spec.Phases[0].Actor; got.Name != "coder" || got.Inline != nil {
+			t.Fatalf("authored actor = %#v", got)
+		}
+		if got := d.Workflow.Spec.Phases[0].Actor; got != "coder" {
+			t.Fatalf("normalized actor = %q, want coder", got)
+		}
+	})
+
+	t.Run("inline mapping actor", func(t *testing.T) {
+		document := strings.Replace(v1alpha2Fixture, "actor: coder", "actor: {runner: codex, model: gpt-5.6-terra}", 1)
+		d, err := Decode(writeWorkflow(t, document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		inline := d.V1Alpha2.Spec.Phases[0].Actor.Inline
+		if inline == nil || inline.Runner != "codex" || inline.Model != "gpt-5.6-terra" {
+			t.Fatalf("authored inline actor = %#v", inline)
+		}
+		const generated = "__inline_actor__implement"
+		if got := d.Workflow.Spec.Phases[0].Actor; got != generated {
+			t.Fatalf("normalized actor = %q, want %q", got, generated)
+		}
+		if got := d.Workflow.Spec.Agents[generated]; got.Runner != "codex" || got.Model != "gpt-5.6-terra" {
+			t.Fatalf("generated agent = %#v", got)
+		}
+		if got := d.Workflow.Spec.Phases[1].Actor; got != "reviewer" {
+			t.Fatalf("coexisting named actor = %q, want reviewer", got)
+		}
+		if result := Validate(d); result.Status != Executable {
+			t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+		}
+	})
+}
+
+func TestV1Alpha2InlineActorKeepsAgentFieldsStrict(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "actor: coder", "actor: {runner: codex, model: gpt-5.6-terra, teleport: true}", 1)
+	_, err := Decode(writeWorkflow(t, document))
+	if err == nil || !strings.Contains(err.Error(), "field teleport not found") {
+		t.Fatalf("strict decode error = %v", err)
+	}
+}
+
+func TestV1Alpha2InlineActorNamespaceIsRuntimeOwned(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(string) string
+		want   string
+	}{
+		{
+			name: "reserved authored agent name",
+			modify: func(document string) string {
+				return strings.Replace(document, "coder: {runner:", "__inline_actor__implement: {runner:", 1)
+			},
+			want: "uses reserved prefix",
+		},
+		{
+			name: "reserved scalar phase actor reference",
+			modify: func(document string) string {
+				return strings.Replace(document, "actor: coder", "actor: __inline_actor__implement", 1)
+			},
+			want: "phases[0].actor references reserved inline actor name",
+		},
+		{
+			name: "reserved repair once actor reference",
+			modify: func(document string) string {
+				return strings.Replace(document, "repair: {once: coder}", "repair: {once: __inline_actor__implement}", 1)
+			},
+			want: "validation.tests.repair.once references reserved inline actor name",
+		},
+		{
+			name: "aliased reserved phase actor reference",
+			modify: func(document string) string {
+				document = strings.Replace(document, "name: v1alpha2-fixture", "name: &reserved __inline_actor__implement", 1)
+				return strings.Replace(document, "actor: coder", "actor: *reserved", 1)
+			},
+			want: "phases[0].actor references reserved inline actor name",
+		},
+		{
+			name: "aliased reserved repair actor reference",
+			modify: func(document string) string {
+				document = strings.Replace(document, "name: v1alpha2-fixture", "name: &reserved __inline_actor__implement", 1)
+				return strings.Replace(document, "repair: {once: coder}", "repair: {once: *reserved}", 1)
+			},
+			want: "validation.tests.repair.once references reserved inline actor name",
+		},
+		{
+			name: "aliased reserved authored agent name",
+			modify: func(document string) string {
+				document = strings.Replace(document, "name: v1alpha2-fixture", "name: &reserved __inline_actor__implement", 1)
+				return strings.Replace(document, "coder: {runner:", "*reserved: {runner:", 1)
+			},
+			want: "uses reserved prefix",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Decode(writeWorkflow(t, tt.modify(v1alpha2Fixture)))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("namespace error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestV1Alpha2InlineActorGeneratedNameCollisionFailsClosed(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture,
+		"- {id: implement, actor: coder, prompt: Implement the feature., validation: tests}",
+		"- {id: implement, actor: {runner: codex, model: gpt-5.6-terra}, prompt: Implement the feature., validation: tests}\n    - {id: implement, actor: {runner: codex, model: gpt-5.6-luna}, prompt: Implement it again., validation: tests}", 1)
+	_, err := Decode(writeWorkflow(t, document))
+	if err == nil || !strings.Contains(err.Error(), `conflicts with generated agent name "__inline_actor__implement"`) {
+		t.Fatalf("collision error = %v", err)
+	}
+}
+
+func TestV1Alpha2InlineActorPreservesPhaseDependencies(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "actor: reviewer", "actor: {runner: codex, model: gpt-5.6-luna}", 1)
+	d, err := Decode(writeWorkflow(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Workflow.Spec.Phases[1].Actor; got != "__inline_actor__review" {
+		t.Fatalf("normalized review actor = %q", got)
+	}
+	edges := d.DependencyGraph.Edges
+	if len(edges) != 1 || edges[0].Phase != "review" || edges[0].DependsOn != "implement" || edges[0].SatisfiedWhen != PhaseDependencyAccepted {
+		t.Fatalf("dependency edges = %#v", edges)
+	}
+}
+
+func TestV1Alpha2InlineAndNamedActorsNormalizeEquivalently(t *testing.T) {
+	named, err := Decode(writeWorkflow(t, v1alpha2Fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inlineDocument := strings.Replace(v1alpha2Fixture, "actor: coder", "actor: {runner: codex, model: gpt-5.6-terra}", 1)
+	inline, err := Decode(writeWorkflow(t, inlineDocument))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const generated = "__inline_actor__implement"
+	if got, want := inline.Workflow.Spec.Agents[generated], named.Workflow.Spec.Agents["coder"]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("inline agent = %#v, named agent = %#v", got, want)
+	}
+	inlinePhase := inline.Workflow.Spec.Phases[0]
+	namedPhase := named.Workflow.Spec.Phases[0]
+	inlinePhase.Actor = "coder"
+	if !reflect.DeepEqual(inlinePhase, namedPhase) {
+		t.Fatalf("inline phase = %#v, named phase = %#v", inlinePhase, namedPhase)
+	}
+}
+
+func TestConciseAuthoringParityAcrossVersions(t *testing.T) {
+	features := []struct {
+		name     string
+		v1alpha1 string
+		v1alpha2 string
+	}{
+		{
+			name: "workspace.allowWrites",
+			v1alpha1: `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: parity-allow-writes}
+spec: {workspace: {allowWrites: [src/**]}}
+`,
+			v1alpha2: `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: parity-allow-writes}
+spec: {workspace: {allowWrites: [src/**]}}
+`,
+		},
+		{
+			name: "validation.<name>.run",
+			v1alpha1: `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: parity-validation-run}
+spec: {validation: {tests: {run: go test ./...}}}
+`,
+			v1alpha2: `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: parity-validation-run}
+spec: {validation: {tests: {run: go test ./...}}}
+`,
+		},
+		{
+			name: "mapping-valued phase.actor",
+			v1alpha1: `
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: parity-inline-actor}
+spec:
+  phases:
+    - {id: review, kind: audit, actor: {runner: codex, model: gpt-5.6-luna}, prompt: Review.}
+`,
+			v1alpha2: `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: parity-inline-actor}
+spec:
+  phases:
+    - {id: review, actor: {runner: codex, model: gpt-5.6-luna}, prompt: Review.}
+`,
+		},
+	}
+	for _, feature := range features {
+		t.Run(feature.name, func(t *testing.T) {
+			versions := []struct {
+				name     string
+				document string
+			}{
+				{name: "v1alpha1", document: feature.v1alpha1},
+				{name: "v1alpha2", document: feature.v1alpha2},
+			}
+			for _, version := range versions {
+				t.Run(version.name, func(t *testing.T) {
+					if _, err := Decode(writeWorkflow(t, version.document)); err != nil {
+						t.Fatalf("%s does not support %s: %v", version.name, feature.name, err)
+					}
+				})
+			}
+		})
 	}
 }
 
