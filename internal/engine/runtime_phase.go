@@ -638,6 +638,11 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 			if persistErr := e.persistValidationFailure(p, name, err); persistErr != nil {
 				return persistErr
 			}
+		} else if policyErr := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); policyErr != nil {
+			if persistErr := e.persistValidationFailure(p, name, policyErr); persistErr != nil {
+				return persistErr
+			}
+			return policyErr
 		}
 		return err
 	}
@@ -649,6 +654,13 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		steps = v.Steps
 	}
 	if err := e.runToolUses(ctx, steps, p); err != nil {
+		var safetyErr *safetyViolation
+		if errors.As(err, &safetyErr) {
+			if persistErr := e.persistValidationFailure(p, name, err); persistErr != nil {
+				return persistErr
+			}
+			return err
+		}
 		return fmt.Errorf("validation %s still fails after repair: %w", name, err)
 	}
 	if cacheable {
@@ -791,6 +803,12 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 	}
 	if err := e.Store.Delete(e.standaloneFailureRecord(name)); err != nil {
 		return err
+	}
+	if e.completionValidation != "" {
+		// Final validation is not durable acceptance until the completion marker
+		// is written. Keep its consumed repair budget across that boundary so a
+		// crash after a successful repair cannot renew repair-once on restart.
+		return nil
 	}
 	return e.clearStandaloneRepairState(name)
 }
@@ -940,7 +958,11 @@ func (e *Engine) consumeStandaloneRepairAttempt(validation string, max int) (boo
 }
 
 func (e *Engine) clearStandaloneRepairState(validation string) error {
-	record := e.standaloneRepairRecord(validation)
+	return e.clearStandaloneRepairStateForScope(e.standaloneValidationScope(validation))
+}
+
+func (e *Engine) clearStandaloneRepairStateForScope(scope string) error {
+	record := fmt.Sprintf("validation-repairs/%x", scope)
 	_, ok, err := e.Store.Resolve(record)
 	if err != nil || !ok {
 		return err

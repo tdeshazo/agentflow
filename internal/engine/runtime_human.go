@@ -307,6 +307,12 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 			return err
 		}
 	}
+	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" && c.FinalValidation != "" {
+		scope := "completion/" + name + "/" + c.FinalValidation
+		if err := e.clearStandaloneRepairStateForScope(scope); err != nil {
+			return err
+		}
+	}
 	base, _, _ := e.Store.Resolve(e.baseRecord())
 	var branch string
 	_, _ = e.Store.GetJSON(e.branchRecord(), &branch)
