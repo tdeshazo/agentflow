@@ -353,18 +353,32 @@ func rejectReservedActorScalar(actor *yaml.Node, path string) error {
 // Cyclic or broken alias chains also return ok=false; yaml.v3 will report those
 // structural problems during normal decoding.
 func scalarValueFollowingAliases(n *yaml.Node) (value string, ok bool) {
-	seen := map[*yaml.Node]bool{}
-	for n != nil && n.Kind == yaml.AliasNode {
-		if seen[n] || n.Alias == nil {
-			return "", false
-		}
-		seen[n] = true
-		n = n.Alias
+	resolved, err := resolveYAMLNode(n)
+	if err != nil {
+		return "", false
 	}
+	n = resolved
 	if n == nil || n.Kind != yaml.ScalarNode {
 		return "", false
 	}
 	return n.Value, true
+}
+
+// resolveYAMLNode follows aliases for the small amount of AST inspection that
+// must see the effective authoring value. It does not merge mappings: merge
+// keys remain explicit syntax and are rejected by the caller. Keeping this
+// distinction prevents an alias from hiding either an actor reference or a
+// merge-controlled authority field.
+func resolveYAMLNode(n *yaml.Node) (*yaml.Node, error) {
+	seen := map[*yaml.Node]bool{}
+	for n != nil && n.Kind == yaml.AliasNode {
+		if seen[n] || n.Alias == nil {
+			return nil, fmt.Errorf("line %d: invalid YAML alias", n.Line)
+		}
+		seen[n] = true
+		n = n.Alias
+	}
+	return n, nil
 }
 
 func rejectMergeKey(mapping *yaml.Node, path string) error {

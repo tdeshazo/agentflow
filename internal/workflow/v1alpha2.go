@@ -46,12 +46,107 @@ type V1Alpha2Agent struct {
 }
 
 type V1Alpha2Validation struct {
-	Run    string               `yaml:"run"`
-	Repair V1Alpha2RepairPolicy `yaml:"repair"`
+	Run     string               `yaml:"run"`
+	Repair  V1Alpha2RepairPolicy `yaml:"repair"`
+	present map[string]bool
 }
 
 type V1Alpha2RepairPolicy struct {
-	Once string `yaml:"once"`
+	Once    string `yaml:"once"`
+	present map[string]bool
+}
+
+// UnmarshalYAML keeps the concise repair policy strict while retaining field
+// presence. A zero-valued policy is meaningful when repair is omitted, but it
+// is malformed when repair was explicitly declared without once: <actor>.
+func (p *V1Alpha2RepairPolicy) UnmarshalYAML(n *yaml.Node) error {
+	resolved, err := resolveYAMLNode(n)
+	if err != nil {
+		return err
+	}
+	if resolved.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: repair must be a mapping containing once: <actor>", n.Line)
+	}
+
+	var once string
+	present := map[string]bool{}
+	for i := 0; i+1 < len(resolved.Content); i += 2 {
+		key, ok := scalarValueFollowingAliases(resolved.Content[i])
+		if !ok {
+			return fmt.Errorf("line %d: repair policy key must be a scalar", resolved.Content[i].Line)
+		}
+		if key != "once" {
+			return fmt.Errorf("line %d: field %s not found in type workflow.V1Alpha2RepairPolicy", resolved.Content[i].Line, key)
+		}
+		if present[key] {
+			return fmt.Errorf("line %d: mapping key %q already defined", resolved.Content[i].Line, key)
+		}
+		present[key] = true
+		value, err := resolveYAMLNode(resolved.Content[i+1])
+		if err != nil {
+			return err
+		}
+		if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+			return fmt.Errorf("line %d: cannot unmarshal %s into Go struct field V1Alpha2RepairPolicy.once of type string", resolved.Content[i+1].Line, value.Tag)
+		}
+		once = value.Value
+	}
+	*p = V1Alpha2RepairPolicy{Once: once, present: present}
+	return nil
+}
+
+// UnmarshalYAML retains presence for validation.repair so an explicitly empty
+// policy cannot be confused with an omitted policy. It also keeps the v1alpha2
+// authoring contract strict even though this type has a custom decoder.
+func (v *V1Alpha2Validation) UnmarshalYAML(n *yaml.Node) error {
+	resolved, err := resolveYAMLNode(n)
+	if err != nil {
+		return err
+	}
+	if resolved.Kind != yaml.MappingNode {
+		return fmt.Errorf("line %d: validation must be a mapping", n.Line)
+	}
+
+	var out V1Alpha2Validation
+	present := map[string]bool{}
+	for i := 0; i+1 < len(resolved.Content); i += 2 {
+		key, ok := scalarValueFollowingAliases(resolved.Content[i])
+		if !ok {
+			return fmt.Errorf("line %d: validation field name must be a scalar", resolved.Content[i].Line)
+		}
+		if present[key] {
+			return fmt.Errorf("line %d: mapping key %q already defined", resolved.Content[i].Line, key)
+		}
+		present[key] = true
+		switch key {
+		case "run":
+			value, err := resolveYAMLNode(resolved.Content[i+1])
+			if err != nil {
+				return err
+			}
+			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+				return fmt.Errorf("line %d: cannot unmarshal %s into Go struct field V1Alpha2Validation.run of type string", resolved.Content[i+1].Line, value.Tag)
+			}
+			out.Run = value.Value
+		case "repair":
+			if err := resolved.Content[i+1].Decode(&out.Repair); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("line %d: field %s not found in type workflow.V1Alpha2Validation", resolved.Content[i].Line, key)
+		}
+	}
+	out.present = present
+	*v = out
+	return nil
+}
+
+func (v V1Alpha2Validation) repairDeclared() bool {
+	return v.present["repair"] || v.Repair.Once != ""
+}
+
+func (p V1Alpha2RepairPolicy) onceDeclared() bool {
+	return p.present["once"] || p.Once != ""
 }
 
 type V1Alpha2Phase struct {
@@ -95,7 +190,10 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		toolName := v1Alpha2ValidationToolName(name)
 		w.Spec.Tools[toolName] = Tool{Type: "shell", Command: validation.Run}
 		v := Validation{Steps: []ToolUse{{Uses: toolName}}}
-		if validation.Repair.Once != "" {
+		if validation.repairDeclared() {
+			if !validation.Repair.onceDeclared() || strings.TrimSpace(validation.Repair.Once) == "" {
+				return nil, fmt.Errorf("validation %q repair.once is required", name)
+			}
 			v.OnFailure = FailurePolicy{
 				Strategy:          "repair-once",
 				MaxRepairAttempts: 1,
@@ -130,14 +228,29 @@ func rejectV1Alpha2MergeKeys(root *yaml.Node) error {
 	if !ok {
 		return nil
 	}
+	seen := map[*yaml.Node]bool{}
 	var walk func(*yaml.Node, string) error
 	walk = func(n *yaml.Node, path string) error {
 		if n == nil {
 			return nil
 		}
+		resolved, err := resolveYAMLNode(n)
+		if err != nil {
+			return err
+		}
+		if resolved != n {
+			if seen[resolved] {
+				return nil
+			}
+			seen[resolved] = true
+		}
+		n = resolved
 		if n.Kind == yaml.MappingNode {
-			if err := rejectMergeKey(n, path); err != nil {
-				return err
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				key, ok := scalarValueFollowingAliases(n.Content[i])
+				if (ok && key == "<<") || n.Content[i].Tag == "!!merge" {
+					return fmt.Errorf("line %d: YAML merge keys are not supported in %s; write the canonical fields explicitly", n.Content[i].Line, path)
+				}
 			}
 			for i := 0; i+1 < len(n.Content); i += 2 {
 				key := n.Content[i].Value
@@ -259,15 +372,18 @@ func (v v1alpha2Validator) roots() {
 		if strings.TrimSpace(validation.Run) == "" {
 			v.add("spec.validation."+name+".run", "is required")
 		}
+		if validation.repairDeclared() {
+			path := "spec.validation." + name + ".repair.once"
+			if !validation.Repair.onceDeclared() || strings.TrimSpace(validation.Repair.Once) == "" {
+				v.add(path, "is required when repair is declared")
+			} else {
+				v.agent(path, validation.Repair.Once)
+			}
+		}
 	}
 }
 
 func (v v1alpha2Validator) references() {
-	for _, name := range sortedKeys(v.w.Spec.Validation) {
-		if actor := v.w.Spec.Validation[name].Repair.Once; actor != "" {
-			v.agent("spec.validation."+name+".repair.once", actor)
-		}
-	}
 	phaseIndex := make(map[string]int, len(v.w.Spec.Phases))
 	for i, phase := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d]", i)

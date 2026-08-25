@@ -53,6 +53,30 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2RepairNormalizesToBoundedDeterministicValidation(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, v1alpha2Fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v := d.Workflow.Spec.Validation["tests"]
+	if v.OnFailure.Strategy != "repair-once" {
+		t.Fatalf("repair strategy = %q, want repair-once", v.OnFailure.Strategy)
+	}
+	if v.OnFailure.MaxRepairAttempts != 1 {
+		t.Fatalf("repair attempts = %d, want exactly one", v.OnFailure.MaxRepairAttempts)
+	}
+	if v.OnFailure.Repair.Actor != "coder" {
+		t.Fatalf("repair actor = %q, want coder", v.OnFailure.Repair.Actor)
+	}
+	if len(v.Steps) != 1 || v.Steps[0].Uses != v1Alpha2ValidationToolName("tests") {
+		t.Fatalf("deterministic validation steps = %#v", v.Steps)
+	}
+	if len(v.OnFailure.Then) != 0 {
+		t.Fatalf("unexpected alternate post-repair steps = %#v", v.OnFailure.Then)
+	}
+}
+
 func TestDecodeKeepsV1Alpha1Behavior(t *testing.T) {
 	d, err := Decode(writeWorkflow(t, executableFixture))
 	if err != nil {
@@ -129,6 +153,111 @@ func TestV1Alpha2ReferencesFailClosed(t *testing.T) {
 			}
 			t.Fatalf("diagnostics = %#v", result.Diagnostics)
 		})
+	}
+}
+
+func TestV1Alpha2RepairPolicyFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		replace string
+		with    string
+		want    string
+	}{
+		{
+			name:    "missing actor",
+			replace: "repair: {once: coder}",
+			with:    "repair: {}",
+			want:    "repair.once is required",
+		},
+		{
+			name:    "empty actor",
+			replace: "repair: {once: coder}",
+			with:    "repair: {once: ''}",
+			want:    "repair.once is required",
+		},
+		{
+			name:    "unknown actor",
+			replace: "repair: {once: coder}",
+			with:    "repair: {once: missing}",
+			want:    "unknown agent",
+		},
+		{
+			name:    "malformed scalar policy",
+			replace: "repair: {once: coder}",
+			with:    "repair: once",
+			want:    "repair must be a mapping",
+		},
+		{
+			name:    "malformed expanded policy",
+			replace: "repair: {once: coder}",
+			with:    "repair: {strategy: repair-once, maxRepairAttempts: 1, actor: coder}",
+			want:    "field strategy not found",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ValidateFile(writeWorkflow(t, strings.Replace(v1alpha2Fixture, tc.replace, tc.with, 1)))
+			if result.Status != Invalid {
+				t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+			}
+			for _, diagnostic := range result.Diagnostics {
+				if strings.Contains(diagnostic.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("diagnostics = %#v, want %q", result.Diagnostics, tc.want)
+		})
+	}
+}
+
+func TestV1Alpha2RepairAliasesStillRequireDeclaredActor(t *testing.T) {
+	body := strings.Replace(v1alpha2Fixture, "model: gpt-5.6-terra", "model: &repair_actor missing", 1)
+	body = strings.Replace(body, "repair: {once: coder}", "repair: {once: *repair_actor}", 1)
+	result := ValidateFile(writeWorkflow(t, body))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Path == "spec.validation.tests.repair.once" && strings.Contains(diagnostic.Message, "unknown agent") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v", result.Diagnostics)
+}
+
+func TestV1Alpha2RepairMergeCannotHideAuthority(t *testing.T) {
+	_, err := Decode(writeWorkflow(t, `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: merged-repair-policy}
+spec:
+  workspace: {allowWrites: [src/**]}
+  agents: {coder: {runner: codex, model: gpt-5.6-terra}}
+  validation:
+    tests:
+      run: make test
+      repair:
+        <<: {once: coder}
+  phases: [{id: implement, actor: coder, prompt: implement, validation: tests}]
+  completion: {validation: tests}
+`))
+	if err == nil || !strings.Contains(err.Error(), "YAML merge keys are not supported in spec.validation.tests.repair") {
+		t.Fatalf("merge error = %v", err)
+	}
+}
+
+func TestV1Alpha1RepairOnceCompatibilityRemainsBounded(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, conciseFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := NormalizeWorkflow(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := n.Workflow.Spec.Validation["gate"]
+	if v.OnFailure.Strategy != "repair-once" || v.OnFailure.MaxRepairAttempts != 1 || v.OnFailure.Repair.Actor != "worker" {
+		t.Fatalf("v1alpha1 repair contract changed: %#v", v.OnFailure)
 	}
 }
 
