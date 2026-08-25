@@ -47,15 +47,18 @@ func ResolvePresentationIntent(_ string) PresentationIntent {
 // It is intentionally provider-neutral. Provider-specific adapters translate
 // these capabilities into their native CLI/API options.
 type Request struct {
-	Workspace    string
-	Model        string
-	Reasoning    string
-	Prompt       string
-	Sandbox      string
-	Approval     string
-	Ephemeral    bool
-	Presentation PresentationIntent
-	Metadata     map[string]string
+	Workspace string
+	Model     string
+	Reasoning string
+	Prompt    string
+	Sandbox   string
+	Approval  string
+	Ephemeral bool
+	// OutputLastMessage requests capture of the provider's final message for
+	// diagnostic and presentation use. It never affects workflow acceptance.
+	OutputLastMessage bool
+	Presentation      PresentationIntent
+	Metadata          map[string]string
 }
 
 // Result contains provider output useful for audit and debugging purposes.

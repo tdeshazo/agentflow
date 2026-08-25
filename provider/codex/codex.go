@@ -29,17 +29,19 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 		bin = "codex"
 	}
 
-	tmp, err := os.MkdirTemp("", "agentflow-codex-*")
-	if err != nil {
-		return provider.Result{}, fmt.Errorf("create codex temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmp)
-
 	if req.Approval != "" && req.Approval != "never" {
 		return provider.Result{}, fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
 	}
 
-	last := filepath.Join(tmp, "last-message.txt")
+	var last string
+	if req.OutputLastMessage {
+		tmp, err := os.MkdirTemp("", "agentflow-codex-*")
+		if err != nil {
+			return provider.Result{}, fmt.Errorf("create codex temp dir: %w", err)
+		}
+		defer os.RemoveAll(tmp)
+		last = filepath.Join(tmp, "last-message.txt")
+	}
 	stdout := p.Stdout
 	if stdout == nil {
 		stdout = os.Stdout
@@ -57,6 +59,9 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 
 	if err := cmd.Run(); err != nil {
 		return provider.Result{}, fmt.Errorf("codex exec: %w", err)
+	}
+	if !req.OutputLastMessage {
+		return provider.Result{}, nil
 	}
 	b, err := os.ReadFile(last)
 	if err != nil {
@@ -87,7 +92,10 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	if req.Reasoning != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", req.Reasoning))
 	}
-	args = append(args, "--output-last-message", lastMessage, "-")
+	if req.OutputLastMessage {
+		args = append(args, "--output-last-message", lastMessage)
+	}
+	args = append(args, "-")
 	return args
 }
 

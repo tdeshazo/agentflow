@@ -347,12 +347,9 @@ func TestV1Alpha2MayCommitUsesSharedLifecyclePolicy(t *testing.T) {
 }
 
 func TestV1Alpha2OutputLastMessageUsesSharedExecutionSemantics(t *testing.T) {
-	// The shared provider boundary has no per-agent final-message setting: the
-	// Codex adapter captures its final message for every invocation, and phase
-	// acceptance deliberately ignores provider.Result. Preserve that behavior
-	// for normalized v1alpha2 agents instead of inventing a second path.
+	// The shared provider boundary carries the agent's capture intent without
+	// giving final-message output any workflow authority.
 	repo := newDurableRepo(t)
-	var providerRequests []provider.Request
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
 			v1alpha2Agent := decodeV1Alpha2CapabilityDocument(t,
@@ -384,15 +381,12 @@ func TestV1Alpha2OutputLastMessageUsesSharedExecutionSemantics(t *testing.T) {
 					if providerImpl.request.Metadata["actor"] != "worker" {
 						t.Fatalf("provider request = %#v", providerImpl.request)
 					}
-					providerRequests = append(providerRequests, providerImpl.request)
+					if providerImpl.request.OutputLastMessage != enabled {
+						t.Fatalf("provider request output-last-message = %t, want %t", providerImpl.request.OutputLastMessage, enabled)
+					}
 				})
 			}
 		})
-	}
-	for i := 1; i < len(providerRequests); i++ {
-		if !reflect.DeepEqual(providerRequests[i], providerRequests[0]) {
-			t.Fatalf("output_last_message changed the shared provider request:\n got: %#v\nwant: %#v", providerRequests[i], providerRequests[0])
-		}
 	}
 }
 
