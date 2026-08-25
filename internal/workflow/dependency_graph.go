@@ -121,8 +121,34 @@ func (g PhaseDependencyGraph) phaseDependenciesMap() map[string][]string {
 }
 
 func clonePhaseDependencyGraph(graph PhaseDependencyGraph) PhaseDependencyGraph {
-	return PhaseDependencyGraph{
+	cloned := PhaseDependencyGraph{
 		Nodes: append([]PhaseDependencyNode(nil), graph.Nodes...),
 		Edges: append([]PhaseDependencyEdge(nil), graph.Edges...),
 	}
+
+	// phaseIndex and dependencyIndex are deliberately unexported bookkeeping,
+	// so a graph assembled by a Go caller has no way to populate them. Rebuild
+	// them from the exported graph representation on every clone; otherwise
+	// NormalizeWorkflow can project a valid programmatic graph differently from
+	// the graph the scheduler reads through Dependencies.
+	phaseIndexes := make(map[string]int, len(cloned.Nodes))
+	for i, node := range cloned.Nodes {
+		if _, exists := phaseIndexes[node.ID]; !exists {
+			phaseIndexes[node.ID] = i
+		}
+	}
+	dependencyIndexes := make(map[int]int, len(cloned.Nodes))
+	for i := range cloned.Edges {
+		edge := &cloned.Edges[i]
+		phaseIndex, ok := phaseIndexes[edge.Phase]
+		if !ok {
+			edge.phaseIndex = -1
+			edge.dependencyIndex = -1
+			continue
+		}
+		edge.phaseIndex = phaseIndex
+		edge.dependencyIndex = dependencyIndexes[phaseIndex]
+		dependencyIndexes[phaseIndex]++
+	}
+	return cloned
 }

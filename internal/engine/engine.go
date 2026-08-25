@@ -330,6 +330,14 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
+	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
+		// Decode intentionally does not perform semantic validation, and the Go
+		// API accepts normalized workflows directly. Establish the complete
+		// v1alpha2 authority contract before recovery can invoke an actor.
+		if err := validateV1Alpha2ScheduleContract(e.Workflow); err != nil {
+			return err
+		}
+	}
 	if err := e.startObservation(); err != nil {
 		return err
 	}
