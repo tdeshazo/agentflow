@@ -377,15 +377,16 @@ func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt stri
 		presentation = provider.PresentationPlain
 	}
 	committed, err := e.invokeAgent(ctx, actorName, a, prov, provider.Request{
-		Workspace:    e.Repo.Root,
-		Model:        model,
-		Reasoning:    reasoning,
-		Prompt:       prompt,
-		Sandbox:      a.Sandbox,
-		Approval:     a.Approval,
-		Ephemeral:    a.Ephemeral,
-		Presentation: presentation,
-		Metadata:     metadata,
+		Workspace:         e.Repo.Root,
+		Model:             model,
+		Reasoning:         reasoning,
+		Prompt:            prompt,
+		Sandbox:           a.Sandbox,
+		Approval:          a.Approval,
+		Ephemeral:         a.Ephemeral,
+		OutputLastMessage: a.OutputLastMessage,
+		Presentation:      presentation,
+		Metadata:          metadata,
 	})
 	if committed && p != nil {
 		if recordErr := e.recordPhaseCommitActor(p, actorName); recordErr != nil {

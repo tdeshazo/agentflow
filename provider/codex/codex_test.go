@@ -17,7 +17,7 @@ import (
 func TestBuildArgs(t *testing.T) {
 	got := buildArgs(provider.Request{
 		Workspace: "/repo", Model: "gpt-test", Reasoning: "high",
-		Sandbox: "workspace-write", Ephemeral: true, Presentation: provider.PresentationNever,
+		Sandbox: "workspace-write", Ephemeral: true, OutputLastMessage: true, Presentation: provider.PresentationNever,
 	}, "/tmp/last")
 	want := []string{
 		"exec", "--cd", "/repo", "-c", `approval_policy="never"`, "--sandbox", "workspace-write", "--ephemeral",
@@ -26,6 +26,24 @@ func TestBuildArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildArgsOutputLastMessage(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		capture bool
+		want    bool
+	}{
+		{name: "capture enabled", capture: true, want: true},
+		{name: "capture disabled", capture: false, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := buildArgs(provider.Request{Workspace: "/repo", OutputLastMessage: test.capture}, "/tmp/last")
+			if got := contains(args, "--output-last-message"); got != test.want {
+				t.Fatalf("--output-last-message present = %t, want %t: %#v", got, test.want, args)
+			}
+		})
 	}
 }
 
@@ -90,13 +108,14 @@ done
 		},
 	}
 	result, err := p.Run(context.Background(), provider.Request{
-		Workspace:    workspace,
-		Model:        "gpt-test",
-		Reasoning:    "high",
-		Prompt:       "perform the task",
-		Sandbox:      "workspace-write",
-		Approval:     "never",
-		Presentation: provider.PresentationAlways,
+		Workspace:         workspace,
+		Model:             "gpt-test",
+		Reasoning:         "high",
+		Prompt:            "perform the task",
+		Sandbox:           "workspace-write",
+		Approval:          "never",
+		OutputLastMessage: true,
+		Presentation:      provider.PresentationAlways,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -113,6 +132,7 @@ done
 	for _, required := range []string{
 		"-c", `approval_policy="never"`, "--sandbox", "workspace-write",
 		"--model", "gpt-test", `model_reasoning_effort="high"`,
+		"--output-last-message",
 	} {
 		if !contains(got, required) {
 			t.Fatalf("Codex invocation missing %q: %#v", required, got)
@@ -161,9 +181,10 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 		},
 	}
 	result, err := p.Run(context.Background(), provider.Request{
-		Workspace:    workspace,
-		Approval:     "never",
-		Presentation: provider.PresentationAlways,
+		Workspace:         workspace,
+		Approval:          "never",
+		OutputLastMessage: true,
+		Presentation:      provider.PresentationAlways,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -218,9 +239,10 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 		},
 	}
 	if _, err := p.Run(context.Background(), provider.Request{
-		Workspace:    workspace,
-		Approval:     "never",
-		Presentation: provider.PresentationAuto,
+		Workspace:         workspace,
+		Approval:          "never",
+		OutputLastMessage: true,
+		Presentation:      provider.PresentationAuto,
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -236,6 +258,34 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	}
 	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, "auto") {
 		t.Fatalf("attached Codex args = %#v, want --color auto", got)
+	}
+}
+
+func TestRunWithoutOutputLastMessageDoesNotReadCaptureFile(t *testing.T) {
+	workspace := t.TempDir()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte(`#!/bin/sh
+printf '%s\n' "$@" > "$ARGS_FILE"
+`), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("ARGS_FILE", argsFile)
+
+	p := Provider{Binary: fake, Stdout: io.Discard, Stderr: io.Discard}
+	result, err := p.Run(context.Background(), provider.Request{Workspace: workspace, Approval: "never"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.FinalMessage != "" {
+		t.Fatalf("FinalMessage = %q, want empty", result.FinalMessage)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read captured args: %v", err)
+	}
+	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); contains(got, "--output-last-message") {
+		t.Fatalf("Codex invocation unexpectedly captured final message: %#v", got)
 	}
 }
 
