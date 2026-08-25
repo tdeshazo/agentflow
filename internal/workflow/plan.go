@@ -47,6 +47,7 @@ type PlannedPhase struct {
 	ID              string               `yaml:"id"`
 	Kind            string               `yaml:"kind"`
 	Actor           string               `yaml:"actor,omitempty"`
+	DependsOn       []string             `yaml:"dependsOn,omitempty"`
 	Reasoning       string               `yaml:"reasoning,omitempty"`
 	RequiresChange  bool                 `yaml:"requiresChange"`
 	CriterionID     string               `yaml:"criterionID,omitempty"`
@@ -57,12 +58,12 @@ type PlannedPhase struct {
 }
 
 func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
+	if result := Validate(d); result.Status == Invalid {
+		return ExpandedPlan{}, fmt.Errorf("workflow is invalid")
+	}
 	n, err := NormalizeWorkflow(d)
 	if err != nil {
 		return ExpandedPlan{}, err
-	}
-	if r := validateOnly(n); r.Status == Invalid {
-		return ExpandedPlan{}, fmt.Errorf("normalized workflow is invalid")
 	}
 	w := n.Workflow
 	resolvedLifecycle := w.Spec.Lifecycle
@@ -145,7 +146,8 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			}
 		}
 		plan.Phases = append(plan.Phases, PlannedPhase{
-			ID: p.ID, Kind: p.Kind, Actor: p.Actor, Reasoning: p.Reasoning,
+			ID: p.ID, Kind: p.Kind, Actor: p.Actor,
+			DependsOn: append([]string(nil), n.PhaseDependencies[p.ID]...), Reasoning: p.Reasoning,
 			RequiresChange: p.RequiresChange, CriterionID: criterionID,
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
 			Bookkeeping: p.Bookkeeping, Acceptance: acceptance,

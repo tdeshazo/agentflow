@@ -150,8 +150,10 @@ kind: AgentWorkflow
 ```
 
 `v1alpha1` remains the currently supported executable identifier and is
-experimental. `v1alpha2` is currently an authoring-contract proposal; it does
-not change v1alpha1 behavior or imply parser/runtime support.
+experimental. `v1alpha2` has explicit decoding, structural validation, and
+normalization support for its concise authoring form, but remains unsupported
+for execution until dependency scheduling is implemented. It does not change
+v1alpha1 behavior.
 
 ## Publishing
 

@@ -123,6 +123,12 @@ type Options struct {
 // New creates a new Engine for executing the given workflow with the provided providers.
 // It resolves parameters, initializes Git state storage, and validates configuration.
 func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Options) (*Engine, error) {
+	if w == nil {
+		return nil, fmt.Errorf("empty workflow")
+	}
+	if w.APIVersion == "agentflow.dev/v1alpha2" {
+		return nil, fmt.Errorf("apiVersion agentflow.dev/v1alpha2 is not executable: dependency scheduling is not supported")
+	}
 	// Callers in Go may construct a Workflow directly, while file callers have
 	// already validated the authored form. Normalize here as the final boundary
 	// so execution always sees the same explicit contract as `plan --expanded`.

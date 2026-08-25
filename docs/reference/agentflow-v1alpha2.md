@@ -1,9 +1,10 @@
 # AgentFlow v1alpha2 authoring contract
 
-This document defines the proposed authoring contract for
-`agentflow.dev/v1alpha2`. It is a specification and roadmap artifact only.
-The current parser, normalizer, scheduler, and runtime remain
-`v1alpha1`-only until a later implementation change adopts this contract.
+This document defines the concise authoring contract for
+`agentflow.dev/v1alpha2`. The reference implementation explicitly decodes and
+structurally validates this core form, then normalizes it to shared executable
+concepts for diagnostics and expanded plans. It deliberately reports v1alpha2
+as unsupported for execution until dependency scheduling is implemented.
 
 v1alpha2 is an evolution of AgentFlow's existing vocabulary and authority
 boundaries. It keeps `workspace`, `agents`, `validation`, `phases`, and
@@ -222,10 +223,8 @@ expanded execution plan before it executes any actor.
 
 ## Out of scope for this phase
 
-This contract definition does not implement:
+This phase does not implement:
 
-- v1alpha2 parsing or schema acceptance;
-- normalization code;
 - dependency scheduling in the Go runtime;
 - changes to v1alpha1 behavior; or
 - parallel phase execution.
