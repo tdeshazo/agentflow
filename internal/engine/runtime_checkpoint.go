@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
@@ -37,9 +39,14 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 		if staged {
 			msg := e.Workflow.Spec.Workspace.Checkpointing.CommitMessage
 			if msg == "" {
-				msg = "AgentFlow: " + label
-			}
-			if p != nil {
+				msg = label
+				if p != nil {
+					if expanded, err := e.context(p).Expand(msg); err == nil {
+						msg = expanded
+					}
+				}
+				msg = checkpointCommitSubject(msg)
+			} else if p != nil {
 				if expanded, err := e.context(p).Expand(msg); err == nil {
 					msg = expanded
 				}
@@ -58,6 +65,18 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 	}
 	return e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p))
 }
+
+func checkpointCommitSubject(label string) string {
+	label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
+	label = strings.Join(strings.Fields(label), " ")
+	if label == "" {
+		return "Record workflow changes"
+	}
+
+	first, size := utf8.DecodeRuneInString(label)
+	return string(unicode.ToUpper(first)) + label[size:]
+}
+
 func (e *Engine) assertProgress(p *workflow.Phase, active ActivePhase) error {
 	criterion := p.Criterion
 	if p.CriterionID != "" {

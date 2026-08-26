@@ -994,6 +994,68 @@ func TestCheckpointDoesNotAcceptUnrelatedPreStagedControlFiles(t *testing.T) {
 	}
 }
 
+func TestCheckpointUsesDescriptiveDefaultCommitSubject(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "descriptive-checkpoint")
+	w.Spec.Workspace.Checkpointing.CommitMessage = ""
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.checkpoint("implement-actionable-error-recovery", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Implement actionable error recovery" {
+		t.Fatalf("checkpoint commit subject = %q", got)
+	}
+}
+
+func TestCheckpointExpandsDefaultCommitSubjectLabelBeforeFormatting(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "templated-descriptive-checkpoint")
+	w.Spec.Workspace.Checkpointing.CommitMessage = ""
+	w.Spec.Parameters["issue_id"] = workflow.Parameter{Type: "string", Default: "agentflow_123"}
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	phase := &workflow.Phase{Label: "implement-{{ parameters.issue_id }}"}
+	if err := e.checkpoint(phase.Label, phase); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Implement agentflow 123" {
+		t.Fatalf("checkpoint commit subject = %q", got)
+	}
+}
+
+func TestCheckpointUsesNonEmptyDefaultCommitSubject(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "unlabeled-checkpoint")
+	w.Spec.Workspace.Checkpointing.CommitMessage = ""
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.checkpoint("", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Record workflow changes" {
+		t.Fatalf("checkpoint commit subject = %q", got)
+	}
+}
+
 func TestValidationDoesNotAcceptAnEmptyPostRepairSequence(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "repair-must-rerun-gate")

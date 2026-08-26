@@ -154,6 +154,13 @@ actor. The invocation and checkpoint/acceptance boundaries use the same rule.
 Runtime-owned checkpoint commits are separate from actor-created commits and
 do not consume actor commit authority.
 
+`checkpointing.commit_message` overrides the runtime-generated Git subject.
+When it is omitted, AgentFlow turns the checkpoint label into a readable,
+declarative subject (for example, `implement-error-recovery` becomes
+`Implement error recovery`) instead of adding an `AgentFlow:` prefix. An
+unlabeled checkpoint uses `Record workflow changes` so it never creates an
+empty subject.
+
 ## `spec.agents`
 
 Named AI execution capabilities. Typical fields select runner, model, sandbox, approval policy, ephemeral context, commit permission, and final-message capture.
