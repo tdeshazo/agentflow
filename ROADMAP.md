@@ -208,6 +208,144 @@ authoring into the existing executable authority concepts wherever possible.
 - Review can evaluate v1alpha2 semantics and its normalized authority model
   without changing v1alpha1 behavior.
 
+---
+
+## Priority 3.75 — v1alpha1 maintenance and successor migration
+
+**Goal:** Evolve the portable authority semantics proven in v1alpha1 into the
+concise successor contract without carrying forward procedural runtime plumbing
+or declaring v1alpha1 deprecated before a real migration path exists.
+
+### Version policy
+
+- Put `agentflow.dev/v1alpha1` into supported maintenance mode: freeze its
+  authoring grammar, retain decoding/validation/execution compatibility, and
+  continue correctness, safety, durability, and security fixes.
+- Prefer `agentflow.dev/v1alpha2` for new workflows that fit its concise
+  contract, but do not claim that v1alpha2 already replaces the full v1alpha1
+  surface.
+- Add new portable product semantics to the successor contract rather than
+  extending v1alpha1 convenience syntax.
+- If the capabilities needed for general self-hosting materially reshape the
+  reviewed v1alpha2 grammar, advance to the next alpha version rather than
+  silently broadening v1alpha2 into an incompatible contract.
+- Treat formal deprecation as a product milestone, not a parser switch. A
+  deprecated v1alpha1 document should remain readable, validatable, plannable,
+  and executable for a compatibility period.
+
+### Migrate authorities, not fields
+
+Classify every v1alpha1 capability before extending the successor grammar.
+Preserve portable workflow authority; move generic process mechanics into the
+runtime; leave procedural compatibility syntax legacy-only.
+
+#### Carry forward as portable successor semantics
+
+- typed parameters, environment-backed inputs, CLI overrides, and deliberately
+  bounded expressions/conditions;
+- workspace mutation authority plus protected-resource integrity rules;
+- explicit reset/abandon semantics and lineage requirements that are observable
+  workflow policy;
+- named actor capabilities and invocation-scoped commit authority;
+- reusable deterministic tools and `uses` / typed `with` / `if` invocation;
+- deterministic preconditions before mutable execution;
+- named validation gates, declared validation dependencies, durable validation
+  evidence, bounded repair, and deterministic revalidation;
+- phase-level intent such as stable ID, actor, reasoning/effort, validation,
+  condition, accepted dependencies, and whether a repository change is
+  required;
+- engine-owned criterion/progress advancement where progress is a real product
+  requirement rather than model-authored bookkeeping;
+- durable human verification with explicit acknowledgement, skip policy, and
+  evidence; and
+- rich completion policy: assertions, distinct final validation, protected
+  boundaries, and durable terminal completion.
+
+#### Make runtime-owned rather than successor authoring requirements
+
+- Git-ref/state record names, temporary/log filenames, and other persistence
+  plumbing;
+- ordinary active-phase lifecycle sequencing, actor-completion persistence,
+  checkpoint mechanics, accepted-phase markers, and active-state cleanup;
+- normal safe-resume recovery sequencing and crash reconciliation;
+- runtime checkpoint commit implementation details; and
+- workflow-complete marker plumbing and routine completion presentation.
+
+These mechanics must remain visible in `agentflow plan --expanded` and covered
+by conformance tests even when they disappear from authored YAML.
+
+#### Keep legacy-only unless a demonstrated use case requires a successor
+
+- procedural `phaseDefaults` before/after lifecycle programs;
+- procedural `spec.recovery` programs that restate the runtime state machine;
+- arbitrary internal state-record naming;
+- explicit `flow` whose only purpose is to serialize phases that can instead be
+  represented through accepted-phase dependencies; and
+- specialized loop/control constructs that have no demonstrated self-hosting or
+  external workflow requirement.
+
+Legacy constructs remain executable under v1alpha1 compatibility, but they do
+not automatically earn one-for-one successor syntax.
+
+### Migration work order
+
+1. **Freeze the v1alpha1 grammar.** Document maintenance status and stop adding
+   new convenience syntax while retaining shared-runtime correctness fixes.
+2. **Maintain a successor capability matrix.** For every supported v1alpha1
+   capability, record whether the migration is direct successor syntax,
+   runtime-owned semantics, or legacy-only compatibility.
+3. **Close real self-hosting gaps first.** Add successor semantics based on what
+   AgentFlow's own development workflow and shipped representative workflows
+   actually require, rather than mechanically cloning the v1alpha1 schema.
+4. **Migrate the canonical reference/self-hosting workflow.** The preferred API
+   must be capable of safely developing AgentFlow itself before v1alpha1 is
+   formally deprecated.
+5. **Migrate examples and the public authoring skill.** New authoring guidance
+   should default to the successor API; v1alpha1 guidance should become
+   compatibility/migration documentation.
+6. **Add deterministic migration diagnostics.** Provide a command such as
+   `agentflow migrate --check` that classifies v1alpha1 constructs as directly
+   migratable, runtime-owned in the successor, requiring manual replacement, or
+   unsupported legacy syntax. Automatic rewriting is optional; authoritative
+   diagnostics are required.
+7. **Formally deprecate v1alpha1 only after the gates below are met.**
+
+### Deprecation gates
+
+Formal v1alpha1 deprecation requires all of the following:
+
+- the canonical workflow(s) under `spec/` and the repository's self-hosting
+  development path use the successor API without loss of mutation, validation,
+  repair, recovery, human-evidence, or completion authority;
+- the public AgentFlow authoring skill defaults to the successor API;
+- every shipped representative v1alpha1 workflow has either a semantically
+  equivalent successor workflow or an explicit documented reason it remains
+  compatibility-only;
+- migration diagnostics identify every supported v1alpha1 construct that cannot
+  be represented directly in the successor;
+- shared-runtime compatibility tests continue to protect execution of existing
+  v1alpha1 workflows; and
+- release notes and reference documentation distinguish "deprecated for new
+  authoring" from "unsupported" or "removed."
+
+Deprecation should emit a non-fatal authoring/validation warning rather than
+turning an otherwise valid v1alpha1 workflow into an error. Removal, if ever
+appropriate, belongs to a later explicit compatibility break after a long
+migration window and must not be a prerequisite for v1beta1.
+
+### Exit criteria
+
+- v1alpha1 is documented as supported maintenance/frozen authoring rather than
+  the target for new language features.
+- The capability matrix is complete enough to review migration by semantic
+  authority instead of field-count parity.
+- AgentFlow's canonical self-hosting/reference workflow runs on the successor
+  API with equivalent fail-closed authority and durability.
+- The authoring skill and primary examples use the successor API by default.
+- `agentflow migrate --check` or equivalent deterministic tooling explains the
+  migration status of an existing v1alpha1 workflow without executing it.
+- Formal v1alpha1 deprecation occurs only after all deprecation gates are met.
+
 ## Priority 4 — Runtime-owned orchestration and concise SDL authoring
 
 **Goal:** Make AgentFlow workflows materially more concise than equivalent imperative orchestrators by keeping workflow-specific policy in YAML while moving generic lifecycle mechanics into the runtime.
@@ -503,11 +641,12 @@ The recommended implementation order is:
 2. **`v1alpha1` runtime parity** — close the documented/runtime gap.
 3. **Self-hosting MVP** — use AgentFlow plus the Go interpreter to make a real, validated, resumable change to AgentFlow itself.
 4. **v1alpha2 concise authoring and conformance** — completed strict decoding, normalization, dependency-derived serial execution, and durable acceptance coverage.
-5. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
-6. **DAG scheduler** — extend the proven v1alpha2 serial scheduler with bounded concurrency without weakening acceptance authority.
-7. **Typed artifacts/evidence** — strengthen contracts between phases beyond deterministic validation evidence.
-8. **Extensibility and security** — broaden executors while keeping authority enforceable.
-9. **Trace and composition** — make larger systems explainable and reusable.
-10. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
+5. **v1alpha1 maintenance and successor migration** — freeze v1alpha1 authoring, classify its capabilities by portable authority versus runtime-owned mechanics versus legacy-only syntax, migrate the canonical self-hosting/reference workflow and authoring skill, and add deterministic migration diagnostics before formal deprecation.
+6. **Runtime-owned orchestration and concise authoring** — make lifecycle/recovery runtime-owned, move progress/bookkeeping authority into deterministic engine transitions, add content-addressed validation evidence, and expose the fully expanded execution contract.
+7. **DAG scheduler** — extend the proven v1alpha2 serial scheduler with bounded concurrency without weakening acceptance authority.
+8. **Typed artifacts/evidence** — strengthen contracts between phases beyond deterministic validation evidence.
+9. **Extensibility and security** — broaden executors while keeping authority enforceable.
+10. **Trace and composition** — make larger systems explainable and reusable.
+11. **Developer tooling and `v1beta1`** — harden the ecosystem and compatibility contract.
 
 The roadmap should be updated when implementation, research, or self-hosting experience materially changes these dependencies. The specification should not claim support for a roadmap item until both its SDL semantics and reference-interpreter behavior are covered by conformance tests.q
