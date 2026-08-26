@@ -138,6 +138,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
 	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
 	expanded := fs.Bool("expanded", expandedDefault, "show resolved executable plan")
+	clearSelection := fs.Bool("clear", false, "clear the active workflow selection (switch only)")
 	overrides := configuredSets(config.Parameters)
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
 	flagArgs, positional := splitCommandArgs(args[1:])
@@ -173,7 +174,10 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("status --all does not accept a positional workflow selector")
 		}
 		switch cmd {
-		case "run", "status", "reset", "validate", "plan":
+		case "run", "status", "reset", "validate", "plan", "switch":
+			if cmd == "switch" && positional[0] == "-" {
+				break
+			}
 			if err := workflow.ValidateSelector(positional[0]); err != nil {
 				return err
 			}
@@ -211,8 +215,22 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if *detach && cmd != "run" {
 		return fmt.Errorf("%s does not support --detach; use --detach with run", cmd)
 	}
+	if *clearSelection && cmd != "switch" {
+		return fmt.Errorf("--clear is only supported with switch")
+	}
 	if cmd == "status" && *all && *file != "" {
 		return fmt.Errorf("status selectors --all and -f are mutually exclusive")
+	}
+	if cmd == "switch" {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "set"} {
+			if explicit[name] {
+				return fmt.Errorf("--%s is not supported with switch", name)
+			}
+		}
+		if *clearSelection && len(positional) > 0 {
+			return fmt.Errorf("switch --clear does not accept a workflow selector")
+		}
+		return runWorkflowSwitch(*repo, positional, *clearSelection, out)
 	}
 	if cmd == "logs" {
 		if *file != "" {
@@ -257,9 +275,29 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if len(positional) == 1 {
 		selector = positional[0]
 	}
+	selectedFromState := false
+	if selector == "" && workflowFile == "" && requiresWorkflowSelector(cmd) {
+		// Active selection is a local convenience default. It is intentionally
+		// consulted only after explicit and configured selectors, and it does
+		// not create or inspect durable workflow execution state.
+		selectionRepo, selectionErr := targetRepo(repoRoot)
+		if selectionErr == nil {
+			selection, found, readErr := newSelectionStore(selectionRepo).Read()
+			if readErr != nil {
+				return readErr
+			}
+			if found {
+				selector = selection.Current
+				selectedFromState = true
+			}
+		}
+	}
 	if selector != "" {
 		workflowFile, err = workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory)
 		if err != nil {
+			if selectedFromState {
+				return fmt.Errorf("active workflow selection %q is stale: %w", selector, err)
+			}
 			return err
 		}
 	}
@@ -361,10 +399,69 @@ func usage() error {
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
+	fmt.Fprintln(out, "       agentflow switch [workflow-name|-] [-C repo] | agentflow switch --clear [-C repo]")
 	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
 	fmt.Fprintln(out, "       defaults load from <repo>/.agentflow/config.toml and ~/.agentflow/config.toml")
+}
+
+func runWorkflowSwitch(repoRoot string, positional []string, clear bool, out io.Writer) error {
+	repo, err := targetRepo(repoRoot)
+	if err != nil {
+		return err
+	}
+	store := newSelectionStore(repo)
+	if clear {
+		if err := store.Clear(); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "cleared active workflow selection")
+		return nil
+	}
+	if len(positional) == 0 {
+		selection, found, err := store.Read()
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("no active workflow selection")
+		}
+		if _, err := workflow.ResolveFile(repo.Root, selection.Current, workflowHomeDirectory); err != nil {
+			return fmt.Errorf("active workflow selection %q is stale: %w", selection.Current, err)
+		}
+		fmt.Fprintln(out, selection.Current)
+		return nil
+	}
+
+	selector := positional[0]
+	if selector == "-" {
+		selection, found, err := store.Read()
+		if err != nil {
+			return err
+		}
+		if !found || selection.Previous == "" {
+			return fmt.Errorf("no previous workflow selection")
+		}
+		if _, err := workflow.ResolveFile(repo.Root, selection.Previous, workflowHomeDirectory); err != nil {
+			return fmt.Errorf("previous workflow selection %q is stale: %w", selection.Previous, err)
+		}
+		selector, err = store.SwitchPrevious()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(out, selector)
+		return nil
+	}
+
+	if _, err := workflow.ResolveFile(repo.Root, selector, workflowHomeDirectory); err != nil {
+		return err
+	}
+	if err := store.Select(selector); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, selector)
+	return nil
 }
 
 func writeValidationResult(presenter clioutput.Presenter, result workflow.Result) error {

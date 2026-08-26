@@ -44,6 +44,15 @@ a sorted numbered workflow picker and accepts one selection line; redirected
 or piped commands instead fail with the selector usage error and never read
 stdin.
 
+`agentflow switch <workflow-name>` sets a repository-local active selector for
+later selector-less `run`, `status`, `reset`, `validate`, and `plan` commands.
+It is lower precedence than an explicit selector or configured default.
+`agentflow switch -` swaps back to the previous selector, `agentflow switch`
+prints the current selector, and `agentflow switch --clear` removes it. The
+selection records only logical discovery names and is validated against the
+current discovery scopes whenever it is used; a removed workflow is reported
+as stale rather than silently selecting another workflow.
+
 AgentFlow reads optional defaults from `<repository>/.agentflow/config.toml`
 and `~/.agentflow/config.toml`. An explicit `-C` selects the repository config;
 otherwise the current working directory is used. Values are merged by field,
@@ -52,6 +61,10 @@ and parameter maps are merged by key, with this precedence:
 ```text
 command line > repository config > home config > built-in defaults
 ```
+
+For workflow selectors only, an active selection is consulted after those
+explicit and configured values and before the interactive picker or missing-
+selector error.
 
 Configuration is typed and rejects unknown keys. The `workflow` values for
 `run`, `status`, `reset`, `validate`, and `plan` are logical names from the
@@ -107,6 +120,8 @@ go run . logs --workflow workflow-name -C /path/to/repo --tail 100
 go run . logs --workflow workflow-name -C /path/to/repo --follow
 go run . reset  -f workflow.yaml -C /path/to/repo
 go run . plan --expanded -f workflow.yaml
+go run . switch code-styling -C /path/to/repo
+go run . switch - -C /path/to/repo
 ```
 
 Runtime parameters can be overridden with repeated `--set key=value` flags.
@@ -126,6 +141,13 @@ checkpoint commit is explicitly reported as runtime-owned; it does not consume
 or imply an actor's `may_commit` authority.
 
 ## Git-backed state
+
+The active CLI workflow selector is intentionally separate from the
+Git-backed execution records below. It is a small JSON file under Git's
+worktree-specific metadata path (resolved with `git rev-parse --git-path`),
+not an AgentFlow ref or workflow evidence. This keeps selection out of the
+implementation workspace and gives linked worktrees independent selections.
+It never initializes, resumes, accepts, or resets workflow execution state.
 
 The interpreter does not maintain a separate state database. It stores durable
 workflow evidence in Git's own object database and namespaced refs:
