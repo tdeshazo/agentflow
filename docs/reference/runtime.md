@@ -35,7 +35,8 @@ using `--tail N` or `--follow`).
 `-C` selects the repository explicitly. For repository-scoped commands, its
 default is the current working directory, which must be a Git repository.
 Single-workflow `run`, `status`, `reset`, `validate`, and `plan` commands may
-also take one positional workflow name. Names are looked up as regular
+also take one positional workflow name. `logs` accepts the same logical name
+through `--workflow`. Names are looked up as regular
 `.yaml`/`.yml` files in `<repository>/.agentflow/workflows/` and
 `~/.agentflow/workflows/`; repository-local files shadow home files. Use `-f`
 for an explicit workflow path. The positional form and `-f` cannot be combined.
@@ -45,13 +46,15 @@ or piped commands instead fail with the selector usage error and never read
 stdin.
 
 `agentflow switch <workflow-name>` sets a repository-local active selector for
-later selector-less `run`, `status`, `reset`, `validate`, and `plan` commands.
-It is lower precedence than an explicit selector or configured default.
+later selector-less `run`, `status`, `reset`, `validate`, `plan`, and `logs`
+commands. It is lower precedence than an explicit selector or configured
+default; `status --all` always ignores it.
 `agentflow switch -` swaps back to the previous selector, `agentflow switch`
 prints the current selector, and `agentflow switch --clear` removes it. The
 selection records only logical discovery names and is validated against the
 current discovery scopes whenever it is used; a removed workflow is reported
-as stale rather than silently selecting another workflow.
+as stale, with guidance to switch to a discovered workflow or clear the
+selection, rather than silently selecting another workflow.
 
 AgentFlow reads optional defaults from `<repository>/.agentflow/config.toml`
 and `~/.agentflow/config.toml`. An explicit `-C` selects the repository config;
@@ -64,10 +67,10 @@ command line > repository config > home config > built-in defaults
 
 For workflow selectors only, an active selection is consulted after those
 explicit and configured values and before the interactive picker or missing-
-selector error.
+selector error. `logs --workflow` keeps its explicit-selector precedence.
 
 Configuration is typed and rejects unknown keys. The `workflow` values for
-`run`, `status`, `reset`, `validate`, and `plan` are logical names from the
+`run`, `status`, `reset`, `validate`, `plan`, and `logs` are logical names from
 discovery directories; explicit workflow selectors override configured
 selectors. `logs.workflow` mirrors the runtime workflow name accepted by
 `logs --workflow`. `-C` and `-f` are intentionally command-line-only.

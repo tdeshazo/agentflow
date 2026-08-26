@@ -197,6 +197,8 @@ func configWorkflow(config cliConfig, command string) string {
 		value = config.Validate.Workflow
 	case "plan":
 		value = config.Plan.Workflow
+	case "logs":
+		value = config.Logs.Workflow
 	}
 	if value == nil {
 		return ""

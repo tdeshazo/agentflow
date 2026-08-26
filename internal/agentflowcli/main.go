@@ -116,11 +116,9 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 	jsonDefault := cmd == "status" && configuredBool(config.Status.JSON, false)
 	allDefault := cmd == "status" && configuredBool(config.Status.All, false)
-	logsWorkflowDefault := ""
 	tailDefault := -1
 	followDefault := false
 	if cmd == "logs" {
-		logsWorkflowDefault = configuredString(config.Logs.Workflow, "")
 		tailDefault = configuredInt(config.Logs.Tail, -1)
 		followDefault = configuredBool(config.Logs.Follow, false)
 	}
@@ -134,7 +132,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	detach := fs.Bool("detach", detachDefault, "start the workflow in a detached child process (run only)")
 	jsonOutput := fs.Bool("json", jsonDefault, "emit machine-readable JSON (status only)")
 	all := fs.Bool("all", allDefault, "inspect every discovered workflow (status only)")
-	workflowName := fs.String("workflow", logsWorkflowDefault, "workflow name (logs only)")
+	workflowName := fs.String("workflow", "", "workflow name (logs only)")
 	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
 	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
 	expanded := fs.Bool("expanded", expandedDefault, "show resolved executable plan")
@@ -232,15 +230,6 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		}
 		return runWorkflowSwitch(*repo, positional, *clearSelection, out)
 	}
-	if cmd == "logs" {
-		if *file != "" {
-			return fmt.Errorf("logs does not accept -f; use --workflow")
-		}
-		if *workflowName == "" {
-			return fmt.Errorf("logs requires --workflow")
-		}
-		return runLogs(*repo, *workflowName, *tail, *follow)
-	}
 	if cmd == "status" && *all {
 		return runAllStatus(*repo, *jsonOutput)
 	}
@@ -265,7 +254,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-	} else if workflowFile == "" && requiresWorkflowSelector(cmd) {
+	} else if workflowFile == "" && usesActiveWorkflowSelection(cmd) {
 		repoRoot, err = discoveryRoot(*repo)
 		if err != nil {
 			return err
@@ -275,8 +264,11 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if len(positional) == 1 {
 		selector = positional[0]
 	}
+	if cmd == "logs" && explicit["workflow"] {
+		selector = *workflowName
+	}
 	selectedFromState := false
-	if selector == "" && workflowFile == "" && requiresWorkflowSelector(cmd) {
+	if selector == "" && workflowFile == "" && usesActiveWorkflowSelection(cmd) {
 		// Active selection is a local convenience default. It is intentionally
 		// consulted only after explicit and configured selectors, and it does
 		// not create or inspect durable workflow execution state.
@@ -292,11 +284,25 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			}
 		}
 	}
+	if selectedFromState {
+		if _, err := workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory); err != nil {
+			return staleActiveWorkflowSelectionError(selector, err)
+		}
+	}
+	if cmd == "logs" {
+		if *file != "" {
+			return fmt.Errorf("logs does not accept -f; use --workflow")
+		}
+		if selector == "" {
+			return fmt.Errorf("logs requires --workflow")
+		}
+		return runLogs(repoRoot, selector, *tail, *follow)
+	}
 	if selector != "" {
 		workflowFile, err = workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory)
 		if err != nil {
 			if selectedFromState {
-				return fmt.Errorf("active workflow selection %q is stale: %w", selector, err)
+				return staleActiveWorkflowSelectionError(selector, err)
 			}
 			return err
 		}
@@ -389,6 +395,23 @@ func requiresWorkflowSelector(cmd string) bool {
 	default:
 		return false
 	}
+}
+
+func usesActiveWorkflowSelection(cmd string) bool {
+	if requiresWorkflowSelector(cmd) {
+		return true
+	}
+	return cmd == "logs"
+}
+
+func staleActiveWorkflowSelectionError(selector string, err error) error {
+	return fmt.Errorf(
+		"active workflow selection %q is stale: %w; "+
+			"run 'agentflow switch <workflow-name>' to select a discovered workflow or "+
+			"'agentflow switch --clear' to clear it",
+		selector,
+		err,
+	)
 }
 
 func usage() error {

@@ -98,9 +98,15 @@ func TestCLIUsesConfiguredWorkflowAndExplicitSelectorWins(t *testing.T) {
 	home := t.TempDir()
 	configuredPath := filepath.Join(repo.Root, ".agentflow", "workflows", "configured.yaml")
 	explicitPath := filepath.Join(repo.Root, ".agentflow", "workflows", "explicit.yaml")
+	activePath := filepath.Join(repo.Root, ".agentflow", "workflows", "active.yaml")
 	writeCLIWorkflow(t, configuredPath, "configured-workflow")
 	writeCLIWorkflow(t, explicitPath, "explicit-workflow")
+	writeCLIWorkflow(t, activePath, "active-workflow")
 	writeCLIConfig(t, repo.Root, "[status]\nworkflow = \"configured\"\njson = true\n")
+	store := newSelectionStore(repo)
+	if err := store.Select("active"); err != nil {
+		t.Fatal(err)
+	}
 
 	originalHome := workflowHomeDirectory
 	t.Cleanup(func() { workflowHomeDirectory = originalHome })
@@ -120,6 +126,10 @@ func TestCLIUsesConfiguredWorkflowAndExplicitSelectorWins(t *testing.T) {
 	assertWorkflow([]string{"status", "-C", repo.Root}, "configured-workflow")
 	assertWorkflow([]string{"status", "explicit", "-C", repo.Root}, "explicit-workflow")
 	assertWorkflow([]string{"status", "-f", explicitPath, "-C", repo.Root}, "explicit-workflow")
+	selection, found, err := store.Read()
+	if err != nil || !found || selection.Current != "active" {
+		t.Fatalf("active selection after explicit selectors = %+v, found %v, err %v", selection, found, err)
+	}
 }
 
 func TestExplicitSelectorOverridesConfiguredStatusAll(t *testing.T) {
@@ -142,6 +152,27 @@ func TestExplicitSelectorOverridesConfiguredStatusAll(t *testing.T) {
 	}
 	if status["workflow"] != "explicit-workflow" {
 		t.Fatalf("workflow = %v", status["workflow"])
+	}
+}
+
+func TestConfiguredStatusAllIgnoresActiveSelection(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", "active.yaml"), "active-workflow")
+	writeCLIConfig(t, repo.Root, "[status]\nall = true\njson = true\n")
+	if err := newSelectionStore(repo).Select("active"); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "-C", repo.Root})
+	})
+	if !strings.Contains(output, `"workflows":[]`) || strings.Contains(output, `"workflow":"active-workflow"`) {
+		t.Fatalf("configured status --all output = %q", output)
 	}
 }
 

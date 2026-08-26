@@ -1,6 +1,8 @@
 package agentflowcli
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
+	"github.com/tdeshazo/agentflow/internal/observability"
 )
 
 func TestSelectionStoreReadWriteAndReplace(t *testing.T) {
@@ -175,6 +178,214 @@ func TestActiveSelectionIsAWorkflowCommandDefault(t *testing.T) {
 	if !strings.Contains(output, `"workflow":"selected-workflow"`) {
 		t.Fatalf("status using active selection = %q", output)
 	}
+}
+
+func TestActiveSelectionFallsBackForEveryWorkflowCommand(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	workflowPath := filepath.Join(repo.Root, ".agentflow", "workflows", "active.yaml")
+	writeCLIWorkflow(t, workflowPath, "active")
+	store := newSelectionStore(repo)
+	if err := store.Select("active"); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHome := workflowHomeDirectory
+	originalStart := detachedStart
+	t.Cleanup(func() {
+		workflowHomeDirectory = originalHome
+		detachedStart = originalStart
+	})
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	statusOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--json", "-C", repo.Root})
+	})
+	if !strings.Contains(statusOutput, `"workflow":"active"`) {
+		t.Fatalf("status using active selection = %q", statusOutput)
+	}
+
+	var validationOutput bytes.Buffer
+	if err := runArgsWithIO([]string{"validate", "-C", repo.Root}, strings.NewReader(""), &validationOutput); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(validationOutput.String(), "valid and executable") {
+		t.Fatalf("validation using active selection = %q", validationOutput.String())
+	}
+
+	planOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"plan", "--expanded", "-C", repo.Root})
+	})
+	if !strings.Contains(planOutput, "resolvedLifecycle:") {
+		t.Fatalf("plan using active selection = %q", planOutput)
+	}
+
+	if err := runArgs([]string{"reset", "-C", repo.Root}); err != nil {
+		t.Fatalf("reset using active selection: %v", err)
+	}
+
+	var childArgs []string
+	detachedStart = func(cmd *exec.Cmd) error {
+		childArgs = append([]string(nil), cmd.Args[1:]...)
+		cmd.Process = &os.Process{Pid: 12345}
+		return nil
+	}
+	if err := runArgs([]string{"run", "--detach", "-C", repo.Root}); err != nil {
+		t.Fatalf("run using active selection: %v", err)
+	}
+	if !containsArgumentPair(childArgs, "-f", workflowPath) {
+		t.Fatalf("detached active workflow args = %#v", childArgs)
+	}
+
+	if err := gitstate.NewStore(repo, "active").SetJSON(
+		gitstate.DescriptorRecord,
+		gitstate.NewDescriptor("active", "", gitstate.RecordNames{}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	logStore, err := observability.Open(repo, "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logStore.Close()
+	if err := logStore.Event("phase_start", map[string]string{"phase": "active"}); err != nil {
+		t.Fatal(err)
+	}
+	logsOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"logs", "-C", repo.Root})
+	})
+	if !strings.Contains(logsOutput, `"phase":"active"`) {
+		t.Fatalf("logs using active selection = %q", logsOutput)
+	}
+
+	selection, found, err := store.Read()
+	if err != nil || !found || selection.Current != "active" {
+		t.Fatalf("active selection after one-off commands = %+v, found %v, err %v", selection, found, err)
+	}
+}
+
+func TestLogsSelectorsOverrideActiveSelection(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	for _, selector := range []string{"active", "configured", "explicit"} {
+		writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", selector+".yaml"), selector)
+		if err := gitstate.NewStore(repo, selector).SetJSON(
+			gitstate.DescriptorRecord,
+			gitstate.NewDescriptor(selector, "", gitstate.RecordNames{}),
+		); err != nil {
+			t.Fatal(err)
+		}
+		logStore, err := observability.Open(repo, selector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := logStore.Event("phase_start", map[string]string{"phase": selector}); err != nil {
+			t.Fatal(err)
+		}
+		if err := logStore.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCLIConfig(t, repo.Root, "[logs]\nworkflow = \"configured\"\n")
+	store := newSelectionStore(repo)
+	if err := store.Select("active"); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	configuredOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"logs", "-C", repo.Root})
+	})
+	if !strings.Contains(configuredOutput, `"phase":"configured"`) {
+		t.Fatalf("configured logs selector output = %q", configuredOutput)
+	}
+
+	explicitOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"logs", "--workflow", "explicit", "-C", repo.Root})
+	})
+	if !strings.Contains(explicitOutput, `"phase":"explicit"`) {
+		t.Fatalf("explicit logs selector output = %q", explicitOutput)
+	}
+
+	selection, found, err := store.Read()
+	if err != nil || !found || selection.Current != "active" {
+		t.Fatalf("active selection after explicit logs selector = %+v, found %v, err %v", selection, found, err)
+	}
+}
+
+func TestNoActiveSelectionPreservesInteractiveAndNonInteractiveResolution(t *testing.T) {
+	t.Run("interactive picker", func(t *testing.T) {
+		repo := newCLIStatusRepo(t)
+		home := t.TempDir()
+		writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", "selected.yaml"), "selected")
+		if _, found, err := newSelectionStore(repo).Read(); err != nil || found {
+			t.Fatalf("initial active selection = found %v, err %v", found, err)
+		}
+
+		originalInteractive := workflowPickerInteractive
+		originalHome := workflowHomeDirectory
+		t.Cleanup(func() {
+			workflowPickerInteractive = originalInteractive
+			workflowHomeDirectory = originalHome
+		})
+		workflowPickerInteractive = func(io.Reader, io.Writer) bool { return true }
+		workflowHomeDirectory = func() (string, error) { return home, nil }
+
+		var output bytes.Buffer
+		err := runArgsWithIO([]string{"validate", "-C", repo.Root}, strings.NewReader("1\n"), &output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "Select a workflow:") ||
+			!strings.Contains(output.String(), "valid and executable") {
+			t.Fatalf("interactive no-active output = %q", output.String())
+		}
+	})
+
+	t.Run("non-interactive selector error", func(t *testing.T) {
+		repo := newCLIStatusRepo(t)
+		if _, found, err := newSelectionStore(repo).Read(); err != nil || found {
+			t.Fatalf("initial active selection = found %v, err %v", found, err)
+		}
+
+		read := &panicReader{}
+		var output bytes.Buffer
+		err := runArgsWithIO([]string{"validate", "-C", repo.Root}, read, &output)
+		if err == nil || !strings.Contains(err.Error(), "-f workflow YAML is required") ||
+			!strings.Contains(err.Error(), "workflow-name") {
+			t.Fatalf("non-interactive no-active error = %v", err)
+		}
+	})
+}
+
+func TestStaleActiveSelectionGuidesSwitchOrClear(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	if err := newSelectionStore(repo).Select("gone"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, command := range []string{"validate", "logs"} {
+		t.Run(command, func(t *testing.T) {
+			err := runArgs([]string{command, "-C", repo.Root})
+			if err == nil || !strings.Contains(err.Error(), "is stale") ||
+				!strings.Contains(err.Error(), "agentflow switch <workflow-name>") ||
+				!strings.Contains(err.Error(), "agentflow switch --clear") {
+				t.Fatalf("stale active selection error = %v", err)
+			}
+		})
+	}
+}
+
+func containsArgumentPair(args []string, flag, value string) bool {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == flag && args[index+1] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func assertSelectionDoesNotDirtyWorkspace(t *testing.T, repo gitstate.Repo) {
