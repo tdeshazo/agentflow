@@ -130,7 +130,7 @@ func TestWorkflowSwitchRejectsMalformedAndStaleSelection(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"schema_version":1,"current":"nested/workflow"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWorkflowSwitch(repo.Root, nil, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "invalid active workflow selection") {
+	if err := runCurrentWorkflow(repo.Root, os.Stdout); err == nil || !strings.Contains(err.Error(), "invalid active workflow selection") {
 		t.Fatalf("malformed selection error = %v", err)
 	}
 	if err := store.Clear(); err != nil {
@@ -139,7 +139,7 @@ func TestWorkflowSwitchRejectsMalformedAndStaleSelection(t *testing.T) {
 	if err := store.Select("gone"); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWorkflowSwitch(repo.Root, nil, false, os.Stdout); err == nil || !strings.Contains(err.Error(), "is stale") {
+	if err := runWorkflows(repo.Root, os.Stdout); err == nil || !strings.Contains(err.Error(), "is stale") {
 		t.Fatalf("stale selection error = %v", err)
 	}
 }
@@ -162,6 +162,105 @@ func TestWorkflowSwitchPreviousUsesLogicalSelectors(t *testing.T) {
 	selection, found, err := newSelectionStore(repo).Read()
 	if err != nil || !found || selection.Current != "first" || selection.Previous != "second" {
 		t.Fatalf("selection after CLI switch - = %+v, found %v, err %v", selection, found, err)
+	}
+}
+
+func TestWorkflowSwitchWithoutSelectorUsesPicker(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", "selected.yaml"), "selected")
+
+	originalInteractive := workflowPickerInteractive
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() {
+		workflowPickerInteractive = originalInteractive
+		workflowHomeDirectory = originalHome
+	})
+	workflowPickerInteractive = func(io.Reader, io.Writer) bool { return true }
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	var output bytes.Buffer
+	if err := runArgsWithIO([]string{"switch", "-C", repo.Root}, strings.NewReader("1\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "Select a workflow:\n1. selected (repository)\nEnter a number: selected\n"; got != want {
+		t.Fatalf("switch picker output = %q, want %q", got, want)
+	}
+	selection, found, err := newSelectionStore(repo).Read()
+	if err != nil || !found || selection.Current != "selected" {
+		t.Fatalf("selection after picker = %+v, found %v, err %v", selection, found, err)
+	}
+}
+
+func TestWorkflowSwitchWithoutSelectorFailsWithoutTerminal(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	originalInteractive := workflowPickerInteractive
+	t.Cleanup(func() { workflowPickerInteractive = originalInteractive })
+	workflowPickerInteractive = func(io.Reader, io.Writer) bool { return false }
+
+	err := runArgsWithIO([]string{"switch", "-C", repo.Root}, &panicReader{}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "workflow selector is required") || !strings.Contains(err.Error(), "agentflow switch workflow-name") {
+		t.Fatalf("non-interactive switch error = %v", err)
+	}
+}
+
+func TestCheckoutCurrentAndWorkflowsCommands(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	for _, selector := range []string{"beta", "alpha"} {
+		writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", selector+".yaml"), selector)
+	}
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	if err := runArgs([]string{"checkout", "alpha", "-C", repo.Root}); err != nil {
+		t.Fatal(err)
+	}
+	var current bytes.Buffer
+	if err := runArgsWithIO([]string{"current", "-C", repo.Root}, strings.NewReader(""), &current); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := current.String(), "alpha\n"; got != want {
+		t.Fatalf("current output = %q, want %q", got, want)
+	}
+
+	var workflows bytes.Buffer
+	if err := runArgsWithIO([]string{"workflows", "-C", repo.Root}, strings.NewReader(""), &workflows); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := workflows.String(), "* alpha\n  beta\n"; got != want {
+		t.Fatalf("workflows output = %q, want %q", got, want)
+	}
+
+	if err := runArgs([]string{"checkout", "--clear", "-C", repo.Root}); err != nil {
+		t.Fatal(err)
+	}
+	current.Reset()
+	if err := runArgsWithIO([]string{"current", "-C", repo.Root}, strings.NewReader(""), &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Len() != 0 {
+		t.Fatalf("current without selection = %q", current.String())
+	}
+}
+
+func TestCurrentReportsStoredStaleSelectionAndWorkflowsRejectsIt(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	if err := newSelectionStore(repo).Select("gone"); err != nil {
+		t.Fatal(err)
+	}
+
+	var current bytes.Buffer
+	if err := runArgsWithIO([]string{"current", "-C", repo.Root}, strings.NewReader(""), &current); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := current.String(), "gone\n"; got != want {
+		t.Fatalf("current stale output = %q, want %q", got, want)
+	}
+	err := runArgsWithIO([]string{"workflows", "-C", repo.Root}, strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "is stale") {
+		t.Fatalf("stale workflows error = %v", err)
 	}
 }
 

@@ -16,11 +16,38 @@ import (
 var workflowPickerInteractive = clioutput.IsInteractive
 
 func pickWorkflow(repoRoot string, in io.Reader, out io.Writer, homeDir func() (string, error)) (string, error) {
-	discovery, err := workflow.DiscoverFiles(repoRoot, homeDir)
+	file, err := pickDiscoveredWorkflow(repoRoot, in, out, homeDir)
 	if err != nil {
 		return "", err
 	}
-	return selectWorkflow(discovery, in, clioutput.NewPresenter(out))
+	return file.Path, nil
+}
+
+// pickWorkflowSelector presents the common discovery picker and returns its
+// logical name, so switch can persist a selector rather than a file path.
+func pickWorkflowSelector(repoRoot string, in io.Reader, out io.Writer, homeDir func() (string, error)) (string, error) {
+	file, err := pickDiscoveredWorkflow(repoRoot, in, out, homeDir)
+	if err != nil {
+		return "", err
+	}
+	return file.Name, nil
+}
+
+func pickDiscoveredWorkflow(repoRoot string, in io.Reader, out io.Writer, homeDir func() (string, error)) (workflow.DiscoveryFile, error) {
+	discovery, err := workflow.DiscoverFiles(repoRoot, homeDir)
+	if err != nil {
+		return workflow.DiscoveryFile{}, err
+	}
+	path, err := selectWorkflow(discovery, in, clioutput.NewPresenter(out))
+	if err != nil {
+		return workflow.DiscoveryFile{}, err
+	}
+	for _, file := range discovery.Files {
+		if file.Path == path {
+			return file, nil
+		}
+	}
+	return workflow.DiscoveryFile{}, fmt.Errorf("selected workflow %q was not discovered", path)
 }
 
 func selectWorkflow(discovery workflow.Discovery, in io.Reader, presenter clioutput.Presenter) (string, error) {
@@ -52,4 +79,8 @@ func selectWorkflow(discovery workflow.Discovery, in io.Reader, presenter cliout
 
 func missingWorkflowSelectorError(cmd string) error {
 	return fmt.Errorf("-f workflow YAML is required when no selector is supplied; use -f workflow.yaml or agentflow %s workflow-name", cmd)
+}
+
+func missingWorkflowSwitchSelectorError() error {
+	return fmt.Errorf("workflow selector is required when no selector is supplied; use agentflow switch workflow-name")
 }

@@ -45,16 +45,24 @@ a sorted numbered workflow picker and accepts one selection line; redirected
 or piped commands instead fail with the selector usage error and never read
 stdin.
 
-`agentflow switch <workflow-name>` sets a repository-local active selector for
-later selector-less `run`, `status`, `reset`, `validate`, `plan`, and `logs`
-commands. It is lower precedence than an explicit selector or configured
-default; `status --all` always ignores it.
-`agentflow switch -` swaps back to the previous selector, `agentflow switch`
-prints the current selector, and `agentflow switch --clear` removes it. The
-selection records only logical discovery names and is validated against the
-current discovery scopes whenever it is used; a removed workflow is reported
-as stale, with guidance to switch to a discovered workflow or clear the
-selection, rather than silently selecting another workflow.
+`agentflow switch <workflow-name>` sets a repository/worktree-local active
+selector for later selector-less `run`, `status`, `reset`, `validate`, `plan`,
+and `logs` commands. `agentflow checkout ...` is an exact compatibility alias.
+With no name, `switch` opens the same sorted picker used by selector-less
+workflow commands when connected to a terminal; without a terminal it reports
+the normal selector-required error without reading stdin. `agentflow switch -`
+swaps back to the previous selector, and `agentflow switch --clear` removes
+both current and previous selection.
+
+`agentflow current` writes only the stored current logical name, and writes
+nothing with success when there is none. `agentflow workflows` writes the
+discovered logical names in deterministic order, marking the active one with
+`*`, like a branch list. The selection records logical discovery names only.
+Commands that need to resolve the selected workflow reject a removed or
+otherwise unavailable name as stale, with guidance to switch to a discovered
+workflow or clear the selection, rather than silently selecting another
+workflow. `current` intentionally reports the stored name even when stale so a
+shell script can inspect and clear it.
 
 AgentFlow reads optional defaults from `<repository>/.agentflow/config.toml`
 and `~/.agentflow/config.toml`. An explicit `-C` selects the repository config;
@@ -124,7 +132,12 @@ go run . logs --workflow workflow-name -C /path/to/repo --follow
 go run . reset  -f workflow.yaml -C /path/to/repo
 go run . plan --expanded -f workflow.yaml
 go run . switch code-styling -C /path/to/repo
+go run . switch -C /path/to/repo
 go run . switch - -C /path/to/repo
+go run . checkout code-styling -C /path/to/repo
+go run . current -C /path/to/repo
+go run . workflows -C /path/to/repo
+go run . logs -C /path/to/repo
 ```
 
 Runtime parameters can be overridden with repeated `--set key=value` flags.
@@ -148,9 +161,12 @@ or imply an actor's `may_commit` authority.
 The active CLI workflow selector is intentionally separate from the
 Git-backed execution records below. It is a small JSON file under Git's
 worktree-specific metadata path (resolved with `git rev-parse --git-path`),
-not an AgentFlow ref or workflow evidence. This keeps selection out of the
-implementation workspace and gives linked worktrees independent selections.
-It never initializes, resumes, accepts, or resets workflow execution state.
+not an AgentFlow ref or workflow evidence. Selection is therefore scoped to
+the repository worktree named by `-C` (or the current worktree), while
+repository-local workflow discovery still shadows the shared home scope. This
+keeps selection out of the implementation workspace and gives linked
+worktrees independent selections. It never initializes, resumes, accepts, or
+resets workflow execution state.
 
 The interpreter does not maintain a separate state database. It stores durable
 workflow evidence in Git's own object database and namespaced refs:

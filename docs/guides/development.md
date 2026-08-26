@@ -66,6 +66,34 @@ Use the expanded plan when reviewing concise authoring defaults. It shows the
 normalized executable lifecycle and safety/repair/completion contract without
 calling an actor or a mutable tool.
 
+## Selecting a repository workflow
+
+For repeated work in one repository worktree, select a discovered workflow by
+logical name instead of repeating `-f`:
+
+```sh
+go run . switch feature -C /path/to/repository
+go run . current -C /path/to/repository
+go run . workflows -C /path/to/repository
+go run . validate -C /path/to/repository
+go run . logs -C /path/to/repository
+```
+
+`switch` with no name opens the usual terminal picker; use `switch -` to swap
+to the previous selection, `switch --clear` to return to the legacy
+no-selection path, or `checkout` as a compatibility alias for `switch`.
+Discovery is deterministic: repository workflows under
+`.agentflow/workflows/` shadow names from `~/.agentflow/workflows/`, and
+`workflows` marks the active name with `*`.
+
+The selector is local Git worktree metadata, not workflow state. Different
+linked worktrees can therefore select different workflows. Selector precedence
+is explicit command-line selector, repository config, home config, then active
+selection; `status --all` ignores it. A deleted or unavailable active workflow
+is reported as stale by commands that resolve it. Use `current` to inspect the
+stored name, then switch to an available name or clear it; AgentFlow never
+silently substitutes another workflow.
+
 ## Failure diagnosis
 
 - A validation error before execution usually means malformed YAML, an unknown

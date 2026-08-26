@@ -100,6 +100,10 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		return usage()
 	}
 	cmd := args[0]
+	if cmd == "checkout" {
+		// checkout is intentionally a complete compatibility alias for switch.
+		cmd = "switch"
+	}
 	configRoot, err := discoveryRoot(commandLineRepo(args[1:]))
 	if err != nil {
 		return err
@@ -181,6 +185,8 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			}
 		case "logs":
 			return fmt.Errorf("logs does not accept a positional workflow selector; use --workflow")
+		case "current", "workflows":
+			return fmt.Errorf("%s does not accept a positional workflow selector", cmd)
 		default:
 			return fmt.Errorf("%s does not accept a positional workflow selector", cmd)
 		}
@@ -228,7 +234,18 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if *clearSelection && len(positional) > 0 {
 			return fmt.Errorf("switch --clear does not accept a workflow selector")
 		}
-		return runWorkflowSwitch(*repo, positional, *clearSelection, out)
+		return runWorkflowSwitchWithIO(*repo, positional, *clearSelection, in, out)
+	}
+	if cmd == "current" || cmd == "workflows" {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "clear", "set"} {
+			if explicit[name] {
+				return fmt.Errorf("--%s is not supported with %s", name, cmd)
+			}
+		}
+		if cmd == "current" {
+			return runCurrentWorkflow(*repo, out)
+		}
+		return runWorkflows(*repo, out)
 	}
 	if cmd == "status" && *all {
 		return runAllStatus(*repo, *jsonOutput)
@@ -423,13 +440,20 @@ func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(out, "       agentflow switch [workflow-name|-] [-C repo] | agentflow switch --clear [-C repo]")
+	fmt.Fprintln(out, "       agentflow checkout ...  # compatibility alias for switch")
+	fmt.Fprintln(out, "       agentflow current [-C repo]")
+	fmt.Fprintln(out, "       agentflow workflows [-C repo]")
 	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
-	fmt.Fprintln(out, "       agentflow logs --workflow name [-C repo] [--tail n|--follow]")
+	fmt.Fprintln(out, "       agentflow logs [--workflow name] [-C repo] [--tail n|--follow]")
 	fmt.Fprintln(out, "       defaults load from <repo>/.agentflow/config.toml and ~/.agentflow/config.toml")
 }
 
 func runWorkflowSwitch(repoRoot string, positional []string, clear bool, out io.Writer) error {
+	return runWorkflowSwitchWithIO(repoRoot, positional, clear, os.Stdin, out)
+}
+
+func runWorkflowSwitchWithIO(repoRoot string, positional []string, clear bool, in io.Reader, out io.Writer) error {
 	repo, err := targetRepo(repoRoot)
 	if err != nil {
 		return err
@@ -443,17 +467,17 @@ func runWorkflowSwitch(repoRoot string, positional []string, clear bool, out io.
 		return nil
 	}
 	if len(positional) == 0 {
-		selection, found, err := store.Read()
+		if !workflowPickerInteractive(in, out) {
+			return missingWorkflowSwitchSelectorError()
+		}
+		selector, err := pickWorkflowSelector(repo.Root, in, out, workflowHomeDirectory)
 		if err != nil {
 			return err
 		}
-		if !found {
-			return fmt.Errorf("no active workflow selection")
+		if err := store.Select(selector); err != nil {
+			return err
 		}
-		if _, err := workflow.ResolveFile(repo.Root, selection.Current, workflowHomeDirectory); err != nil {
-			return fmt.Errorf("active workflow selection %q is stale: %w", selection.Current, err)
-		}
-		fmt.Fprintln(out, selection.Current)
+		fmt.Fprintln(out, selector)
 		return nil
 	}
 
@@ -484,6 +508,52 @@ func runWorkflowSwitch(repoRoot string, positional []string, clear bool, out io.
 		return err
 	}
 	fmt.Fprintln(out, selector)
+	return nil
+}
+
+// runCurrentWorkflow emits only the stored logical selector. It deliberately
+// does not resolve discovery: it remains useful for shell scripts to identify
+// and clear a stale selection.
+func runCurrentWorkflow(repoRoot string, out io.Writer) error {
+	repo, err := targetRepo(repoRoot)
+	if err != nil {
+		return err
+	}
+	selection, found, err := newSelectionStore(repo).Read()
+	if err != nil {
+		return err
+	}
+	if found {
+		fmt.Fprintln(out, selection.Current)
+	}
+	return nil
+}
+
+func runWorkflows(repoRoot string, out io.Writer) error {
+	repo, err := targetRepo(repoRoot)
+	if err != nil {
+		return err
+	}
+	discovery, err := workflow.DiscoverFiles(repo.Root, workflowHomeDirectory)
+	if err != nil {
+		return err
+	}
+	selection, found, err := newSelectionStore(repo).Read()
+	if err != nil {
+		return err
+	}
+	if found {
+		if _, err := workflow.ResolveFile(repo.Root, selection.Current, workflowHomeDirectory); err != nil {
+			return staleActiveWorkflowSelectionError(selection.Current, err)
+		}
+	}
+	for _, file := range discovery.Files {
+		marker := " "
+		if found && file.Name == selection.Current {
+			marker = "*"
+		}
+		fmt.Fprintf(out, "%s %s\n", marker, file.Name)
+	}
 	return nil
 }
 
