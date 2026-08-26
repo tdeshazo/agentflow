@@ -301,9 +301,21 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			}
 		}
 	}
+	logWorkflowName := selector
 	if selectedFromState {
-		if _, err := workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory); err != nil {
+		activeWorkflowFile, err := workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory)
+		if err != nil {
 			return staleActiveWorkflowSelectionError(selector, err)
+		}
+		if cmd == "logs" {
+			document, decodeErr := workflow.Decode(activeWorkflowFile)
+			if decodeErr != nil {
+				return fmt.Errorf("active workflow selection %q cannot load workflow: %w", selector, decodeErr)
+			}
+			if document == nil || document.Workflow == nil || document.Workflow.Metadata.Name == "" {
+				return fmt.Errorf("active workflow selection %q has no runtime workflow name", selector)
+			}
+			logWorkflowName = document.Workflow.Metadata.Name
 		}
 	}
 	if cmd == "logs" {
@@ -313,7 +325,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if selector == "" {
 			return fmt.Errorf("logs requires --workflow")
 		}
-		return runLogs(repoRoot, selector, *tail, *follow)
+		return runLogs(repoRoot, logWorkflowName, *tail, *follow)
 	}
 	if selector != "" {
 		workflowFile, err = workflow.ResolveFile(repoRoot, selector, workflowHomeDirectory)

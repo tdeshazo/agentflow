@@ -363,6 +363,43 @@ func TestActiveSelectionFallsBackForEveryWorkflowCommand(t *testing.T) {
 	}
 }
 
+func TestActiveSelectionLogsUseWorkflowRuntimeName(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	writeCLIWorkflow(t, filepath.Join(repo.Root, ".agentflow", "workflows", "logical.yaml"), "runtime")
+	if err := runWorkflowSwitch(repo.Root, []string{"logical"}, false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := gitstate.NewStore(repo, "runtime").SetJSON(
+		gitstate.DescriptorRecord,
+		gitstate.NewDescriptor("runtime", "", gitstate.RecordNames{}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	logStore, err := observability.Open(repo, "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := logStore.Event("phase_start", map[string]string{"phase": "runtime"}); err != nil {
+		_ = logStore.Close()
+		t.Fatal(err)
+	}
+	if err := logStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"logs", "-C", repo.Root})
+	})
+	if !strings.Contains(output, `"phase":"runtime"`) {
+		t.Fatalf("active logical selector logs output = %q", output)
+	}
+}
+
 func TestLogsSelectorsOverrideActiveSelection(t *testing.T) {
 	repo := newCLIStatusRepo(t)
 	home := t.TempDir()
@@ -412,6 +449,40 @@ func TestLogsSelectorsOverrideActiveSelection(t *testing.T) {
 	selection, found, err := store.Read()
 	if err != nil || !found || selection.Current != "active" {
 		t.Fatalf("active selection after explicit logs selector = %+v, found %v, err %v", selection, found, err)
+	}
+}
+
+func TestLogsExplicitSelectorDoesNotRequireWorkflowDefinition(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	home := t.TempDir()
+	store := gitstate.NewStore(repo, "descriptor-only")
+	if err := store.SetJSON(
+		gitstate.DescriptorRecord,
+		gitstate.NewDescriptor("descriptor-only", "", gitstate.RecordNames{}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	logStore, err := observability.Open(repo, "descriptor-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := logStore.Event("phase_start", map[string]string{"phase": "legacy"}); err != nil {
+		_ = logStore.Close()
+		t.Fatal(err)
+	}
+	if err := logStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	originalHome := workflowHomeDirectory
+	t.Cleanup(func() { workflowHomeDirectory = originalHome })
+	workflowHomeDirectory = func() (string, error) { return home, nil }
+
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"logs", "--workflow", "descriptor-only", "-C", repo.Root})
+	})
+	if !strings.Contains(output, `"phase":"legacy"`) {
+		t.Fatalf("descriptor-only logs output = %q", output)
 	}
 }
 
