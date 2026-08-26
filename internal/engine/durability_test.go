@@ -1028,7 +1028,7 @@ func TestCheckpointExpandsDefaultCommitSubjectLabelBeforeFormatting(t *testing.T
 	}
 
 	phase := &workflow.Phase{Label: "implement-{{ parameters.issue_id }}"}
-	if err := e.checkpoint(phase.Label, phase); err != nil {
+	if err := e.checkpoint("checkpoint", phase); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Implement agentflow 123" {

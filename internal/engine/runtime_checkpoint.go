@@ -41,6 +41,9 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 			if msg == "" {
 				msg = label
 				if p != nil {
+					if p.Label != "" {
+						msg = p.Label
+					}
 					if expanded, err := e.context(p).Expand(msg); err == nil {
 						msg = expanded
 					}
