@@ -34,6 +34,8 @@ Choose the requested mode:
 2. Select the simplest fit: a single implementation phase; implementation plus audit; a criterion workflow; a human-gated workflow; bookkeeping/completion; or, only when required, a dynamic criterion loop. Prefer `spec.defaults` with `spec.lifecycle.policy: safe-resume` for new workflows.
 3. Declare sections in dependency order: metadata; parameters/paths; workspace/state; defaults/agents; tools; preconditions; validation; progress; phases; human gates; completion; flow. Use stable IDs.
 4. Separate authority: agents attempt work; workspace policy controls mutations; deterministic validations accept phases; humans provide only necessary human evidence; completion owns terminal state.
+   Require a concrete actor or engine-owned transition for every allowlisted
+   path; remove copied template paths that no phase needs.
 5. Bound each prompt to its outcome, scope, local checks, exclusions, and whether a diff is required. Keep acceptance logic outside the prompt.
 6. Give every mutable AI phase a resolved deterministic validation gate. Give every validation at least one deterministic step. Use no repair for hard gates or a bounded `repair: once`; rerun the gate after repair.
 7. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
@@ -43,8 +45,11 @@ Choose the requested mode:
     accepted-phase resume, completion retry, already-complete invocation, and
     reset. Unconditional preconditions must remain true in every state that can
     safely resume. Use `scope: initialization` for mutable facts required only
-    when establishing fresh durable state, and documented phase/flow
-    eligibility for actor dispatch.
+    when establishing fresh durable state. Let completed-phase evidence handle
+    ordinary resume; do not let an ambient progress checkbox skip required
+    phases. If already-satisfied reconciliation is required, make it an
+    explicit operator-selected mode with complementary deterministic starting
+    preconditions.
 11. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
 For protected content, declare `spec.workspace.mutationPolicy.integrity` as a
@@ -180,6 +185,8 @@ Check for:
 - unknown or undocumented fields/types;
 - unresolved or dangling named references;
 - mutable paths that bypass `mutationPolicy.allowed`;
+- allowlisted paths with no declared actor outcome or engine-owned transition,
+  which grant unnecessary mutation authority;
 - protected content not covered by an integrity boundary;
 - ignored local control files (including the selected workflow, repository
   instructions, and authoring skills) that affect execution without an
@@ -188,6 +195,11 @@ Check for:
 - mutable initial facts left as unconditional preconditions instead of
   `scope: initialization`, causing accepted-phase or completion retries to
   fail;
+- required implementation or review phases all guarded by an ambient
+  `not progress.is_checked(...)` condition, allowing an externally or
+  prematurely checked item to bypass missing phase evidence; use durable phase
+  markers for ordinary resume and an explicit, deterministically gated
+  reconciliation mode when needed;
 - named completion assertions whose referenced tool type is not documented as
   executable in assertion context;
 - agent-controlled success without deterministic validation;
@@ -198,7 +210,8 @@ Check for:
 - criterion phases without stable criteria or progress invariants;
 - workflows claiming the "next" roadmap criterion without deterministic
   preconditions for stable roadmap order/dependencies and an
-  initialization-scoped exact-pending eligibility check;
+  initialization-scoped exact-pending eligibility check, unless an explicit
+  reconciliation mode instead proves the exact already-checked target;
 - actor edits to engine-owned progress;
 - single-criterion completion without deterministic evidence that its exact
   target is checked (when `progress-empty` would incorrectly require later

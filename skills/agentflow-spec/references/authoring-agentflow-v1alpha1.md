@@ -106,7 +106,9 @@ Supported values when explicitly set:
 - `spec.temp.cleanup: on-exit`
 
 For mutable workflows, declare `workspace.mutationPolicy.allowed`. Treat it as
-an allowlist, not documentation.
+an authority boundary, not documentation. Every entry should serve a declared
+actor outcome or engine-owned transition; remove unused paths inherited from a
+template.
 
 Integrity modes:
 
@@ -268,15 +270,19 @@ only on invocations selected by its scope.
 When a workflow claims to implement the "next" roadmap item or criterion,
 bind that claim before actor execution. Use deterministic `file-contains`
 preconditions for authoritative roadmap order and dependencies that remain true
-after this workflow succeeds. Use an initialization-scoped precondition for the
-exact pending target, put actor dispatch under documented progress-aware phase
-eligibility, and prove its checked state at completion. A prompt that says
-"next" is actor guidance, not scheduling evidence.
+after this workflow succeeds. In the ordinary strict mode, use an
+initialization-scoped precondition for the exact pending target, run every
+required phase, let durable completed-phase markers handle resume, and prove
+the target's checked state at completion. A prompt that says "next" is actor
+guidance, not scheduling evidence.
 
 Preconditions default to unconditional invocation checks, including on a safe
 retry. Do not use the default scope for a fact that an accepted phase is
-designed to make false. Bind the initial pending state and actor eligibility
-separately:
+designed to make false. Do not guard required phases with ambient
+`not progress.is_checked(...)` conditions: an external or premature checkbox
+change between invocations could then bypass phases that have no durable
+completed marker. A strict next-criterion workflow needs no progress condition
+on its required phases:
 
 ```yaml
 preconditions:
@@ -291,14 +297,51 @@ phases:
     kind: criterion
     criterionID: target
     advanceProgress: true
-    if: "{{ not progress.is_checked('target') }}"
     prompt: Implement only the target criterion; do not edit engine-owned progress.
 ```
 
-Keep downstream audits or completion steps outside that condition when they
-must run after the criterion closes. Safe-resume's durable phase evidence then
-skips already accepted phases, while completion validation proves the exact
-checked target.
+Safe-resume's durable phase evidence skips already accepted phases, while a
+missing required phase still runs and cannot borrow authority from the
+checkbox.
+
+Some workflows must intentionally reconcile a target that is already checked
+but lacks compatible completion state, for example after an operator-approved
+reset following a workflow-definition change. Make that an explicit mode, not
+an inference from ambient progress. Default the mode off, pair both values with
+deterministic initialization preconditions, condition all actor phases on the
+mode, and retain exact checked-target completion evidence:
+
+```yaml
+parameters:
+  reconcile_completed_target:
+    type: boolean
+    default: false
+
+preconditions:
+  - id: target-pending
+    type: file-contains
+    scope: initialization
+    when: "{{ not parameters.reconcile_completed_target }}"
+    path: docs/acceptance.md
+    text: "- [ ] Target criterion"
+  - id: target-already-checked
+    type: file-contains
+    scope: initialization
+    when: "{{ parameters.reconcile_completed_target }}"
+    path: docs/acceptance.md
+    text: "- [x] Target criterion"
+
+phases:
+  - id: implement-target
+    kind: criterion
+    criterionID: target
+    advanceProgress: true
+    if: "{{ not parameters.reconcile_completed_target }}"
+```
+
+The explicit input becomes part of run identity. Ordinary retries use the same
+input and completed markers; reconciliation requires an intentional fresh run
+or reset and cannot silently activate because the checkbox changed.
 
 Review these states before running a mutable workflow:
 
@@ -309,7 +352,7 @@ Review these states before running a mutable workflow:
 | Phase accepted and checkpointed | The accepted phase is skipped; changed progress does not block downstream work. |
 | Completion failed after checkpoint | Retry reaches completion without rerunning accepted actors or requiring the target to become unchecked. |
 | Workflow already complete | Invocation performs no new mutation. |
-| State reset | Clean-state rules hold; the reset invocation re-evaluates initialization-scoped eligibility before establishing fresh state. |
+| State reset | Clean-state rules hold; strict mode re-proves the pending target, while an explicitly selected reconciliation mode proves the already-checked target before skipping actors. |
 
 ### Lifecycle
 
@@ -1007,7 +1050,9 @@ Authoring loop:
    checkpoint, human-gate, and completion semantics.
 7. Evaluate the preconditions and phase/flow eligibility for fresh,
    interrupted, accepted-phase, completion-failed, complete, and reset states;
-   no safe retry may depend on mutable progress reverting.
+   no safe retry may depend on mutable progress reverting, and no premature
+   progress change may skip a required phase without durable completion
+   evidence or an explicitly selected reconciliation mode.
 8. Confirm every named tool is supported in its invocation context, especially
    completion assertions; name resolution alone is insufficient.
 9. Confirm every integrity pattern matches content that enforcement can
@@ -1037,7 +1082,15 @@ Avoid these:
 - making the target's pending state an `always` precondition instead of an
   initialization-scoped eligibility check, even though the workflow itself will
   check it before a safe completion retry;
+- guarding every required phase with `not progress.is_checked(...)`, which can
+  turn a premature or external checkbox change into authority to bypass phases
+  that never produced durable completion evidence;
+- silently treating an already-checked target as reconciliation authority
+  instead of requiring an explicit mode with deterministic checked-state
+  preconditions;
 - broadening `mutationPolicy.allowed` just to make validation pass;
+- retaining template allowlist entries that no declared phase or engine-owned
+  transition needs;
 - leaving ignored local workflows, instructions, or skills that affect
   execution without explicit integrity rules, or relying on a zero-match rule;
 - treating an integrity rule for a symlink as protection for the external

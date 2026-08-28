@@ -114,7 +114,10 @@ Can require clean state:
 
 ### Mutation policy
 
-`mutationPolicy.allowed` is an allowlist for implementation changes. Anything outside it should fail scope validation unless explicitly ignored as a local control file.
+`mutationPolicy.allowed` is an allowlist for implementation changes. Anything
+outside it should fail scope validation unless explicitly ignored as a local
+control file. Each allowed path should have a concrete actor or engine-owned
+consumer; unused template entries are unnecessary authority.
 
 ### Integrity modes
 
@@ -194,10 +197,18 @@ A workflow that claims to own the "next" roadmap item should make roadmap
 order and dependency completion deterministic always-scoped preconditions when
 those facts remain true after success. A target's pending state is mutable
 progress and must not be an always-scoped precondition in a safe-resume
-workflow. Use `scope: initialization` to bind its fresh starting state,
-documented progress-aware phase/flow eligibility before actor dispatch, and
-exact checked-target evidence at completion. Actor prompts do not establish
-scheduling eligibility.
+workflow. In strict mode, use `scope: initialization` to bind its fresh
+starting state, execute every required phase, rely on completed-phase markers
+for ordinary resume, and require exact checked-target evidence at completion.
+Actor prompts do not establish scheduling eligibility.
+
+An ambient `not progress.is_checked(...)` phase condition is not durable phase
+evidence. If the target changes externally or prematurely between invocations,
+that condition can skip required work whose completed marker is absent. When a
+workflow must reconcile an already-checked target, use an explicit
+operator-selected parameter with complementary initialization preconditions
+for pending and checked states; condition actors on that parameter rather than
+inferring reconciliation from the checkbox.
 
 Unconditional preconditions must hold on a fresh run, active-phase recovery,
 accepted-phase resume, and completion retry. In particular, after a phase has
@@ -271,7 +282,10 @@ Typical `after` operations:
 5. write completed-phase marker at current `HEAD`;
 6. clear active-phase state.
 
-Skip behavior may use completed markers or already-checked criteria. Review skip semantics carefully because they can bypass validation if configured loosely.
+Prefer completed markers for ordinary resume. Already-checked skip behavior is
+safe only when the workflow has deterministically established that
+reconciliation is intentional; otherwise it can bypass required validation
+and missing phase evidence.
 
 ## `spec.phases`
 
@@ -414,3 +428,6 @@ The examples embody these general invariants:
     protect link identity rather than external target contents.
 12. Named tool references are accepted only in invocation contexts that support
     their tool type.
+13. Required phases are skipped only by durable completed evidence or an
+    explicit, deterministically gated reconciliation mode—not merely because
+    ambient progress is already checked.
