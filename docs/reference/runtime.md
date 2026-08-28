@@ -196,8 +196,11 @@ written with `git hash-object -w` and referenced through the same namespace.
 branch/base/integrity records. At initialization it records SHA-256 digests of
 the executable workflow definition, all resolved run parameters, and other
 execution inputs such as the selected workspace and directly referenced
-environment values. The canonical input bytes and parameter values are never
-persisted. On `run`, an existing identity must match before the runtime reuses
+environment values. Integrity baselines retain each rule's aggregate digest
+and content-free repository-relative path digests; file contents are never
+stored. Aggregate-only integrity records written by older runtimes remain
+readable. The canonical input bytes and parameter values are never persisted.
+On `run`, an existing identity must match before the runtime reuses
 active phases,
 checkpoints, repair budgets, human evidence, or completion markers. A changed
 task, model parameter, environment-backed value, or executable workflow
@@ -438,6 +441,10 @@ non-terminal stdout remains compact JSON; both forms end with one newline.
 Actionable failures also include stable `recovery` and `next_action` fields:
 validation failures use `automatic-on-rerun`/`rerun`, while safety failures use
 `operator-action-required`/`reset-or-abandon`.
+When a path-manifest-backed integrity rule fails, status also includes the
+content-free `integrity_rule`, `changed`, `added`, and `removed` fields. These
+lists contain bounded, safe repository-relative paths and are available in
+both single-workflow and repository-wide text and JSON status.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
 

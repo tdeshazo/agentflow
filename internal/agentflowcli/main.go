@@ -660,6 +660,7 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 			presenter.IndentedMetadata("  ", "recovery", status.Recovery, clioutput.StateRole(status.Recovery))
 			presenter.IndentedMetadata("  ", "next_action", status.NextAction, clioutput.StateRole(status.NextAction))
 		}
+		writeStatusIntegrityViolation(presenter, status.IntegrityViolation)
 		completeRole := clioutput.RoleMuted
 		if status.Complete {
 			completeRole = clioutput.RoleSuccess
@@ -675,6 +676,30 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 		}
 	}
 	return nil
+}
+
+func writeStatusIntegrityViolation(presenter clioutput.Presenter, violation *gitstate.IntegrityViolation) {
+	if violation == nil {
+		return
+	}
+	presenter.IndentedMetadata("  ", "integrity_rule", violation.IntegrityRule, clioutput.RoleError)
+	for _, item := range []struct {
+		label string
+		paths []string
+	}{
+		{label: "changed", paths: violation.Changed},
+		{label: "added", paths: violation.Added},
+		{label: "removed", paths: violation.Removed},
+	} {
+		if len(item.paths) == 0 {
+			presenter.IndentedMetadata("  ", item.label, "[]", clioutput.RolePlain)
+			continue
+		}
+		presenter.Line(clioutput.RolePlain, "  %s:", item.label)
+		for _, path := range item.paths {
+			presenter.Line(clioutput.RolePlain, "    - %s", path)
+		}
+	}
 }
 
 func targetRepo(root string) (gitstate.Repo, error) {

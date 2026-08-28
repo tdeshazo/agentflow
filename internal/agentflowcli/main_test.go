@@ -148,7 +148,17 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 			t.Fatal(err)
 		}
 		if name == "beta" {
-			if err := store.SetJSON("active", map[string]any{"phase_id": "implement", "phase_start_commit": head, "failure_kind": "safety"}); err != nil {
+			if err := store.SetJSON("active", map[string]any{
+				"phase_id":           "implement",
+				"phase_start_commit": head,
+				"failure_kind":       "safety",
+				"integrity_violation": map[string]any{
+					"integrity_rule": "roadmap-and-rules-governance",
+					"changed":        []string{"data/mothership/v1.2/rules.yaml"},
+					"added":          []string{},
+					"removed":        []string{},
+				},
+			}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -156,6 +166,11 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	textOutput := captureCLIStdout(t, func() error { return runArgs([]string{"status", "--all", "-C", repo.Root}) })
 	if !strings.Contains(textOutput, "workflow: alpha") || !strings.Contains(textOutput, "workflow: beta") || !strings.Contains(textOutput, "state: ready") || !strings.Contains(textOutput, "recovery: operator-action-required") || !strings.Contains(textOutput, "next_action: reset-or-abandon") {
 		t.Fatalf("status --all text = %s", textOutput)
+	}
+	for _, want := range []string{"integrity_rule: roadmap-and-rules-governance", "changed:\n    - data/mothership/v1.2/rules.yaml", "added: []", "removed: []"} {
+		if !strings.Contains(textOutput, want) {
+			t.Fatalf("status --all text missing %q: %s", want, textOutput)
+		}
 	}
 	if strings.Contains(textOutput, "{\n") {
 		t.Fatalf("non-JSON status was pretty-printed as JSON: %s", textOutput)
@@ -177,6 +192,10 @@ func TestStatusAllCLITextAndJSON(t *testing.T) {
 	}
 	if collection.Workflows[1].State != "safety-failed/terminal" || collection.Workflows[1].Recovery != "operator-action-required" || collection.Workflows[1].NextAction != "reset-or-abandon" {
 		t.Fatalf("status --all recovery metadata = %+v", collection.Workflows[1])
+	}
+	integrity := collection.Workflows[1].IntegrityViolation
+	if integrity == nil || integrity.IntegrityRule != "roadmap-and-rules-governance" || !reflect.DeepEqual(integrity.Changed, []string{"data/mothership/v1.2/rules.yaml"}) || integrity.Added == nil || integrity.Removed == nil {
+		t.Fatalf("status --all integrity metadata = %+v", collection.Workflows[1])
 	}
 }
 

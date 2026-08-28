@@ -93,24 +93,25 @@ type ActivePhase struct {
 	// ActorCompleted is durable evidence that the phase's primary actor
 	// returned successfully. Until it is true, recovery must not let
 	// deterministic validation substitute for the actor invocation.
-	ActorCompleted          bool                `json:"actor_completed"`
-	CheckpointCommit        string              `json:"checkpoint_commit,omitempty"`
-	CheckpointPending       bool                `json:"checkpoint_pending,omitempty"`
-	UncheckedBefore         int                 `json:"unchecked_count_before"`
-	CheckedBefore           []string            `json:"checked_before"`
-	CriteriaBefore          map[string]bool     `json:"criteria_before,omitempty"`
-	ProgressItemsBefore     []ProgressItemState `json:"progress_items_before,omitempty"`
-	TargetCriterionID       string              `json:"target_criterion_id,omitempty"`
-	ProgressAdvancePending  bool                `json:"progress_advance_pending,omitempty"`
-	ProgressAdvanced        bool                `json:"progress_advanced,omitempty"`
-	BookkeepingPending      bool                `json:"bookkeeping_pending,omitempty"`
-	BookkeepingApplied      bool                `json:"bookkeeping_applied,omitempty"`
-	BookkeepingStateDigests map[string][]string `json:"bookkeeping_state_digests,omitempty"`
-	RepairAttempts          map[string]int      `json:"repair_attempts,omitempty"`
-	FailureKind             PhaseFailureKind    `json:"failure_kind,omitempty"`
-	Validation              string              `json:"validation,omitempty"`
-	ValidationError         string              `json:"validation_error,omitempty"`
-	ValidationPassed        bool                `json:"validation_passed,omitempty"`
+	ActorCompleted          bool                         `json:"actor_completed"`
+	CheckpointCommit        string                       `json:"checkpoint_commit,omitempty"`
+	CheckpointPending       bool                         `json:"checkpoint_pending,omitempty"`
+	UncheckedBefore         int                          `json:"unchecked_count_before"`
+	CheckedBefore           []string                     `json:"checked_before"`
+	CriteriaBefore          map[string]bool              `json:"criteria_before,omitempty"`
+	ProgressItemsBefore     []ProgressItemState          `json:"progress_items_before,omitempty"`
+	TargetCriterionID       string                       `json:"target_criterion_id,omitempty"`
+	ProgressAdvancePending  bool                         `json:"progress_advance_pending,omitempty"`
+	ProgressAdvanced        bool                         `json:"progress_advanced,omitempty"`
+	BookkeepingPending      bool                         `json:"bookkeeping_pending,omitempty"`
+	BookkeepingApplied      bool                         `json:"bookkeeping_applied,omitempty"`
+	BookkeepingStateDigests map[string][]string          `json:"bookkeeping_state_digests,omitempty"`
+	RepairAttempts          map[string]int               `json:"repair_attempts,omitempty"`
+	FailureKind             PhaseFailureKind             `json:"failure_kind,omitempty"`
+	Validation              string                       `json:"validation,omitempty"`
+	ValidationError         string                       `json:"validation_error,omitempty"`
+	ValidationPassed        bool                         `json:"validation_passed,omitempty"`
+	IntegrityViolation      *gitstate.IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
 const pendingActorInvocationVersion = 1
@@ -154,8 +155,17 @@ const (
 	PhaseFailureSafety     PhaseFailureKind = "safety"
 )
 
-// IntegrityBaseline is a map of paths to their expected hash values for integrity checking.
-type IntegrityBaseline map[string]string
+// IntegrityRuleBaseline retains the historical aggregate digest and adds
+// content-free path digests so a later violation can identify changed paths.
+type IntegrityRuleBaseline struct {
+	Aggregate string            `json:"aggregate"`
+	Paths     map[string]string `json:"paths,omitempty"`
+}
+
+// IntegrityBaseline maps integrity rule IDs to their durable digests. Its JSON
+// decoder also accepts the legacy map from rule IDs directly to aggregate
+// digest strings.
+type IntegrityBaseline map[string]IntegrityRuleBaseline
 
 var errFlowStoppedSuccessfully = errors.New("workflow stopped successfully")
 var invocationSequence uint64
@@ -401,7 +411,12 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 				_, initialized, _ := e.Store.Resolve(e.runIdentityRecord())
 				_, active, _ := e.Store.Resolve(e.activeRecord())
 				if initialized && !active {
-					_ = e.Store.SetJSON(e.lastFailureRecord(), gitstate.FailureRecord{Stage: e.runStage, Error: errorOutput(runErr)})
+					failure := gitstate.FailureRecord{Stage: e.runStage, Error: errorOutput(runErr)}
+					var safetyErr *safetyViolation
+					if errors.As(runErr, &safetyErr) {
+						failure.IntegrityViolation = safetyErr.integrityViolation
+					}
+					_ = e.Store.SetJSON(e.lastFailureRecord(), failure)
 				} else {
 					_ = e.Store.Delete(e.lastFailureRecord())
 				}
@@ -971,9 +986,11 @@ func (e *Engine) initializeState() error {
 	if err := e.Store.SetJSON(e.integrityRecord(), baseline); err != nil {
 		return err
 	}
-	for id, hash := range baseline {
+	for id, ruleBaseline := range baseline {
 		if record := e.Workflow.Spec.State.Records.Integrity[id]; record != "" {
-			if err := e.Store.SetJSON(record, hash); err != nil {
+			// Configurable per-rule records retain their historical scalar shape;
+			// the canonical integrity record carries the path manifests.
+			if err := e.Store.SetJSON(record, ruleBaseline.Aggregate); err != nil {
 				return err
 			}
 		}

@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 )
@@ -27,9 +28,10 @@ func (e *phaseValidationFailure) Unwrap() error { return e.err }
 // safetyViolation is a repository-policy failure. Its durable record is
 // terminal for the current run and must never be repaired or accepted.
 type safetyViolation struct {
-	err    error
-	actor  string
-	commit string
+	err                error
+	actor              string
+	commit             string
+	integrityViolation *gitstate.IntegrityViolation
 }
 
 func (e *safetyViolation) Error() string { return e.err.Error() }
@@ -727,6 +729,7 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 		return e.Store.SetJSON(record, validationFailureEvidence{
 			Validation: name, FailureKind: kind, Output: errorOutput(failure),
 			Actor: safetyErrActor(safetyErr), Commit: safetyErrCommit(safetyErr),
+			IntegrityViolation: safetyErrIntegrityViolation(safetyErr),
 		})
 	}
 	var active ActivePhase
@@ -744,6 +747,7 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	}
 	active.Validation = name
 	active.ValidationError = errorOutput(failure)
+	active.IntegrityViolation = safetyErrIntegrityViolation(safetyErr)
 	if errors.As(failure, &safetyErr) && safetyErr.actor != "" {
 		active.CommitActor = safetyErr.actor
 	}
@@ -762,6 +766,13 @@ func safetyErrCommit(err *safetyViolation) string {
 		return ""
 	}
 	return err.commit
+}
+
+func safetyErrIntegrityViolation(err *safetyViolation) *gitstate.IntegrityViolation {
+	if err == nil {
+		return nil
+	}
+	return err.integrityViolation
 }
 
 func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
@@ -784,6 +795,10 @@ func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
 		active.Validation = "workspace-policy"
 	}
 	active.ValidationError = errorOutput(failure)
+	var safetyErr *safetyViolation
+	if errors.As(failure, &safetyErr) {
+		active.IntegrityViolation = safetyErr.integrityViolation
+	}
 	return e.Store.SetJSON(e.activeRecord(), active)
 }
 
@@ -804,6 +819,7 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			active.FailureKind = ""
 			active.Validation = ""
 			active.ValidationError = ""
+			active.IntegrityViolation = nil
 			return e.Store.SetJSON(e.activeRecord(), active)
 		}
 	}
@@ -828,25 +844,28 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 }
 
 type validationFailureEvidence struct {
-	Validation  string           `json:"validation"`
-	FailureKind PhaseFailureKind `json:"failure_kind"`
-	Output      string           `json:"output,omitempty"`
-	Actor       string           `json:"actor,omitempty"`
-	Commit      string           `json:"commit,omitempty"`
+	Validation         string                       `json:"validation"`
+	FailureKind        PhaseFailureKind             `json:"failure_kind"`
+	Output             string                       `json:"output,omitempty"`
+	Actor              string                       `json:"actor,omitempty"`
+	Commit             string                       `json:"commit,omitempty"`
+	IntegrityViolation *gitstate.IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
 func safetyViolationFromActive(active ActivePhase) *safetyViolation {
 	return &safetyViolation{
-		err:   durableSafetyError(active.ValidationError),
-		actor: active.CommitActor,
+		err:                durableSafetyError(active.ValidationError),
+		actor:              active.CommitActor,
+		integrityViolation: active.IntegrityViolation,
 	}
 }
 
 func safetyViolationFromEvidence(evidence validationFailureEvidence) *safetyViolation {
 	return &safetyViolation{
-		err:    durableSafetyError(evidence.Output),
-		actor:  evidence.Actor,
-		commit: evidence.Commit,
+		err:                durableSafetyError(evidence.Output),
+		actor:              evidence.Actor,
+		commit:             evidence.Commit,
+		integrityViolation: evidence.IntegrityViolation,
 	}
 }
 

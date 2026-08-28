@@ -1,6 +1,79 @@
 package gitstate
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"unicode"
+	"unicode/utf8"
+)
+
+const (
+	// MaxIntegrityPathsPerCategory bounds each changed/added/removed status list.
+	MaxIntegrityPathsPerCategory = 20
+	maxIntegrityRuleLength       = 256
+	maxIntegrityPathLength       = 4096
+)
+
+// IntegrityViolation is bounded, content-free diagnostic evidence for a
+// protected-path integrity failure. Paths are repository-relative and safe for
+// human-readable presentation.
+type IntegrityViolation struct {
+	IntegrityRule string   `json:"integrity_rule"`
+	Changed       []string `json:"changed"`
+	Added         []string `json:"added"`
+	Removed       []string `json:"removed"`
+}
+
+// Validate rejects unsafe or unbounded durable diagnostics before they can
+// reach terminal presentation. Missing lists normalize to empty arrays for
+// compatibility with early path-manifest records.
+func (v *IntegrityViolation) Validate() error {
+	if v == nil {
+		return nil
+	}
+	if v.Changed == nil {
+		v.Changed = []string{}
+	}
+	if v.Added == nil {
+		v.Added = []string{}
+	}
+	if v.Removed == nil {
+		v.Removed = []string{}
+	}
+	if v.IntegrityRule == "" || len(v.IntegrityRule) > maxIntegrityRuleLength || !safeIntegrityText(v.IntegrityRule) {
+		return fmt.Errorf("invalid integrity rule diagnostic")
+	}
+	for _, category := range []struct {
+		label string
+		paths []string
+	}{
+		{label: "changed", paths: v.Changed},
+		{label: "added", paths: v.Added},
+		{label: "removed", paths: v.Removed},
+	} {
+		if len(category.paths) > MaxIntegrityPathsPerCategory {
+			return fmt.Errorf("integrity %s paths exceed diagnostic limit", category.label)
+		}
+		for _, path := range category.paths {
+			if path == "" || path == "." || len(path) > maxIntegrityPathLength || filepath.IsAbs(path) || !filepath.IsLocal(path) || filepath.ToSlash(filepath.Clean(path)) != path || !safeIntegrityText(path) {
+				return fmt.Errorf("unsafe integrity %s path %q", category.label, path)
+			}
+		}
+	}
+	return nil
+}
+
+func safeIntegrityText(value string) bool {
+	if !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // StatusProjection is the generic, non-secret status view used by repository-
 // wide inspection. Its acceptance fields come from existing Git-backed
@@ -24,18 +97,20 @@ type StatusProjection struct {
 	LastError        string `json:"last_error,omitempty"`
 	Recovery         string `json:"recovery,omitempty"`
 	NextAction       string `json:"next_action,omitempty"`
-	Complete         bool   `json:"complete"`
-	CompleteCommit   string `json:"complete_commit,omitempty"`
-	ProcessLiveness  string `json:"process_liveness,omitempty"`
-	Error            string `json:"error,omitempty"`
+	*IntegrityViolation
+	Complete        bool   `json:"complete"`
+	CompleteCommit  string `json:"complete_commit,omitempty"`
+	ProcessLiveness string `json:"process_liveness,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 type projectedActivePhase struct {
-	PhaseID        string `json:"phase_id"`
-	StartCommit    string `json:"phase_start_commit"`
-	ActorCompleted bool   `json:"actor_completed"`
-	FailureKind    string `json:"failure_kind,omitempty"`
-	Validation     string `json:"validation,omitempty"`
+	PhaseID            string              `json:"phase_id"`
+	StartCommit        string              `json:"phase_start_commit"`
+	ActorCompleted     bool                `json:"actor_completed"`
+	FailureKind        string              `json:"failure_kind,omitempty"`
+	Validation         string              `json:"validation,omitempty"`
+	IntegrityViolation *IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
 // ProjectStatus reads the existing acceptance records named by d. A malformed
@@ -67,6 +142,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		return StatusProjection{}, err
 	}
 	if activeExists {
+		if err := active.IntegrityViolation.Validate(); err != nil {
+			return StatusProjection{}, fmt.Errorf("active phase integrity diagnostic: %w", err)
+		}
 		if active.PhaseID == "" {
 			return StatusProjection{}, fmt.Errorf("active phase record %q has no phase id", d.Records.ActivePhase)
 		}
@@ -88,6 +166,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		failureExists, err = store.GetJSON(d.Records.LastFailure, &lastFailure)
 		if err != nil {
 			return StatusProjection{}, err
+		}
+		if err := lastFailure.IntegrityViolation.Validate(); err != nil {
+			return StatusProjection{}, fmt.Errorf("last failure integrity diagnostic: %w", err)
 		}
 	}
 
@@ -119,16 +200,17 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 	}
 
 	projection := StatusProjection{
-		SchemaVersion: 1,
-		Namespace:     namespace,
-		Workflow:      d.Workflow,
-		Repo:          repo.Root,
-		Initialized:   initialized,
-		State:         state,
-		Head:          head,
-		Complete:      complete,
-		FailureStage:  lastFailure.Stage,
-		LastError:     lastFailure.Error,
+		SchemaVersion:      1,
+		Namespace:          namespace,
+		Workflow:           d.Workflow,
+		Repo:               repo.Root,
+		Initialized:        initialized,
+		State:              state,
+		Head:               head,
+		Complete:           complete,
+		FailureStage:       lastFailure.Stage,
+		LastError:          lastFailure.Error,
+		IntegrityViolation: lastFailure.IntegrityViolation,
 	}
 	if initialized {
 		projection.Base = base
@@ -145,6 +227,7 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		projection.ActorCompleted = active.ActorCompleted
 		projection.FailureKind = active.FailureKind
 		projection.ValidationFailed = active.Validation
+		projection.IntegrityViolation = active.IntegrityViolation
 	}
 	setRecoveryMetadata(&projection)
 	return projection, nil

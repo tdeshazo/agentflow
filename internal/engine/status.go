@@ -31,8 +31,9 @@ type StatusSnapshot struct {
 	// Recovery and NextAction are stable, non-secret classifications. They
 	// describe how the existing runtime will evaluate a later run; they never
 	// authorize recovery or expose validation command output.
-	Recovery        string `json:"recovery,omitempty"`
-	NextAction      string `json:"next_action,omitempty"`
+	Recovery   string `json:"recovery,omitempty"`
+	NextAction string `json:"next_action,omitempty"`
+	*gitstate.IntegrityViolation
 	Complete        bool   `json:"complete"`
 	CompleteCommit  string `json:"complete_commit,omitempty"`
 	validationError string
@@ -57,6 +58,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		return StatusSnapshot{}, err
 	}
 	if activeExists {
+		if err := active.IntegrityViolation.Validate(); err != nil {
+			return StatusSnapshot{}, fmt.Errorf("active phase integrity diagnostic: %w", err)
+		}
 		if active.PhaseID == "" {
 			return StatusSnapshot{}, fmt.Errorf("active phase record %q has no phase id", e.activeRecord())
 		}
@@ -71,6 +75,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	failureExists, err := e.Store.GetJSON(e.lastFailureRecord(), &lastFailure)
 	if err != nil {
 		return StatusSnapshot{}, err
+	}
+	if err := lastFailure.IntegrityViolation.Validate(); err != nil {
+		return StatusSnapshot{}, fmt.Errorf("last failure integrity diagnostic: %w", err)
 	}
 
 	state := "uninitialized"
@@ -117,19 +124,20 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	}
 
 	snapshot := StatusSnapshot{
-		SchemaVersion:  1,
-		Workflow:       e.Workflow.Metadata.Name,
-		Repo:           e.Repo.Root,
-		Initialized:    initialized,
-		State:          state,
-		HumanGate:      pendingGate,
-		Base:           base,
-		Branch:         branch,
-		ActorCompleted: active.ActorCompleted,
-		Complete:       completed,
-		CompleteCommit: completeCommit,
-		FailureStage:   lastFailure.Stage,
-		LastError:      lastFailure.Error,
+		SchemaVersion:      1,
+		Workflow:           e.Workflow.Metadata.Name,
+		Repo:               e.Repo.Root,
+		Initialized:        initialized,
+		State:              state,
+		HumanGate:          pendingGate,
+		Base:               base,
+		Branch:             branch,
+		ActorCompleted:     active.ActorCompleted,
+		Complete:           completed,
+		CompleteCommit:     completeCommit,
+		FailureStage:       lastFailure.Stage,
+		LastError:          lastFailure.Error,
+		IntegrityViolation: lastFailure.IntegrityViolation,
 	}
 	if activeExists {
 		snapshot.ActivePhase = active.PhaseID
@@ -138,6 +146,7 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		snapshot.FailureKind = string(active.FailureKind)
 		snapshot.ValidationFailed = active.Validation
 		snapshot.validationError = active.ValidationError
+		snapshot.IntegrityViolation = active.IntegrityViolation
 	}
 	setRecoveryMetadata(&snapshot)
 	return snapshot, nil
@@ -212,6 +221,7 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 		p.MetadataStyled("failure_stage", snapshot.FailureStage, clioutput.RoleWarning)
 		p.MetadataStyled("last_error", snapshot.LastError, clioutput.RoleError)
 	}
+	writeIntegrityViolation(p, "", snapshot.IntegrityViolation)
 	if snapshot.Recovery != "" {
 		p.MetadataStyled("recovery", snapshot.Recovery, clioutput.StateRole(snapshot.Recovery))
 		p.MetadataStyled("next_action", snapshot.NextAction, clioutput.StateRole(snapshot.NextAction))
@@ -232,6 +242,27 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	}
 	p.MetadataStyled("complete", completeValue, completeRole)
 	return nil
+}
+
+func writeIntegrityViolation(p clioutput.Presenter, indent string, violation *gitstate.IntegrityViolation) {
+	if violation == nil {
+		return
+	}
+	p.IndentedMetadata(indent, "integrity_rule", violation.IntegrityRule, clioutput.RoleError)
+	writeIntegrityPaths(p, indent, "changed", violation.Changed)
+	writeIntegrityPaths(p, indent, "added", violation.Added)
+	writeIntegrityPaths(p, indent, "removed", violation.Removed)
+}
+
+func writeIntegrityPaths(p clioutput.Presenter, indent, label string, paths []string) {
+	if len(paths) == 0 {
+		p.IndentedMetadata(indent, label, "[]", clioutput.RolePlain)
+		return
+	}
+	p.Line(clioutput.RolePlain, "%s%s:", indent, label)
+	for _, path := range paths {
+		p.Line(clioutput.RolePlain, "%s  - %s", indent, path)
+	}
 }
 
 // FailureRecoveryGuidance reports durable recovery advice for a failed run.

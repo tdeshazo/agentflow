@@ -103,6 +103,56 @@ func TestStatusProjectionAddsRecoveryMetadataForActionableFailures(t *testing.T)
 	}
 }
 
+func TestStatusProjectionRejectsUnsafeIntegrityDiagnostics(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	head, err := repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name      string
+		violation map[string]any
+	}{
+		{
+			name: "traversing path",
+			violation: map[string]any{
+				"integrity_rule": "governance",
+				"changed":        []string{"../outside.yaml"},
+				"added":          []string{},
+				"removed":        []string{},
+			},
+		},
+		{
+			name: "terminal control",
+			violation: map[string]any{
+				"integrity_rule": "governance",
+				"changed":        []string{"rules.yaml\nstate: completed"},
+				"added":          []string{},
+				"removed":        []string{},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(repo, "unsafe-"+tt.name)
+			descriptor := NewDescriptor("unsafe-"+tt.name, "", RecordNames{})
+			if err := store.SetCommit("base", head); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetJSON("active", map[string]any{
+				"phase_id":            "implement",
+				"phase_start_commit":  head,
+				"failure_kind":        "safety",
+				"integrity_violation": tt.violation,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := descriptor.ProjectStatus(repo, store.Namespace); err == nil || !strings.Contains(err.Error(), "integrity") {
+				t.Fatalf("unsafe integrity projection error = %v", err)
+			}
+		})
+	}
+}
+
 func TestDiscoveryRetainsMalformedNamespaceAndDescriptor(t *testing.T) {
 	repo := newDiscoveryRepo(t)
 	valid := NewStore(repo, "valid")

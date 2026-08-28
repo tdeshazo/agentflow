@@ -133,11 +133,12 @@ func (e *Engine) persistPendingInvocationSafety(pending PendingActorInvocation, 
 		return nil
 	}
 	if err := e.Store.SetJSON(record, validationFailureEvidence{
-		Validation:  pending.ValidationScope,
-		FailureKind: PhaseFailureSafety,
-		Output:      errorOutput(violation),
-		Actor:       violation.actor,
-		Commit:      violation.commit,
+		Validation:         pending.ValidationScope,
+		FailureKind:        PhaseFailureSafety,
+		Output:             errorOutput(violation),
+		Actor:              violation.actor,
+		Commit:             violation.commit,
+		IntegrityViolation: violation.integrityViolation,
 	}); err != nil {
 		return fmt.Errorf("persist pending actor safety failure: %w", err)
 	}

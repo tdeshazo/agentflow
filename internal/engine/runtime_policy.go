@@ -4,15 +4,55 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
+
+const maxIntegrityPathsPerCategory = gitstate.MaxIntegrityPathsPerCategory
+
+// UnmarshalJSON preserves recovery from integrity baselines written before
+// path-level manifests were introduced. Legacy values are aggregate digest
+// strings; current values retain that aggregate under an explicit field.
+func (b *IntegrityBaseline) UnmarshalJSON(data []byte) error {
+	var encoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return err
+	}
+	baseline := make(IntegrityBaseline, len(encoded))
+	for id, raw := range encoded {
+		var legacy string
+		if err := json.Unmarshal(raw, &legacy); err == nil {
+			baseline[id] = IntegrityRuleBaseline{Aggregate: legacy}
+			continue
+		}
+		var current IntegrityRuleBaseline
+		if err := json.Unmarshal(raw, &current); err != nil {
+			return fmt.Errorf("integrity rule %q baseline: %w", id, err)
+		}
+		if current.Aggregate == "" {
+			return fmt.Errorf("integrity rule %q baseline has no aggregate digest", id)
+		}
+		for path := range current.Paths {
+			safe, err := safeRelativeIntegrityPath(path)
+			if err != nil || safe != path {
+				return fmt.Errorf("integrity rule %q baseline has unsafe path %q", id, path)
+			}
+		}
+		baseline[id] = current
+	}
+	*b = baseline
+	return nil
+}
 
 func (e *Engine) phaseByID(id string) (*workflow.Phase, error) {
 	for i := range e.Workflow.Spec.Phases {
@@ -243,17 +283,22 @@ func (e *Engine) assertMutationBoundary(requireClean, strictLineage bool) error 
 }
 
 func (e *Engine) computeIntegrity() (IntegrityBaseline, error) {
+	return e.computeIntegrityBaseline(true)
+}
+
+func (e *Engine) computeIntegrityBaseline(requireMatches bool) (IntegrityBaseline, error) {
 	rules := e.Workflow.Spec.Workspace.MutationPolicy.Integrity
 	out := IntegrityBaseline{}
 	for _, r := range rules {
-		h, err := e.integrityHash(r)
+		baseline, err := e.integrityRuleBaseline(r, requireMatches)
 		if err != nil {
 			return nil, fmt.Errorf("integrity %s: %w", r.ID, err)
 		}
-		out[r.ID] = h
+		out[r.ID] = baseline
 	}
 	return out, nil
 }
+
 func (e *Engine) assertIntegrity() error {
 	var baseline IntegrityBaseline
 	ok, err := e.Store.GetJSON(e.integrityRecord(), &baseline)
@@ -263,45 +308,69 @@ func (e *Engine) assertIntegrity() error {
 	if !ok {
 		return nil
 	}
-	current, err := e.computeIntegrity()
+	current, err := e.computeIntegrityBaseline(false)
 	if err != nil {
 		return err
 	}
-	for id, want := range baseline {
-		if current[id] != want {
-			return &safetyViolation{err: fmt.Errorf("protected integrity rule %s changed", id)}
+	ids := make([]string, 0, len(baseline))
+	for id := range baseline {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		want := baseline[id]
+		got, exists := current[id]
+		if !exists || got.Aggregate != want.Aggregate {
+			violation := &safetyViolation{err: fmt.Errorf("protected integrity rule %s changed", id)}
+			if want.Paths != nil {
+				violation.integrityViolation = diffIntegrityManifests(id, want.Paths, got.Paths)
+			}
+			return violation
 		}
 	}
 	return nil
 }
 
 func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
-	filesInWorkspace, err := e.Repo.IntegrityFiles()
+	baseline, err := e.integrityRuleBaseline(rule, true)
 	if err != nil {
 		return "", err
+	}
+	return baseline.Aggregate, nil
+}
+
+func (e *Engine) integrityRuleBaseline(rule workflow.IntegrityRule, requireMatches bool) (IntegrityRuleBaseline, error) {
+	filesInWorkspace, err := e.Repo.IntegrityFiles()
+	if err != nil {
+		return IntegrityRuleBaseline{}, err
 	}
 	var files []string
 	for _, f := range filesInWorkspace {
 		if matchesAny(rule.Paths, f) && !matchesAny(rule.Exclude, f) {
-			files = append(files, f)
+			safe, err := safeRelativeIntegrityPath(f)
+			if err != nil {
+				return IntegrityRuleBaseline{}, err
+			}
+			files = append(files, safe)
 		}
 	}
 	sort.Strings(files)
-	if len(files) == 0 {
-		return "", fmt.Errorf("paths matched no workspace files")
+	if requireMatches && len(files) == 0 {
+		return IntegrityRuleBaseline{}, fmt.Errorf("paths matched no workspace files")
 	}
 	h := sha256.New()
+	pathDigests := make(map[string]string, len(files))
 	for _, f := range files {
 		path := filepath.Join(e.Repo.Root, f)
 		info, err := os.Lstat(path)
 		if err != nil {
-			return "", err
+			return IntegrityRuleBaseline{}, err
 		}
 		var b []byte
 		if info.Mode()&os.ModeSymlink != 0 {
 			target, err := os.Readlink(path)
 			if err != nil {
-				return "", err
+				return IntegrityRuleBaseline{}, err
 			}
 			// Hash the link object, not the target. Following a workspace symlink
 			// could escape the repository and turn external state into acceptance
@@ -310,7 +379,7 @@ func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
 		} else {
 			b, err = os.ReadFile(path)
 			if err != nil {
-				return "", err
+				return IntegrityRuleBaseline{}, err
 			}
 		}
 		if rule.Mode == "normalized-hash" && rule.Normalize.Command != "" && info.Mode()&os.ModeSymlink == 0 {
@@ -319,13 +388,72 @@ func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
 			cmd.Stdin = bytes.NewReader(b)
 			b, err = cmd.Output()
 			if err != nil {
-				return "", fmt.Errorf("normalize %s: %w", f, err)
+				return IntegrityRuleBaseline{}, fmt.Errorf("normalize %s: %w", f, err)
 			}
 		}
+		pathDigest := sha256.Sum256(b)
+		pathDigests[f] = hex.EncodeToString(pathDigest[:])
 		h.Write([]byte(f))
 		h.Write([]byte{0})
 		h.Write(b)
 		h.Write([]byte{0})
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return IntegrityRuleBaseline{
+		Aggregate: hex.EncodeToString(h.Sum(nil)),
+		Paths:     pathDigests,
+	}, nil
+}
+
+func safeRelativeIntegrityPath(path string) (string, error) {
+	if path == "" || !utf8.ValidString(path) || filepath.IsAbs(path) || !filepath.IsLocal(path) {
+		return "", fmt.Errorf("unsafe integrity path %q", path)
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	for _, r := range path {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("unsafe integrity path %q", path)
+		}
+	}
+	return path, nil
+}
+
+func diffIntegrityManifests(rule string, before, after map[string]string) *gitstate.IntegrityViolation {
+	violation := &gitstate.IntegrityViolation{
+		IntegrityRule: rule,
+		Changed:       []string{},
+		Added:         []string{},
+		Removed:       []string{},
+	}
+	paths := make([]string, 0, len(before)+len(after))
+	seen := make(map[string]struct{}, len(before)+len(after))
+	for path := range before {
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	for path := range after {
+		if _, ok := seen[path]; !ok {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		beforeDigest, existed := before[path]
+		afterDigest, exists := after[path]
+		switch {
+		case existed && exists && beforeDigest != afterDigest:
+			violation.Changed = appendBoundedIntegrityPath(violation.Changed, path)
+		case !existed && exists:
+			violation.Added = appendBoundedIntegrityPath(violation.Added, path)
+		case existed && !exists:
+			violation.Removed = appendBoundedIntegrityPath(violation.Removed, path)
+		}
+	}
+	return violation
+}
+
+func appendBoundedIntegrityPath(paths []string, path string) []string {
+	if len(paths) >= maxIntegrityPathsPerCategory {
+		return paths
+	}
+	return append(paths, path)
 }

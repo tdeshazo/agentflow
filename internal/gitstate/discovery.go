@@ -28,8 +28,9 @@ type RecordNames struct {
 // FailureRecord is bounded diagnostic state. It explains the last failed run
 // but never authorizes recovery or acceptance.
 type FailureRecord struct {
-	Stage string `json:"stage"`
-	Error string `json:"error"`
+	Stage              string              `json:"stage"`
+	Error              string              `json:"error"`
+	IntegrityViolation *IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
 // ProcessMetadata is durable only while an AgentFlow process is active. The

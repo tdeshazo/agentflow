@@ -3,12 +3,14 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -604,6 +606,37 @@ func TestRuntimeOwnedLifecycleUsesDurableSafetyContract(t *testing.T) {
 				var active ActivePhase
 				if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || active.FailureKind != PhaseFailureSafety {
 					t.Fatalf("safety evidence = %+v ok=%v err=%v", active, ok, err)
+				}
+				if tc.name == "protected" {
+					if active.IntegrityViolation == nil || active.IntegrityViolation.IntegrityRule != "readme" || !reflect.DeepEqual(active.IntegrityViolation.Changed, []string{"README.md"}) || len(active.IntegrityViolation.Added) != 0 || len(active.IntegrityViolation.Removed) != 0 {
+						t.Fatalf("integrity safety evidence = %#v", active.IntegrityViolation)
+					}
+					var status bytes.Buffer
+					e.Out = &status
+					if err := e.Status(); err != nil {
+						t.Fatal(err)
+					}
+					for _, want := range []string{"integrity_rule: readme", "changed:\n  - README.md", "added: []", "removed: []"} {
+						if !strings.Contains(status.String(), want) {
+							t.Fatalf("integrity text status missing %q:\n%s", want, status.String())
+						}
+					}
+					status.Reset()
+					if err := e.StatusJSONTo(&status, false); err != nil {
+						t.Fatal(err)
+					}
+					var projected struct {
+						IntegrityRule string   `json:"integrity_rule"`
+						Changed       []string `json:"changed"`
+						Added         []string `json:"added"`
+						Removed       []string `json:"removed"`
+					}
+					if err := json.Unmarshal(status.Bytes(), &projected); err != nil {
+						t.Fatal(err)
+					}
+					if projected.IntegrityRule != "readme" || !reflect.DeepEqual(projected.Changed, []string{"README.md"}) || projected.Added == nil || projected.Removed == nil {
+						t.Fatalf("integrity JSON status = %s", status.String())
+					}
 				}
 			})
 		}
