@@ -170,12 +170,25 @@ Check for:
 - unresolved or dangling named references;
 - mutable paths that bypass `mutationPolicy.allowed`;
 - protected content not covered by an integrity boundary;
+- ignored local control files (including the selected workflow, repository
+  instructions, and authoring skills) that can change actor behavior without a
+  named integrity rule;
 - agent-controlled success without deterministic validation;
 - mutable phases without a resolved validation gate;
+- validation commands that are vacuous at their execution point, such as a
+  worktree-only diff check after the lifecycle has checkpointed a clean tree;
 - repair policies that accidentally apply to hard/safety gates;
 - criterion phases without stable criteria or progress invariants;
+- workflows claiming the "next" roadmap criterion without deterministic
+  preconditions for roadmap order, completed dependencies, and the exact
+  pending target;
 - actor edits to engine-owned progress;
+- single-criterion completion without deterministic evidence that its exact
+  target is checked (when `progress-empty` would incorrectly require later
+  criteria too);
 - completion markers written before final validation/checkpoint/post-checks;
+- terminal validation that proves only scope, formatting, cleanliness, or an
+  empty diff instead of re-running the canonical semantic acceptance gate;
 - human gates without durable evidence;
 - bookkeeping before required implementation/audit/human prerequisites;
 - `requiresChange: false` phases incorrectly treated as requiring a diff;

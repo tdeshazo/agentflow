@@ -170,6 +170,10 @@ A `type` declares intended behavior; exact runtime implementation depends on the
 
 Deterministic checks performed before mutable work. Common checks include repository identity, required commands/files, delegation from CI workflow to canonical gate, saved Git lineage, and protected-boundary integrity.
 
+A workflow that claims to own the "next" roadmap item should make roadmap
+order, dependency completion, and the exact pending target deterministic
+preconditions. Actor prompts do not establish scheduling eligibility.
+
 ## `spec.progress`
 
 Defines external completion progress, often a Markdown acceptance checklist.
@@ -339,6 +343,15 @@ A robust completion contract commonly requires:
 - summary of branch/base/head/commits/changed files/gate status.
 
 The complete marker should be written last, after every required assertion and checkpoint.
+The final validation should re-run the canonical semantic acceptance gate;
+scope, formatting, cleanliness, and diff-only checks are not substitutes. A
+worktree-only diff command is vacuous when it runs after a lifecycle checkpoint
+that requires a clean tree.
+
+When a workflow owns one criterion in a larger checklist, completion should
+prove that exact target is checked with a deterministic assertion or validation
+step. `progress-empty` is inappropriate when later criteria are intentionally
+out of scope.
 
 ## Operational invariants
 
@@ -352,3 +365,7 @@ The examples embody these general invariants:
 6. Human verification is durable state, not prose in an agent prompt.
 7. Completion bookkeeping occurs only after implementation/audit/human prerequisites.
 8. Workflow completion is a separate validated state transition.
+9. Deterministic commands remain meaningful at the lifecycle point where they execute.
+10. Ignored local workflows, instructions, and authoring skills that affect
+    execution have explicit integrity protection when normal Git scope checks do
+    not cover them.

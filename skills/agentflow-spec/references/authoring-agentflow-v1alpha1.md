@@ -245,6 +245,12 @@ preconditions:
     text: scripts/check.sh
 ```
 
+When a workflow claims to implement the "next" roadmap item or criterion,
+bind that claim before actor execution. Use deterministic `file-contains`
+preconditions for the authoritative roadmap order, every required dependency's
+completed state, and the exact unchecked target. A prompt that says "next" is
+actor guidance, not scheduling evidence.
+
 ### Lifecycle
 
 Preferred lifecycle:
@@ -551,6 +557,17 @@ checkpoint:
 ```
 
 The complete marker should be the last durable state transition.
+
+`finalValidation` must re-prove the workflow's semantic outcome with the
+canonical deterministic gate. Scope, formatting, cleanliness, and diff checks
+are complementary safety checks, not terminal acceptance by themselves. In
+particular, a command such as `git diff --check` that inspects only the current
+worktree is vacuous after safe-resume has checkpointed a clean tree.
+
+When a workflow owns one criterion within a larger checklist, `progress-empty`
+is intentionally too broad. Add deterministic completion evidence for the
+exact owned item, such as a `file-regex` validation step matching its checked
+form, so durable completion cannot be written for an unadvanced target.
 
 ## Expressions and conditions
 
@@ -916,7 +933,11 @@ Authoring loop:
 5. Run `plan --expanded`.
 6. Inspect resolved actor, lifecycle, validation, repair, mutation/progress,
    checkpoint, human-gate, and completion semantics.
-7. Only then consider `run`.
+7. Confirm every deterministic command is meaningful at the point where the
+   lifecycle runs it; account for phase checkpoints and clean-tree boundaries.
+8. Confirm terminal validation re-runs semantic acceptance and proves any
+   exact progress item the workflow owns.
+9. Only then consider `run`.
 
 Do not use live workflow execution as schema discovery.
 
@@ -929,13 +950,23 @@ Avoid these:
 - declaring a mutable AI phase without a resolved deterministic validation;
 - combining concise lifecycle with legacy phase lifecycle actions;
 - putting acceptance authority in an actor prompt;
+- claiming a roadmap item is next without preconditions that bind roadmap
+  order, dependency completion, and the pending target;
 - broadening `mutationPolicy.allowed` just to make validation pass;
+- relying on scope checks to protect ignored local workflows, instructions, or
+  skills that affect actor behavior instead of adding explicit integrity rules;
 - letting an actor edit engine-owned progress;
 - using `criterion` display text when stable `criterionID` is available;
 - declaring both `when` and `if` on one human gate;
 - using `repair: once` without a resolvable repair actor;
 - making a repair gate the final hard acceptance gate when repair is not desired;
 - writing a completion marker before final validation/checkpoint/post-checks;
+- using a worktree-only diff check after checkpoint as meaningful completion
+  evidence;
+- making scope, formatting, cleanliness, or diff-only checks the terminal gate
+  without re-running the canonical semantic validation;
+- completing a single-criterion workflow without proving that exact checklist
+  item is checked;
 - using a human gate for something a deterministic command can prove;
 - authoring `color` or other terminal/provider presentation policy in a workflow;
 - using undocumented template functions or general shell syntax in expressions;
