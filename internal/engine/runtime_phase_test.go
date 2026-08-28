@@ -65,6 +65,119 @@ func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 	}
 }
 
+func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
+	providerImpl := &presentationRecordingProvider{}
+	p := &workflow.Phase{
+		ID:              "implement",
+		Kind:            "criterion",
+		Actor:           "worker",
+		Validation:      "phaseGate",
+		AdvanceProgress: true,
+	}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{MutationPolicy: workflow.MutationPolicy{
+				Allowed: []string{"src/**", "docs/*.md"},
+				Integrity: []workflow.IntegrityRule{{
+					ID:                     "roadmap-and-rules-governance",
+					Paths:                  []string{"data/mothership/v1.2/**"},
+					Exclude:                []string{"data/mothership/v1.2/generated/**"},
+					Mode:                   "normalized-hash",
+					AllowedSemanticChanges: []string{"criterion checkbox state"},
+				}},
+			}},
+			Progress: workflow.ProgressSpec{Source: workflow.ProgressSource{Path: "docs/roadmap.md"}},
+			Agents: map[string]workflow.Agent{
+				"worker": {Runner: "test", MayCommit: false},
+			},
+		}},
+		Providers: map[string]provider.Provider{"test": providerImpl},
+		Repo:      gitstate.Repo{Root: newDurableRepo(t)},
+	}
+
+	const authoredPrompt = "Implement only the selected roadmap criterion."
+	if err := e.runAgent(context.Background(), "worker", "high", authoredPrompt, p); err != nil {
+		t.Fatal(err)
+	}
+	prompt := providerImpl.request.Prompt
+	if !strings.HasPrefix(prompt, "AgentFlow runtime execution boundary (runtime-owned; enforcement remains authoritative):\n") {
+		t.Fatalf("provider prompt does not start with runtime boundary:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"writable path patterns:\n  - \"src/**\"\n  - \"docs/*.md\"",
+		"protected path patterns:\n  - \"data/mothership/v1.2/**\" [rule=\"roadmap-and-rules-governance\", mode=\"normalized-hash\", excludes=[\"data/mothership/v1.2/generated/**\"], allowed_semantic_changes=[\"criterion checkbox state\"]]",
+		"engine-owned progress files (do not edit):\n  - \"docs/roadmap.md\"",
+		"commit authority: forbidden; do not create commits",
+		"selected validation gate(s):\n  - \"phaseGate\"",
+		"\nAuthored prompt:\n" + authoredPrompt,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("provider prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestRunRepairAgentReceivesItsActualExecutionBoundary(t *testing.T) {
+	providerImpl := &presentationRecordingProvider{}
+	p := &workflow.Phase{
+		ID:              "implement",
+		Kind:            "criterion",
+		Validation:      "phaseGate",
+		AdvanceProgress: true,
+	}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{MutationPolicy: workflow.MutationPolicy{Allowed: []string{"work.txt"}}},
+			Progress:  workflow.ProgressSpec{Source: workflow.ProgressSource{Path: "roadmap.md"}},
+			Agents: map[string]workflow.Agent{
+				"repair": {Runner: "test", MayCommit: true},
+			},
+		}},
+		Providers: map[string]provider.Provider{"test": providerImpl},
+		Repo:      gitstate.Repo{Root: newDurableRepo(t)},
+	}
+
+	if err := e.runRepairAgent(context.Background(), "repair", "high", "Repair the bounded failure.", "repairGate", p); err != nil {
+		t.Fatal(err)
+	}
+	prompt := providerImpl.request.Prompt
+	for _, want := range []string{
+		"commit authority: allowed; commits created by this actor are permitted but do not establish acceptance",
+		"selected validation gate(s):\n  - \"repairGate\"",
+		"engine-owned progress files (do not edit):\n  - \"roadmap.md\"",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "\"phaseGate\"") {
+		t.Fatalf("repair prompt reported the phase gate instead of its selected repair gate:\n%s", prompt)
+	}
+}
+
+func TestRunAgentReportsLegacyProceduralValidationBoundary(t *testing.T) {
+	providerImpl := &presentationRecordingProvider{}
+	p := &workflow.Phase{
+		ID:    "legacy",
+		Actor: "worker",
+		After: []workflow.PhaseAction{{Validate: "legacyGate"}},
+	}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{
+			"worker": {Runner: "test"},
+		}}},
+		Providers: map[string]provider.Provider{"test": providerImpl},
+		Repo:      gitstate.Repo{Root: newDurableRepo(t)},
+	}
+
+	if err := e.runAgent(context.Background(), "worker", "", "Do legacy work.", p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(providerImpl.request.Prompt, "selected validation gate(s):\n  - \"legacyGate\"") {
+		t.Fatalf("legacy provider prompt = %s", providerImpl.request.Prompt)
+	}
+}
+
 func TestRunAgentLeavesEmptySandboxProviderNeutralForInjectedProvider(t *testing.T) {
 	providerImpl := &capabilityRecordingProvider{}
 	e := &Engine{

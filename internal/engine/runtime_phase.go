@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
@@ -367,7 +368,7 @@ func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt st
 	return nil
 }
 func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase) error {
-	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, PendingActorInvocation{Role: "phase"})
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, PendingActorInvocation{Role: "phase"}, e.selectedPhaseValidations(p))
 }
 
 func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, prompt, validation string, p *workflow.Phase) error {
@@ -375,10 +376,10 @@ func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, promp
 		Role:            "validation-repair",
 		ValidationScope: e.validationInvocationScope(validation, p),
 	}
-	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, scope)
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, scope, []string{validation})
 }
 
-func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase, invocation PendingActorInvocation) error {
+func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase, invocation PendingActorInvocation, validations []string) error {
 	a, ok := e.Workflow.Spec.Agents[actorName]
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
@@ -393,6 +394,10 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		return err
 	}
 	prompt, err = x.Expand(prompt)
+	if err != nil {
+		return err
+	}
+	prompt, err = e.runtimeOwnedActorPrompt(x, a, p, validations, prompt)
 	if err != nil {
 		return err
 	}
@@ -441,6 +446,123 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	}
 	e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "success"})
 	return nil
+}
+
+func (e *Engine) selectedPhaseValidations(p *workflow.Phase) []string {
+	if p == nil {
+		return nil
+	}
+	if e.runtimeOwnsPhaseLifecycle(p) {
+		if validation := e.phaseValidation(p); validation != "" {
+			return []string{validation}
+		}
+		return nil
+	}
+	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
+	actions = append(actions, p.After...)
+	seen := map[string]bool{}
+	validations := make([]string, 0, 1)
+	for _, action := range actions {
+		if action.Validate == "" || seen[action.Validate] {
+			continue
+		}
+		seen[action.Validate] = true
+		validations = append(validations, action.Validate)
+	}
+	return validations
+}
+
+func (e *Engine) runtimeOwnedActorPrompt(x workflow.Context, agent workflow.Agent, p *workflow.Phase, validations []string, authoredPrompt string) (string, error) {
+	var contract strings.Builder
+	contract.WriteString("AgentFlow runtime execution boundary (runtime-owned; enforcement remains authoritative):\n")
+	writePromptList(&contract, "writable path patterns", e.Workflow.Spec.Workspace.MutationPolicy.Allowed)
+	writeProtectedPromptPatterns(&contract, e.Workflow.Spec.Workspace.MutationPolicy.Integrity)
+
+	progressFiles, err := e.engineOwnedProgressFiles(x, p)
+	if err != nil {
+		return "", err
+	}
+	writePromptList(&contract, "engine-owned progress files (do not edit)", progressFiles)
+
+	if e.effectiveActorCommitPermission(agent) {
+		contract.WriteString("commit authority: allowed; commits created by this actor are permitted but do not establish acceptance\n")
+	} else {
+		contract.WriteString("commit authority: forbidden; do not create commits\n")
+	}
+	writePromptList(&contract, "selected validation gate(s)", validations)
+	contract.WriteString("If the authored task conflicts with this boundary, stop and report the conflict instead of changing protected or out-of-scope files, editing engine-owned progress, or creating an unauthorized commit.\n")
+	contract.WriteString("\nAuthored prompt:\n")
+	contract.WriteString(authoredPrompt)
+	return contract.String(), nil
+}
+
+func (e *Engine) engineOwnedProgressFiles(x workflow.Context, p *workflow.Phase) ([]string, error) {
+	if p == nil {
+		return nil, nil
+	}
+	configured := []string{}
+	if p.AdvanceProgress && e.Workflow.Spec.Progress.Source.Path != "" {
+		configured = append(configured, e.Workflow.Spec.Progress.Source.Path)
+	}
+	for _, transition := range p.Bookkeeping {
+		if transition.Path != "" {
+			configured = append(configured, transition.Path)
+		}
+	}
+	seen := map[string]bool{}
+	resolved := make([]string, 0, len(configured))
+	for _, path := range configured {
+		path, err := x.Expand(path)
+		if err != nil {
+			return nil, fmt.Errorf("expand engine-owned progress path: %w", err)
+		}
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		resolved = append(resolved, path)
+	}
+	return resolved, nil
+}
+
+func writePromptList(prompt *strings.Builder, label string, values []string) {
+	fmt.Fprintf(prompt, "%s:\n", label)
+	if len(values) == 0 {
+		prompt.WriteString("  - (none)\n")
+		return
+	}
+	for _, value := range values {
+		fmt.Fprintf(prompt, "  - %q\n", value)
+	}
+}
+
+func writeProtectedPromptPatterns(prompt *strings.Builder, rules []workflow.IntegrityRule) {
+	prompt.WriteString("protected path patterns:\n")
+	count := 0
+	for _, rule := range rules {
+		for _, path := range rule.Paths {
+			fmt.Fprintf(prompt, "  - %q [rule=%q, mode=%q", path, rule.ID, rule.Mode)
+			if len(rule.Exclude) > 0 {
+				fmt.Fprintf(prompt, ", excludes=%s", quotedPromptValues(rule.Exclude))
+			}
+			if len(rule.AllowedSemanticChanges) > 0 {
+				fmt.Fprintf(prompt, ", allowed_semantic_changes=%s", quotedPromptValues(rule.AllowedSemanticChanges))
+			}
+			prompt.WriteString("]\n")
+			count++
+		}
+	}
+	if count == 0 {
+		prompt.WriteString("  - (none)\n")
+	}
+}
+
+func quotedPromptValues(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", value))
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // effectiveActorCommitPermission reports whether one specific actor invocation

@@ -334,18 +334,22 @@ For a mutable AI phase, the runtime performs this fixed contract:
    protected integrity, and mutation scope;
 4. capture the phase-start commit and progress snapshot, then persist the active
    phase before invoking the actor;
-5. persist the pending invocation before `provider.Run`, inspect `HEAD` after it
+5. prepend a runtime-owned execution boundary to the authored prompt, naming
+   writable and protected path patterns, engine-owned progress files, effective
+   commit authority, and the selected validation gate; this is advance guidance
+   for the actor and does not replace any enforcement boundary;
+6. persist the pending invocation before `provider.Run`, inspect `HEAD` after it
    returns even on provider error, attribute any movement to that actor, enforce
    the effective commit rule, and durably record the result before clearing the
    pending record;
-6. persist `actor_completed` immediately after the actor returns successfully;
-7. run deterministic validation and applicable progress/net-change assertions;
+7. persist `actor_completed` immediately after the actor returns successfully;
+8. run deterministic validation and applicable progress/net-change assertions;
    for `advanceProgress: true`, verify the actor did not edit progress and then
    let the engine advance exactly the declared criterion;
-8. checkpoint accepted allowed work, requiring a clean tree and rechecking
+9. checkpoint accepted allowed work, requiring a clean tree and rechecking
    lineage, integrity, and scope;
-9. write the completed-phase commit marker; and
-10. clear active state only after the marker is valid.
+10. write the completed-phase commit marker; and
+11. clear active state only after the marker is valid.
 
 The optional lifecycle `checkpoint` names an existing checkpoint tool for
 workflow-specific semantics. Omitting it uses the runtime Git checkpoint.
