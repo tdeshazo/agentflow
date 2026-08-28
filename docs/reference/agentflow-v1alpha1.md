@@ -135,6 +135,10 @@ Can require clean state:
 - `normalized-hash`: a normalization transform removes explicitly permitted bookkeeping differences before hashing; all other structure remains protected.
 
 Integrity rules and path allowlists solve different problems: an allowed path may still have restricted semantics through normalized integrity checks.
+Explicit integrity paths include ignored workspace files and fail closed when
+they match no files. A symlink is hashed as a link object (including its target
+text) without following the target; integrity does not protect content outside
+the workspace through a symlink.
 
 ### Checkpointing
 
@@ -215,6 +219,11 @@ A `type` declares intended behavior; exact runtime implementation depends on the
 ## `spec.preconditions`
 
 Deterministic checks performed before mutable work. Common checks include repository identity, required commands/files, delegation from CI workflow to canonical gate, saved Git lineage, and protected-boundary integrity.
+
+Preconditions default to `scope: always`. Use `scope: initialization` for a
+fact that must hold only while establishing fresh durable state and that the
+workflow is expected to change later. Initialization-scoped checks run again
+after an explicit reset, but not during an ordinary retry or resume.
 
 ## `spec.progress`
 
@@ -470,6 +479,11 @@ A robust completion contract commonly requires:
 - summary of branch/base/head/commits/changed files/gate status.
 
 The complete marker should be written last, after every required assertion and checkpoint.
+
+An assertion using `uses:` resolves the named tool definition. Assertion
+context accepts only read-only `workspace-policy`, `file-regex`, and
+`markdown-checklist-progress` tools; shell and checkpoint tools are rejected.
+`file-regex` assertions require `with.path` and `with.regex`.
 
 ### `Completion.FinalValidation` durability
 

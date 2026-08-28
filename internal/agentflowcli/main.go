@@ -652,6 +652,10 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 		if status.ActivePhase != "" {
 			presenter.IndentedMetadata("  ", "active_phase", status.ActivePhase, clioutput.RoleAccent)
 		}
+		if status.FailureStage != "" {
+			presenter.IndentedMetadata("  ", "failure_stage", status.FailureStage, clioutput.RoleWarning)
+			presenter.IndentedMetadata("  ", "last_error", status.LastError, clioutput.RoleError)
+		}
 		if status.Recovery != "" {
 			presenter.IndentedMetadata("  ", "recovery", status.Recovery, clioutput.StateRole(status.Recovery))
 			presenter.IndentedMetadata("  ", "next_action", status.NextAction, clioutput.StateRole(status.NextAction))

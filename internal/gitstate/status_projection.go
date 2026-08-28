@@ -20,6 +20,8 @@ type StatusProjection struct {
 	ActorCompleted   bool   `json:"actor_completed"`
 	FailureKind      string `json:"failure_kind,omitempty"`
 	ValidationFailed string `json:"validation_failed,omitempty"`
+	FailureStage     string `json:"failure_stage,omitempty"`
+	LastError        string `json:"last_error,omitempty"`
 	Recovery         string `json:"recovery,omitempty"`
 	NextAction       string `json:"next_action,omitempty"`
 	Complete         bool   `json:"complete"`
@@ -80,6 +82,14 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		return StatusProjection{}, err
 	}
 	complete := initialized && completeExists && repo.ObjectExists(completeSHA+"^{commit}") && repo.IsAncestor(completeSHA, "HEAD")
+	var lastFailure FailureRecord
+	failureExists := false
+	if d.Records.LastFailure != "" {
+		failureExists, err = store.GetJSON(d.Records.LastFailure, &lastFailure)
+		if err != nil {
+			return StatusProjection{}, err
+		}
+	}
 
 	state := "uninitialized"
 	if initialized {
@@ -104,6 +114,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 			}
 		}
 	}
+	if initialized && !complete && !activeExists && failureExists {
+		state = "failed/retryable"
+	}
 
 	projection := StatusProjection{
 		SchemaVersion: 1,
@@ -114,6 +127,8 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		State:         state,
 		Head:          head,
 		Complete:      complete,
+		FailureStage:  lastFailure.Stage,
+		LastError:     lastFailure.Error,
 	}
 	if initialized {
 		projection.Base = base
@@ -143,6 +158,9 @@ func setRecoveryMetadata(projection *StatusProjection) {
 	case "safety-failed/terminal":
 		projection.Recovery = "operator-action-required"
 		projection.NextAction = "remediate-then-rerun"
+	case "failed/retryable":
+		projection.Recovery = "automatic-on-rerun"
+		projection.NextAction = "rerun"
 	}
 }
 

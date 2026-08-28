@@ -304,6 +304,11 @@ func (v validator) references() {
 	v.runtimeLifecycleValidation()
 	for i, check := range v.w.Spec.Preconditions {
 		v.check(fmt.Sprintf("spec.preconditions[%d]", i), check)
+		switch check.Scope {
+		case "", "always", "initialization":
+		default:
+			v.add(Invalid, fmt.Sprintf("spec.preconditions[%d].scope", i), "unsupported precondition scope %q", check.Scope)
+		}
 		v.condition(fmt.Sprintf("spec.preconditions[%d].when", i), check.When)
 	}
 	for i, p := range v.w.Spec.Phases {
@@ -602,7 +607,24 @@ func (v validator) assertions(path string, as []Assertion) {
 
 func (v validator) assertion(path string, a Assertion) {
 	if a.Uses != "" {
-		v.tool(path+".uses", a.Uses)
+		tool, ok := v.w.Spec.Tools[a.Uses]
+		if !ok {
+			v.add(Invalid, path+".uses", "unknown tool %q", a.Uses)
+			return
+		}
+		switch tool.Type {
+		case "workspace-policy", "file-regex", "markdown-checklist-progress":
+		default:
+			v.add(Invalid, path+".uses", "tool %q has type %q, which is not supported in assertion context", a.Uses, tool.Type)
+		}
+		if tool.Type == "file-regex" {
+			if a.With.Path == "" {
+				v.add(Invalid, path+".with.path", "is required for file-regex assertions")
+			}
+			if a.With.Regex == "" {
+				v.add(Invalid, path+".with.regex", "is required for file-regex assertions")
+			}
+		}
 		return
 	}
 	switch a.Type {

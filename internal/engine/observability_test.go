@@ -10,6 +10,7 @@ import (
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/observability"
+	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 	codexprovider "github.com/tdeshazo/agentflow/provider/codex"
 )
@@ -44,6 +45,70 @@ func TestRunCreatesDescriptorAndDurableOperationalLog(t *testing.T) {
 	}
 	if _, ok, err := e.Store.Resolve(gitstate.DescriptorRecord); err != nil || !ok {
 		t.Fatalf("descriptor record = ok %v, err %v", ok, err)
+	}
+}
+
+func TestCompletionFailureIsDurableAndClearedAfterSuccessfulRetry(t *testing.T) {
+	repo := newDurableRepo(t)
+	statePath := filepath.Join(repo, "state.txt")
+	if err := os.WriteFile(statePath, []byte("pending\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "state.txt")
+	gitIn(t, repo, "commit", "-qm", "seed state")
+	pattern := strings.Repeat("x", maxValidationFailureOutput+1024)
+	w := &workflow.Workflow{
+		APIVersion: "agentflow.dev/v1alpha1",
+		Kind:       "AgentWorkflow",
+		Metadata:   workflow.Metadata{Name: "observable-completion-failure"},
+		Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{Root: repo, MutationPolicy: workflow.MutationPolicy{Allowed: []string{"state.txt"}}},
+			Tools:     map[string]workflow.Tool{"checked": {Type: "file-regex"}},
+			Flow:      []workflow.FlowStep{{Complete: "default"}},
+			Completion: map[string]workflow.Completion{"default": {Assertions: []workflow.Assertion{{
+				Uses: "checked", With: workflow.ToolArguments{Path: "state.txt", Regex: "^" + pattern + "$"},
+			}}}},
+		},
+	}
+	first := newCompletionRegressionEngine(t, w, &completionRegressionProvider{})
+	if err := first.Run(context.Background()); err == nil {
+		t.Fatal("completion unexpectedly succeeded")
+	}
+	snapshot, err := first.statusSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.State != "failed/retryable" || snapshot.FailureStage != "completion/default" || !strings.Contains(snapshot.LastError, "does not match") {
+		t.Fatalf("failed status = %+v", snapshot)
+	}
+	if len(snapshot.LastError) > maxValidationFailureOutput+64 || !strings.Contains(snapshot.LastError, "[validation output truncated]") {
+		t.Fatalf("last error was not bounded: length=%d suffix=%q", len(snapshot.LastError), snapshot.LastError[max(0, len(snapshot.LastError)-64):])
+	}
+	data, _, err := observability.Read(first.Repo, w.Metadata.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"event":"completion_end"`, `"stage":"completion/default"`, `"error":`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("failure log missing %s: %s", want, data)
+		}
+	}
+
+	if err := os.WriteFile(statePath, []byte(pattern+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "state.txt")
+	gitIn(t, repo, "commit", "-qm", "check state")
+	restarted := newCompletionRegressionEngine(t, w, &completionRegressionProvider{})
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = restarted.statusSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.State != "completed" || snapshot.FailureStage != "" || snapshot.LastError != "" {
+		t.Fatalf("successful retry retained failure = %+v", snapshot)
 	}
 }
 

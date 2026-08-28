@@ -260,6 +260,7 @@ type TempSpec struct {
 
 type Check struct {
 	ID                    string   `yaml:"id"`
+	Scope                 string   `yaml:"scope"`
 	When                  string   `yaml:"when"`
 	Type                  string   `yaml:"type"`
 	Path                  string   `yaml:"path"`

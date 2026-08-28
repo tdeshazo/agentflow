@@ -170,6 +170,19 @@ func (r Repo) PresentFiles() ([]string, error) {
 	)
 }
 
+// IntegrityFiles returns every file object physically present in the
+// workspace, including ignored files. This broader inventory is reserved for
+// explicit integrity rules: ignored control files remain excluded from the
+// implementation mutation boundary, but must not disappear from a protection
+// rule merely because Git ignores them.
+func (r Repo) IntegrityFiles() ([]string, error) {
+	return r.collectPaths(
+		[]string{"ls-files"},
+		[]string{"ls-files", "--others", "--exclude-standard"},
+		[]string{"ls-files", "--others", "--ignored", "--exclude-standard"},
+	)
+}
+
 func (r Repo) Add(paths []string) error {
 	if len(paths) == 0 {
 		return nil

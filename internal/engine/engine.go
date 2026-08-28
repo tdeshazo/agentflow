@@ -59,6 +59,12 @@ type Engine struct {
 	// It prevents a later invocation that fails during initialization or input
 	// compatibility checks from borrowing an older active record for guidance.
 	recoveryEligible bool
+	// initializing records whether this invocation is establishing a new
+	// durable run (including an explicit reset). It lets authored preconditions
+	// describe mutable initial state without making normal completion retries
+	// impossible after the workflow has changed that state.
+	initializing bool
+	runStage     string
 	// interruptionHook is a deterministic crash-window seam used by the
 	// conformance suite. It is intentionally unexported: provider contracts
 	// must not depend on test-only interruption behavior.
@@ -367,6 +373,7 @@ func coerce(kind string, v any) (any, error) {
 // with providers. It returns an error if the workflow fails.
 func (e *Engine) Run(ctx context.Context) (runErr error) {
 	e.recoveryEligible = false
+	e.runStage = "startup"
 	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
 		defer os.RemoveAll(e.tempDirectory)
 	}
@@ -389,6 +396,17 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			fields := map[string]string{"result": "success"}
 			if runErr != nil {
 				fields["result"] = "failure"
+				fields["stage"] = e.runStage
+				fields["error"] = errorOutput(runErr)
+				_, initialized, _ := e.Store.Resolve(e.runIdentityRecord())
+				_, active, _ := e.Store.Resolve(e.activeRecord())
+				if initialized && !active {
+					_ = e.Store.SetJSON(e.lastFailureRecord(), gitstate.FailureRecord{Stage: e.runStage, Error: errorOutput(runErr)})
+				} else {
+					_ = e.Store.Delete(e.lastFailureRecord())
+				}
+			} else {
+				_ = e.Store.Delete(e.lastFailureRecord())
 			}
 			_ = e.logStore.Event("workflow_end", fields)
 			if e.outputRestore != nil {
@@ -408,12 +426,18 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if _, active, err := e.Store.Resolve(e.activeRecord()); err == nil && active {
 		e.logEvent("workflow_resume", map[string]string{"workflow": e.Workflow.Metadata.Name})
 	}
-	if err := e.runBasicPreconditions(); err != nil {
-		return err
-	}
+	e.runStage = "preconditions"
 	reset, err := e.resetRequested()
 	if err != nil {
 		return fmt.Errorf("reset condition: %w", err)
+	}
+	_, initialized, err := e.Store.Resolve(e.baseRecord())
+	if err != nil {
+		return err
+	}
+	e.initializing = reset || !initialized
+	if err := e.runBasicPreconditions(); err != nil {
+		return err
 	}
 	// A reset is the intentional escape hatch from a prior run identity. For
 	// every other run, reject incompatible inputs before even basic checks can
@@ -427,6 +451,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		}
 	}
 	if reset {
+		e.runStage = "reset"
 		if err := e.Reset(); err != nil {
 			return err
 		}
@@ -446,6 +471,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if err := e.terminalStandaloneSafetyFailure(); err != nil {
 		return err
 	}
+	e.runStage = "state"
 	if err := e.initializeOrResumeState(); err != nil {
 		return err
 	}
@@ -482,6 +508,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		return err
 	}
 	if activeExists {
+		e.runStage = "recovery"
 		if !e.resumeEnabled() {
 			return fmt.Errorf("workflow has an interrupted active phase but resume is disabled")
 		}
@@ -494,8 +521,10 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		}
 	}
 	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
+		e.runStage = "schedule"
 		return e.runV1Alpha2Schedule(ctx)
 	}
+	e.runStage = "flow"
 	for _, step := range e.Workflow.Spec.Flow {
 		if err := e.runFlowStep(ctx, step); err != nil {
 			if errors.Is(err, errFlowStoppedSuccessfully) {
@@ -517,6 +546,7 @@ func (e *Engine) startObservation() error {
 		Branch:               e.branchRecord(),
 		ActivePhase:          e.activeRecord(),
 		WorkflowComplete:     e.workflowCompleteMarker(),
+		LastFailure:          e.lastFailureRecord(),
 		CompletedPhasePrefix: e.Workflow.Spec.State.Records.CompletedPhases,
 	})
 	descriptor.Process = gitstate.CurrentProcessMetadata()
@@ -598,6 +628,7 @@ func (e *Engine) pendingInvocationRecord() string { return "pending-invocation" 
 func (e *Engine) invocationOutcomeRecord() string { return "invocation-outcome" }
 func (e *Engine) integrityRecord() string         { return "integrity" }
 func (e *Engine) runIdentityRecord() string       { return "run-identity" }
+func (e *Engine) lastFailureRecord() string       { return "last-failure" }
 
 func (e *Engine) resumeEnabled() bool {
 	if e.Workflow.Spec.State.Resume.Enabled == nil {
@@ -655,6 +686,7 @@ func (e *Engine) runFlowStep(ctx context.Context, step workflow.FlowStep) error 
 		}
 	}
 	if step.Complete != "" {
+		e.runStage = "completion/" + step.Complete
 		if err := e.runCompletion(ctx, step.Complete); err != nil {
 			return err
 		}
@@ -707,6 +739,9 @@ func (e *Engine) runBasicPreconditions() error {
 		if c.When != "" {
 			continue
 		}
+		if c.Scope == "initialization" && !e.initializing {
+			continue
+		}
 		if err := e.runCheck(c); err != nil {
 			return fmt.Errorf("precondition %s: %w", c.ID, err)
 		}
@@ -717,6 +752,9 @@ func (e *Engine) runBasicPreconditions() error {
 func (e *Engine) runStatePreconditions() error {
 	for _, c := range e.Workflow.Spec.Preconditions {
 		if c.When == "" {
+			continue
+		}
+		if c.Scope == "initialization" && !e.initializing {
 			continue
 		}
 		ok, err := e.bool(nil, c.When)

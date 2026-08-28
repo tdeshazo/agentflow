@@ -55,6 +55,13 @@ type standaloneRepairState struct {
 }
 
 func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
+	previousStage := e.runStage
+	e.runStage = "phase/" + id
+	defer func() {
+		if runErr == nil {
+			e.runStage = previousStage
+		}
+	}()
 	if _, err := e.reconcilePendingInvocation(); err != nil {
 		return err
 	}
@@ -517,6 +524,13 @@ func (e *Engine) recordPhaseCommitActor(p *workflow.Phase, actorName string) err
 	return e.Store.SetJSON(e.activeRecord(), active)
 }
 func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Phase) (runErr error) {
+	previousStage := e.runStage
+	e.runStage = "validation/" + name
+	defer func() {
+		if runErr == nil {
+			e.runStage = previousStage
+		}
+	}()
 	if _, err := e.reconcilePendingInvocation(); err != nil {
 		return err
 	}

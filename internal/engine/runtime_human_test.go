@@ -31,6 +31,55 @@ func TestV1Alpha1CompletionFinalValidationInitiallyPasses(t *testing.T) {
 	assertCompletionRegressionRepairState(t, e, "default", "quality", 0, false)
 }
 
+func TestCompletionRetrySkipsInitializationPreconditionAndResolvesNamedAssertionTool(t *testing.T) {
+	repo := newDurableRepo(t)
+	statePath := filepath.Join(repo, "state.txt")
+	if err := os.WriteFile(statePath, []byte("pending\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "state.txt")
+	gitIn(t, repo, "commit", "-qm", "seed pending state")
+
+	w := &workflow.Workflow{
+		APIVersion: "agentflow.dev/v1alpha1",
+		Kind:       "AgentWorkflow",
+		Metadata:   workflow.Metadata{Name: "completion-retry-initial-state"},
+		Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{
+				Root:           repo,
+				MutationPolicy: workflow.MutationPolicy{Allowed: []string{"state.txt"}},
+			},
+			Preconditions: []workflow.Check{{
+				ID: "initially-pending", Scope: "initialization", Type: "file-contains", Path: "state.txt", Text: "pending",
+			}},
+			Tools: map[string]workflow.Tool{
+				"checked-state-with-an-arbitrary-name": {Type: "file-regex"},
+			},
+			Flow: []workflow.FlowStep{{Complete: "default"}},
+			Completion: map[string]workflow.Completion{"default": {Assertions: []workflow.Assertion{{
+				Uses: "checked-state-with-an-arbitrary-name",
+				With: workflow.ToolArguments{Path: "state.txt", Regex: `(?m)^checked$`},
+			}}}},
+		},
+	}
+
+	first := newCompletionRegressionEngine(t, w, &completionRegressionProvider{})
+	if err := first.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("initial completion error = %v, want regex failure", err)
+	}
+	if err := os.WriteFile(statePath, []byte("checked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "state.txt")
+	gitIn(t, repo, "commit", "-qm", "advance mutable state")
+
+	restarted := newCompletionRegressionEngine(t, w, &completionRegressionProvider{})
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatalf("completion retry: %v", err)
+	}
+	assertCompletionRegressionMarker(t, restarted, true)
+}
+
 func TestV1Alpha1CompletionFinalValidationRepairDurability(t *testing.T) {
 	t.Run("repair succeeds and completion clears state after marker", func(t *testing.T) {
 		repo := newDurableRepo(t)

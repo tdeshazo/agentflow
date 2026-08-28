@@ -142,6 +142,14 @@ refer to the complete named rule list with
 
 Integrity rules and path allowlists solve different problems: an allowed path may still have restricted semantics through normalized integrity checks.
 
+The integrity file set includes tracked, untracked non-ignored, and ignored
+files inside the workspace. Ignored controls therefore require explicit rules,
+and a rule that matches nothing fails closed. Symlinks are hashed as link
+objects (path plus link-target text) and are not followed. A rule may protect a
+symlink's identity, but it does not transfer mutation authority or integrity
+protection to an external target; external target contents need protection at
+their owning boundary.
+
 ### Checkpointing
 
 May permit agent-created commits and/or automatically checkpoint successful uncommitted work. A strong checkpoint policy asserts scope before staging, stages only allowed dirty files, commits if needed, requires a clean tree afterward, and reasserts scope.
@@ -166,13 +174,35 @@ Examples:
 
 A `type` declares intended behavior; exact runtime implementation depends on the workflow engine.
 
+Tool executability is contextual. A named tool accepted in validation is not
+necessarily accepted in a flow or completion assertion. Reference resolution
+proves only that the name exists; the validator and expanded plan must also
+confirm that its type is supported at that invocation site.
+
 ## `spec.preconditions`
 
 Deterministic checks performed before mutable work. Common checks include repository identity, required commands/files, delegation from CI workflow to canonical gate, saved Git lineage, and protected-boundary integrity.
 
+`scope` is either `always` (also the omitted default) or `initialization`.
+Always-scoped checks run on every invocation, including recovery and completion
+retry. Initialization-scoped checks run only when fresh durable state is
+established, including an explicit reset invocation.
+Scope and `when` are independent; the condition is evaluated only when the
+scope selects the invocation.
+
 A workflow that claims to own the "next" roadmap item should make roadmap
-order, dependency completion, and the exact pending target deterministic
-preconditions. Actor prompts do not establish scheduling eligibility.
+order and dependency completion deterministic always-scoped preconditions when
+those facts remain true after success. A target's pending state is mutable
+progress and must not be an always-scoped precondition in a safe-resume
+workflow. Use `scope: initialization` to bind its fresh starting state,
+documented progress-aware phase/flow eligibility before actor dispatch, and
+exact checked-target evidence at completion. Actor prompts do not establish
+scheduling eligibility.
+
+Unconditional preconditions must hold on a fresh run, active-phase recovery,
+accepted-phase resume, and completion retry. In particular, after a phase has
+checkpointed and advanced progress, a failed completion must be retryable
+without restoring the old unchecked state or rerunning the accepted actor.
 
 ## `spec.progress`
 
@@ -353,6 +383,18 @@ prove that exact target is checked with a deterministic assertion or validation
 step. `progress-empty` is inappropriate when later criteria are intentionally
 out of scope.
 
+Completion assertions have their own executable context. Prefer their
+documented built-in `type` values when they fit. A named `uses` assertion may
+reference only read-only `workspace-policy`, `file-regex`, or
+`markdown-checklist-progress` tools; file-regex requires `with.path` and
+`with.regex`. Shell, git-checkpoint, unknown, and other tool types are rejected
+in assertion context. Existence of the tool definition alone is not sufficient.
+
+Treat completion failure after a successful phase checkpoint as a normal
+resume case. Durable phase/progress evidence should remain accepted, and the
+next invocation should rerun the failed completion boundary rather than an
+actor.
+
 ## Operational invariants
 
 The examples embody these general invariants:
@@ -366,6 +408,9 @@ The examples embody these general invariants:
 7. Completion bookkeeping occurs only after implementation/audit/human prerequisites.
 8. Workflow completion is a separate validated state transition.
 9. Deterministic commands remain meaningful at the lifecycle point where they execute.
-10. Ignored local workflows, instructions, and authoring skills that affect
-    execution have explicit integrity protection when normal Git scope checks do
-    not cover them.
+10. Preconditions and eligibility remain valid across fresh execution,
+    active-phase recovery, accepted-phase resume, and completion retry.
+11. Ignored controls have explicit, non-empty integrity matches; symlink rules
+    protect link identity rather than external target contents.
+12. Named tool references are accepted only in invocation contexts that support
+    their tool type.

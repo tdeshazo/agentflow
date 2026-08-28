@@ -215,6 +215,58 @@ func TestValidateRejectsUnknownPreconditionsBeforeRuntime(t *testing.T) {
 	}
 }
 
+func TestValidatePreconditionScope(t *testing.T) {
+	valid := strings.Replace(executableFixture, "  agents:", `  preconditions:
+    - id: initial-file
+      scope: initialization
+      type: files-exist
+      paths: [README.md]
+  agents:`, 1)
+	if result := ValidateFile(writeWorkflow(t, valid)); result.Status != Executable {
+		t.Fatalf("initialization scope status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+
+	invalid := strings.Replace(valid, "scope: initialization", "scope: retry-only", 1)
+	result := ValidateFile(writeWorkflow(t, invalid))
+	if result.Status != Invalid {
+		t.Fatalf("invalid scope status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	if !diagnosticsContain(result.Diagnostics, "spec.preconditions[0].scope", "unsupported precondition scope") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+}
+
+func TestValidateAssertionToolsByType(t *testing.T) {
+	valid := strings.Replace(executableFixture, "  flow:\n    - phase: build", `  completion:
+    default:
+      assertions:
+        - uses: scope
+  flow:
+    - phase: build`, 1)
+	if result := ValidateFile(writeWorkflow(t, valid)); result.Status != Executable {
+		t.Fatalf("named workspace-policy assertion status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+
+	unsafe := strings.Replace(valid, "        - uses: scope\n  flow:", "        - uses: checkpoint\n  flow:", 1)
+	unsafe = strings.Replace(unsafe, "    scope:\n      type: workspace-policy", "    scope:\n      type: workspace-policy\n    checkpoint:\n      type: git-checkpoint", 1)
+	result := ValidateFile(writeWorkflow(t, unsafe))
+	if result.Status != Invalid {
+		t.Fatalf("mutating assertion status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	if !diagnosticsContain(result.Diagnostics, "spec.completion.default.assertions[0].uses", "not supported in assertion context") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+}
+
+func diagnosticsContain(diagnostics []Diagnostic, path, message string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Path == path && strings.Contains(diagnostic.Message, message) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateRejectsInvalidControlFlowExpressions(t *testing.T) {
 	cases := []struct {
 		name    string

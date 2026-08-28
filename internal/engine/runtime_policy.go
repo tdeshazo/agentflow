@@ -276,7 +276,7 @@ func (e *Engine) assertIntegrity() error {
 }
 
 func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
-	filesInWorkspace, err := e.Repo.PresentFiles()
+	filesInWorkspace, err := e.Repo.IntegrityFiles()
 	if err != nil {
 		return "", err
 	}
@@ -287,13 +287,33 @@ func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {
 		}
 	}
 	sort.Strings(files)
+	if len(files) == 0 {
+		return "", fmt.Errorf("paths matched no workspace files")
+	}
 	h := sha256.New()
 	for _, f := range files {
-		b, err := os.ReadFile(filepath.Join(e.Repo.Root, f))
+		path := filepath.Join(e.Repo.Root, f)
+		info, err := os.Lstat(path)
 		if err != nil {
 			return "", err
 		}
-		if rule.Mode == "normalized-hash" && rule.Normalize.Command != "" {
+		var b []byte
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return "", err
+			}
+			// Hash the link object, not the target. Following a workspace symlink
+			// could escape the repository and turn external state into acceptance
+			// authority without declaring that external boundary.
+			b = []byte("symlink\x00" + target)
+		} else {
+			b, err = os.ReadFile(path)
+			if err != nil {
+				return "", err
+			}
+		}
+		if rule.Mode == "normalized-hash" && rule.Normalize.Command != "" && info.Mode()&os.ModeSymlink == 0 {
 			cmd := exec.Command("sh", "-c", rule.Normalize.Command)
 			cmd.Dir = e.Repo.Root
 			cmd.Stdin = bytes.NewReader(b)

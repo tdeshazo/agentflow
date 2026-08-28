@@ -5,13 +5,13 @@ import (
 	"io"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
 // StatusSnapshot is the stable, non-secret view of durable workflow state.
-// ValidationError is intentionally not included: validation output may contain
-// arbitrary command output, while the validation name and failure kind are
-// sufficient for machine-readable state classification.
+// LastError is bounded and redacts environment-shaped diagnostics before it is
+// persisted; it remains diagnostic only and never authorizes recovery.
 type StatusSnapshot struct {
 	SchemaVersion    int    `json:"schema_version"`
 	Workflow         string `json:"workflow"`
@@ -26,6 +26,8 @@ type StatusSnapshot struct {
 	ActorCompleted   bool   `json:"actor_completed"`
 	FailureKind      string `json:"failure_kind,omitempty"`
 	ValidationFailed string `json:"validation_failed,omitempty"`
+	FailureStage     string `json:"failure_stage,omitempty"`
+	LastError        string `json:"last_error,omitempty"`
 	// Recovery and NextAction are stable, non-secret classifications. They
 	// describe how the existing runtime will evaluate a later run; they never
 	// authorize recovery or expose validation command output.
@@ -65,6 +67,11 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 			return StatusSnapshot{}, fmt.Errorf("active phase record %q has an invalid start commit", e.activeRecord())
 		}
 	}
+	var lastFailure gitstate.FailureRecord
+	failureExists, err := e.Store.GetJSON(e.lastFailureRecord(), &lastFailure)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
 
 	state := "uninitialized"
 	if initialized {
@@ -95,6 +102,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 			}
 		}
 	}
+	if initialized && !completed && !activeExists && failureExists {
+		state = "failed/retryable"
+	}
 
 	pendingGate := ""
 	if initialized && !completed && !activeExists {
@@ -118,6 +128,8 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		ActorCompleted: active.ActorCompleted,
 		Complete:       completed,
 		CompleteCommit: completeCommit,
+		FailureStage:   lastFailure.Stage,
+		LastError:      lastFailure.Error,
 	}
 	if activeExists {
 		snapshot.ActivePhase = active.PhaseID
@@ -139,6 +151,9 @@ func setRecoveryMetadata(snapshot *StatusSnapshot) {
 	case "safety-failed/terminal":
 		snapshot.Recovery = "operator-action-required"
 		snapshot.NextAction = "remediate-then-rerun"
+	case "failed/retryable":
+		snapshot.Recovery = "automatic-on-rerun"
+		snapshot.NextAction = "rerun"
 	}
 }
 
@@ -192,6 +207,10 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 			// absent from StatusSnapshot because it may contain command output.
 			p.MetadataStyled("validation_error", snapshot.validationError, clioutput.RoleError)
 		}
+	}
+	if snapshot.FailureStage != "" {
+		p.MetadataStyled("failure_stage", snapshot.FailureStage, clioutput.RoleWarning)
+		p.MetadataStyled("last_error", snapshot.LastError, clioutput.RoleError)
 	}
 	if snapshot.Recovery != "" {
 		p.MetadataStyled("recovery", snapshot.Recovery, clioutput.StateRole(snapshot.Recovery))

@@ -247,13 +247,23 @@ func (e *Engine) persistHumanEvidence(gate *workflow.HumanGate, record, head str
 }
 
 func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) {
+	previousStage := e.runStage
+	e.runStage = "completion/" + name
 	e.logEvent("completion_start", map[string]string{"completion": name})
 	defer func() {
 		result := "success"
 		if runErr != nil {
 			result = "failure"
 		}
-		e.logEvent("completion_end", map[string]string{"completion": name, "result": result})
+		fields := map[string]string{"completion": name, "result": result}
+		if runErr != nil {
+			fields["stage"] = "completion/" + name
+			fields["error"] = errorOutput(runErr)
+		}
+		e.logEvent("completion_end", fields)
+		if runErr == nil {
+			e.runStage = previousStage
+		}
 	}()
 	c, ok := e.Workflow.Spec.Completion[name]
 	if !ok {
@@ -469,10 +479,14 @@ func (e *Engine) commitLink(presenter clioutput.Presenter, commit string) string
 
 func (e *Engine) runAssertion(a workflow.Assertion) error {
 	if a.Uses != "" {
-		switch a.Uses {
-		case "assert-change-scope":
+		t, ok := e.Workflow.Spec.Tools[a.Uses]
+		if !ok {
+			return fmt.Errorf("unknown assertion tool %q", a.Uses)
+		}
+		switch t.Type {
+		case "workspace-policy":
 			return e.assertScope()
-		case "assert-regex":
+		case "file-regex":
 			p := a.With.Path
 			r := a.With.Regex
 			var err error
@@ -480,9 +494,19 @@ func (e *Engine) runAssertion(a workflow.Assertion) error {
 			if err != nil {
 				return err
 			}
+			r, err = e.context(nil).Expand(r)
+			if err != nil {
+				return err
+			}
 			return e.assertFileRegex(p, r)
+		case "markdown-checklist-progress":
+			if e.Workflow.Spec.Progress.Source.Path == "" {
+				return fmt.Errorf("markdown-checklist-progress requires spec.progress.source.path")
+			}
+			_, err := e.progressSnapshot()
+			return err
 		default:
-			return fmt.Errorf("unsupported assertion tool %q", a.Uses)
+			return fmt.Errorf("tool %q has type %q, which is not supported in assertion context", a.Uses, t.Type)
 		}
 	}
 	switch a.Type {

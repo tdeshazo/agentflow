@@ -518,6 +518,8 @@ The current runtime supports the following executable core:
   preconditions;
 - allowed-path mutation policy;
 - exact/group/normalized integrity hashing;
+- ignored-file integrity protection with zero-match failure and link-only
+  symlink hashing;
 - Markdown checklist progress and one-criterion progress invariants;
 - engine-owned criterion advancement by stable `criterionID`, with durable
   before-state and exact-delta enforcement;
@@ -528,6 +530,8 @@ The current runtime supports the following executable core:
 - shell, workspace-policy, Git-checkpoint, file-regex, and Markdown-checklist
   validation tools;
 - captured shell output and bounded, redacted validation failure logs;
+- durable bounded failure stage/error status for failures outside an active
+  phase, cleared after a successful retry;
 - durable content-addressed success evidence for equivalent deterministic
   validation requests;
 - one bounded repair attempt;

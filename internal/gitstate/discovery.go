@@ -21,7 +21,15 @@ type RecordNames struct {
 	Branch               string `json:"branch"`
 	ActivePhase          string `json:"active_phase"`
 	WorkflowComplete     string `json:"workflow_complete"`
+	LastFailure          string `json:"last_failure,omitempty"`
 	CompletedPhasePrefix string `json:"completed_phase_prefix,omitempty"`
+}
+
+// FailureRecord is bounded diagnostic state. It explains the last failed run
+// but never authorizes recovery or acceptance.
+type FailureRecord struct {
+	Stage string `json:"stage"`
+	Error string `json:"error"`
 }
 
 // ProcessMetadata is durable only while an AgentFlow process is active. The
@@ -173,6 +181,11 @@ func (d Descriptor) Validate(namespaceWorkflow string) error {
 	for _, item := range records {
 		if err := validateRecordName(item.record); err != nil {
 			return fmt.Errorf("invalid %s record: %w", item.label, err)
+		}
+	}
+	if d.Records.LastFailure != "" {
+		if err := validateRecordName(d.Records.LastFailure); err != nil {
+			return fmt.Errorf("invalid last failure record: %w", err)
 		}
 	}
 	if d.Process != nil && (d.Process.PID <= 0 || d.Process.Start == "") {

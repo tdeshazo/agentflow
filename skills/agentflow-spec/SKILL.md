@@ -39,7 +39,13 @@ Choose the requested mode:
 7. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
 8. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
 9. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
-10. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
+10. Design the same document for fresh initialization, active-phase recovery,
+    accepted-phase resume, completion retry, already-complete invocation, and
+    reset. Unconditional preconditions must remain true in every state that can
+    safely resume. Use `scope: initialization` for mutable facts required only
+    when establishing fresh durable state, and documented phase/flow
+    eligibility for actor dispatch.
+11. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
 For protected content, declare `spec.workspace.mutationPolicy.integrity` as a
 list of named rules. Each rule has `id`, `mode`, and non-empty `paths`; the
@@ -95,6 +101,11 @@ Inspect the expanded plan for resolved:
 - checkpoint behavior;
 - human gates;
 - completion ordering.
+
+Also inspect each unconditional precondition against the resume states above.
+Confirm that every named tool use is executable in its specific context;
+successful reference resolution alone does not establish completion-assertion
+support.
 
 Do not run a workflow merely to learn whether its YAML is valid.
 
@@ -171,8 +182,14 @@ Check for:
 - mutable paths that bypass `mutationPolicy.allowed`;
 - protected content not covered by an integrity boundary;
 - ignored local control files (including the selected workflow, repository
-  instructions, and authoring skills) that can change actor behavior without a
-  named integrity rule;
+  instructions, and authoring skills) that affect execution without an
+  explicit integrity rule, or rules that zero-match; symlink rules protect the
+  link object, not external target contents;
+- mutable initial facts left as unconditional preconditions instead of
+  `scope: initialization`, causing accepted-phase or completion retries to
+  fail;
+- named completion assertions whose referenced tool type is not documented as
+  executable in assertion context;
 - agent-controlled success without deterministic validation;
 - mutable phases without a resolved validation gate;
 - validation commands that are vacuous at their execution point, such as a
@@ -180,13 +197,15 @@ Check for:
 - repair policies that accidentally apply to hard/safety gates;
 - criterion phases without stable criteria or progress invariants;
 - workflows claiming the "next" roadmap criterion without deterministic
-  preconditions for roadmap order, completed dependencies, and the exact
-  pending target;
+  preconditions for stable roadmap order/dependencies and an
+  initialization-scoped exact-pending eligibility check;
 - actor edits to engine-owned progress;
 - single-criterion completion without deterministic evidence that its exact
   target is checked (when `progress-empty` would incorrectly require later
   criteria too);
 - completion markers written before final validation/checkpoint/post-checks;
+- completion failures after a successful phase checkpoint that cannot be
+  retried without rerunning actors or violating a now-stale precondition;
 - terminal validation that proves only scope, formatting, cleanliness, or an
   empty diff instead of re-running the canonical semantic acceptance gate;
 - human gates without durable evidence;
