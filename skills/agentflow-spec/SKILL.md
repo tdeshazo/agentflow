@@ -37,11 +37,22 @@ Choose the requested mode:
    Require a concrete actor or engine-owned transition for every allowlisted
    path; remove copied template paths that no phase needs.
 5. Bound each prompt to its outcome, scope, local checks, exclusions, and whether a diff is required. Keep acceptance logic outside the prompt.
-6. Give every mutable AI phase a resolved deterministic validation gate. Give every validation at least one deterministic step. Use no repair for hard gates or a bounded `repair: once`; rerun the gate after repair.
-7. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
-8. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
-9. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
-10. Design the same document for fresh initialization, active-phase recovery,
+6. Allocate model capability and reasoning effort by irreducible task risk,
+   ambiguity, and breadth—not phase importance labels. Reserve the strongest
+   model/highest effort for genuinely difficult judgment or adversarial review;
+   use proportionate capability for bounded work backed by deterministic gates.
+   Keep an independent final reviewer separate from implementers and routine
+   repair actors. Ephemeral invocations do not make reviewing one's own authored
+   repair independent.
+7. Give every mutable AI phase a resolved deterministic validation gate. Give
+   every validation at least one deterministic step. Use no repair for hard
+   gates or a bounded `repair: once`; rerun the gate after repair. A post-review
+   repair must be followed by another independent review; otherwise make the
+   review/final gate hard.
+8. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
+9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
+10. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
+11. Design the same document for fresh initialization, active-phase recovery,
     accepted-phase resume, completion retry, already-complete invocation, and
     reset. Unconditional preconditions must remain true in every state that can
     safely resume. Use `scope: initialization` for mutable facts required only
@@ -50,7 +61,7 @@ Choose the requested mode:
     phases. If already-satisfied reconciliation is required, make it an
     explicit operator-selected mode with complementary deterministic starting
     preconditions.
-11. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
+12. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
 For protected content, declare `spec.workspace.mutationPolicy.integrity` as a
 list of named rules. Each rule has `id`, `mode`, and non-empty `paths`; the
@@ -99,7 +110,7 @@ Fix every `invalid` diagnostic. If the document is valid but `unsupported`, remo
 
 Inspect the expanded plan for resolved:
 
-- agent capabilities;
+- agent models, phase/repair reasoning, and reviewer/repair independence;
 - lifecycle and phase validation;
 - repair actor and retry budget;
 - mutation/progress behavior;
@@ -207,6 +218,12 @@ Check for:
 - validation commands that are vacuous at their execution point, such as a
   worktree-only diff check after the lifecycle has checkpointed a clean tree;
 - repair policies that accidentally apply to hard/safety gates;
+- uniform maximal reasoning without task-specific justification, or a weaker
+  model/effort assigned to the phase carrying the hardest irreducible judgment;
+- a claimed independent reviewer reused as an earlier implementation-gate
+  repair actor; ephemeral execution does not erase code authorship;
+- a repairable adversarial/final gate whose repair can change accepted code
+  without another independent review;
 - criterion phases without stable criteria or progress invariants;
 - workflows claiming the "next" roadmap criterion without deterministic
   preconditions for stable roadmap order/dependencies and an

@@ -157,7 +157,7 @@ func setRecoveryMetadata(projection *StatusProjection) {
 		projection.NextAction = "rerun"
 	case "safety-failed/terminal":
 		projection.Recovery = "operator-action-required"
-		projection.NextAction = "remediate-then-rerun"
+		projection.NextAction = "reset-or-abandon"
 	case "failed/retryable":
 		projection.Recovery = "automatic-on-rerun"
 		projection.NextAction = "rerun"

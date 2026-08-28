@@ -175,6 +175,30 @@ Terminal/provider presentation is runtime-owned. `color` is not an
 
 An agent's ability to write or commit never grants acceptance authority.
 
+Choose `model` and `reasoning` from the work each invocation must perform:
+
+- assign the strongest available model and highest justified effort to
+  irreducible ambiguity, cross-boundary safety reasoning, or adversarial
+  review—not automatically to every phase;
+- use proportionate capability for bounded implementation or deterministic
+  repair where focused tests and a later independent review constrain risk;
+- treat `model` as an agent capability and `reasoning` as invocation-specific
+  effort, so two phases may use the same agent model with different effort;
+- keep exact model names aligned with the target environment instead of copying
+  a transient model name from an example;
+- inspect the expanded plan to confirm inherited and overridden choices resolve
+  as intended.
+
+Independence is about authorship, not only conversational memory. An ephemeral
+reviewer that previously authored a validation repair is not independent of
+that repair. For workflows promising an independent final review, use a
+separate routine repair actor and reserve the final reviewer for the review
+phase. Prefer `repair: none` on the adversarial/final gate unless its repair is
+followed by another independent review; rerunning only the deterministic gate
+does not review the repair's broader reasoning. Model diversity may improve a
+review, but distinct responsibility and deterministic acceptance matter more
+than using different model families for their own sake.
+
 ### Tools
 
 Supported tool `type` values:
@@ -407,7 +431,7 @@ onFailure:
   strategy: repair-once
   maxRepairAttempts: 1
   repair:
-    actor: reviewer
+    actor: repairer
     reasoning: high
     prompt: Repair only the bounded deterministic failure.
   then:
@@ -748,7 +772,7 @@ defaults:
       reasoning: high
       requiresChange: false
   repair:
-    actor: reviewer
+    actor: repairer
     reasoning: high
     prompt: |
       Repair only the bounded deterministic validation failure.
@@ -894,7 +918,7 @@ spec:
         reasoning: high
         requiresChange: false
     repair:
-      actor: reviewer
+      actor: repairer
       reasoning: high
       prompt: |
         Repair only the current bounded validation failure.
@@ -902,6 +926,7 @@ spec:
 
   agents:
     implementer: {}
+    repairer: {}
     reviewer: {}
 
   tools:
@@ -1046,8 +1071,11 @@ Authoring loop:
 3. Fix every invalid diagnostic at the reported YAML path.
 4. Remove or replace unsupported runtime constructs when execution is required.
 5. Run `plan --expanded`.
-6. Inspect resolved actor, lifecycle, validation, repair, mutation/progress,
-   checkpoint, human-gate, and completion semantics.
+6. Inspect resolved model and reasoning choices alongside actor, lifecycle,
+   validation, repair, mutation/progress, checkpoint, human-gate, and
+   completion semantics. Confirm capability is proportional to task risk, the
+   final reviewer did not author earlier routine repairs, and no post-review
+   repair can escape independent scrutiny.
 7. Evaluate the preconditions and phase/flow eligibility for fresh,
    interrupted, accepted-phase, completion-failed, complete, and reset states;
    no safe retry may depend on mutable progress reverting, and no premature
@@ -1101,6 +1129,12 @@ Avoid these:
 - using `criterion` display text when stable `criterionID` is available;
 - declaring both `when` and `if` on one human gate;
 - using `repair: once` without a resolvable repair actor;
+- assigning maximal reasoning to every phase without explaining why its
+  irreducible judgment exceeds what deterministic gates and later review cover;
+- reusing a claimed independent reviewer as an implementation-gate repair
+  actor and assuming ephemeral execution restores independence;
+- allowing repair after the final adversarial review without another
+  independent review of the repaired result;
 - making a repair gate the final hard acceptance gate when repair is not desired;
 - writing a completion marker before final validation/checkpoint/post-checks;
 - using a worktree-only diff check after checkpoint as meaningful completion
@@ -1128,6 +1162,8 @@ When uncertain, prefer the design with:
 - explicit mutation scope;
 - safe-resume lifecycle;
 - bounded repair;
+- model capability and reasoning effort proportional to each role's risk;
+- separate routine repair and independent final-review responsibilities;
 - stable IDs;
 - engine-owned progress transitions;
 - human verification only where automation cannot decide;

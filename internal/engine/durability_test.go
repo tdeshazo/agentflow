@@ -721,20 +721,23 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	if !strings.Contains(out.String(), "state: safety-failed/terminal") || !strings.Contains(out.String(), "actor_completed: true") || !strings.Contains(out.String(), "failure_kind: safety") {
 		t.Fatalf("safety status = %s", out.String())
 	}
-	if !strings.Contains(out.String(), "recovery: operator-action-required") || !strings.Contains(out.String(), "next_action: remediate-then-rerun") {
+	if !strings.Contains(out.String(), "recovery: operator-action-required") || !strings.Contains(out.String(), "next_action: reset-or-abandon") {
 		t.Fatalf("safety recovery status = %s", out.String())
 	}
-	if !strings.Contains(out.String(), "operator action is required") || !strings.Contains(out.String(), "automatic actor and repair execution stopped") || !strings.Contains(out.String(), "repair or revert") || !strings.Contains(out.String(), "reset is not required") {
+	if !strings.Contains(out.String(), "operator action is required") || !strings.Contains(out.String(), "terminal safety prevents this durable run from continuing") || !strings.Contains(out.String(), "reset the run to start again, or abandon it") {
 		t.Fatalf("safety recovery wording = %s", out.String())
 	}
 	out.Reset()
 	if err := e.StatusJSONTo(&out, false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"state":"safety-failed/terminal"`) || strings.Contains(out.String(), "out-of-scope file changed") {
+	if !strings.Contains(out.String(), `"state":"safety-failed/terminal"`) ||
+		!strings.Contains(out.String(), `"recovery":"operator-action-required"`) ||
+		!strings.Contains(out.String(), `"next_action":"reset-or-abandon"`) ||
+		strings.Contains(out.String(), "out-of-scope file changed") {
 		t.Fatalf("safety JSON compatibility/privacy = %s", out.String())
 	}
-	if guidance := e.FailureRecoveryGuidance(); !strings.Contains(guidance, "operator action is required") || !strings.Contains(guidance, "Repair or revert") || !strings.Contains(guidance, "intentionally abandon") {
+	if guidance := e.FailureRecoveryGuidance(); !strings.Contains(guidance, "operator action is required") || !strings.Contains(guidance, "Terminal safety prevents this durable run from continuing") || !strings.Contains(guidance, "Reset the run to start again, or abandon it") {
 		t.Fatalf("safety guidance = %q", guidance)
 	}
 

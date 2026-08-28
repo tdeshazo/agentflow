@@ -78,7 +78,7 @@ func TestStatusProjectionAddsRecoveryMetadataForActionableFailures(t *testing.T)
 		nextAction string
 	}{
 		{name: "validation", failure: "validation", state: "validation-failed/recoverable", recovery: "automatic-on-rerun", nextAction: "rerun"},
-		{name: "safety", failure: "safety", state: "safety-failed/terminal", recovery: "operator-action-required", nextAction: "remediate-then-rerun"},
+		{name: "safety", failure: "safety", state: "safety-failed/terminal", recovery: "operator-action-required", nextAction: "reset-or-abandon"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			store := NewStore(repo, tt.name)

@@ -150,7 +150,7 @@ func setRecoveryMetadata(snapshot *StatusSnapshot) {
 		snapshot.NextAction = "rerun"
 	case "safety-failed/terminal":
 		snapshot.Recovery = "operator-action-required"
-		snapshot.NextAction = "remediate-then-rerun"
+		snapshot.NextAction = "reset-or-abandon"
 	case "failed/retryable":
 		snapshot.Recovery = "automatic-on-rerun"
 		snapshot.NextAction = "rerun"
@@ -219,7 +219,7 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 		case "automatic-on-rerun":
 			p.Line(clioutput.RoleWarning, "recovery guidance: correct the validation failure if needed, then rerun; durable phase state will be used. Use reset only to intentionally abandon the run")
 		case "operator-action-required":
-			p.Line(clioutput.RoleError, "recovery guidance: operator action is required; automatic actor and repair execution stopped. repair or revert the workspace-policy violation, then rerun. reset is not required merely because the safety failure occurred")
+			p.Line(clioutput.RoleError, "recovery guidance: operator action is required; terminal safety prevents this durable run from continuing. reset the run to start again, or abandon it")
 		}
 	}
 	completeRole := clioutput.RoleMuted
@@ -258,9 +258,8 @@ func (e *Engine) FailureRecoveryGuidance() string {
 			"Inspect status and logs, then rerun the same agentflow run command (the same invocation); rerunning is the normal recovery action. AgentFlow will resume from durable phase state rather than discard accepted work. " +
 			"Use reset only to intentionally abandon this durable run."
 	case "safety-failed/terminal":
-		return "AgentFlow recovery: operator action is required. Automatic actor and repair recovery stopped for the current workspace-policy violation. " +
-			"Repair or revert the violation, inspect status and logs, then rerun the same agentflow run command (the same invocation) so normal durable recovery checks can decide whether to resume. " +
-			"Reset is not required merely because the safety failure occurred; use reset only to intentionally abandon this durable run."
+		return "AgentFlow recovery: operator action is required. Terminal safety prevents this durable run from continuing. " +
+			"Reset the run to start again, or abandon it."
 	default:
 		return ""
 	}
