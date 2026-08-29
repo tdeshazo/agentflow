@@ -152,7 +152,9 @@ func TestResetFinishesInterruptedActorQuarantineCleanup(t *testing.T) {
 	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
 		t.Fatal(err)
 	}
-	gitIn(t, repo, "worktree", "remove", "--force", quarantine.Repo.Root)
+	if err := quarantine.Remove(); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := e.Reset(); err != nil {
 		t.Fatal(err)

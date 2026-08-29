@@ -18,8 +18,11 @@ func TestDiscoverDescriptorsIgnoresActorQuarantineBaselinePins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := readActorBaselinePin(repo, baselineRef); err != nil || !ok {
+	if _, ok, err := readActorBaselinePin(quarantine.Repo, baselineRef); err != nil || !ok {
 		t.Fatalf("retained quarantine baseline pin: present=%t err=%v", ok, err)
+	}
+	if _, ok, err := readActorBaselinePin(repo, baselineRef); err != nil || ok {
+		t.Fatalf("authoritative repository sees isolated baseline pin: present=%t err=%v", ok, err)
 	}
 
 	items, err := repo.DiscoverDescriptors()

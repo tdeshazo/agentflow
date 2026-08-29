@@ -109,9 +109,11 @@ func (w *ActorWorktree) baselinePins() ([]actorBaselinePin, error) {
 		if err != nil {
 			return nil, err
 		}
-		// The superproject ref is shared with the primary repository and
-		// remains accessible after Git removes the linked worktree.
-		pins = append(pins, actorBaselinePin{repo: w.Primary, ref: ref, tree: w.BaselineTree})
+		rootRepo, err := w.rootBaselineRepo()
+		if err != nil {
+			return nil, err
+		}
+		pins = append(pins, actorBaselinePin{repo: rootRepo, ref: ref, tree: w.BaselineTree})
 	}
 	for _, snapshot := range w.Submodules {
 		repo, err := actorSubmoduleRepo(w.Repo.Root, snapshot.Path)
@@ -126,6 +128,20 @@ func (w *ActorWorktree) baselinePins() ([]actorBaselinePin, error) {
 	}
 	sort.Slice(pins, func(i, j int) bool { return pins[i].ref < pins[j].ref })
 	return pins, nil
+}
+
+func (w *ActorWorktree) rootBaselineRepo() (Repo, error) {
+	info, err := os.Lstat(filepath.Join(w.Repo.Root, ".git"))
+	if err != nil {
+		return Repo{}, err
+	}
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		return w.Repo, nil
+	}
+	if info.Mode().IsRegular() {
+		return w.Primary, nil
+	}
+	return Repo{}, fmt.Errorf("actor quarantine Git metadata has an unsafe file type")
 }
 
 func (w *ActorWorktree) validateBaselinePins() error {

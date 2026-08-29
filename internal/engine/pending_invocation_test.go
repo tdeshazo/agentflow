@@ -239,7 +239,7 @@ func TestReconcilePendingActorQuarantineSurvivesImmediateGarbageCollection(t *te
 	}
 
 	gitIn(t, repo, "gc", "--prune=now")
-	if !e.Repo.ObjectExists(quarantine.BaselineTree + "^{tree}") {
+	if !quarantine.Repo.ObjectExists(quarantine.BaselineTree + "^{tree}") {
 		t.Fatal("garbage collection pruned the pending quarantine baseline")
 	}
 	if moved, err := e.reconcilePendingInvocation(); err != nil || moved {

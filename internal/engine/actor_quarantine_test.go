@@ -65,9 +65,8 @@ func TestActorQuarantineIgnoresUnchangedIgnoredBaselineFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(request.Workspace, ".agentflow", "workflows", "example.yaml")); !os.IsNotExist(err) {
 			return errors.New("actor can read the private workflow")
 		}
-		if len(request.FilesystemBoundary) != 2 ||
-			request.FilesystemBoundary[0].Access != provider.FilesystemDeny ||
-			request.FilesystemBoundary[1].Access != provider.FilesystemRead {
+		if len(request.FilesystemBoundary) != 1 ||
+			request.FilesystemBoundary[0].Access != provider.FilesystemDeny {
 			return errors.New("provider did not receive the authoritative read boundary")
 		}
 		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
@@ -269,9 +268,7 @@ func TestActorQuarantineKeepsRejectedBaselinePinnedForInspection(t *testing.T) {
 	}
 
 	gitIn(t, repo, "gc", "--prune=now")
-	if !e.Repo.ObjectExists(outcome.BaselineTree + "^{tree}") {
-		t.Fatal("garbage collection pruned the rejected quarantine baseline")
-	}
+	gitIn(t, safetyErr.quarantine, "cat-file", "-e", outcome.BaselineTree+"^{tree}")
 	if diff := gitIn(t, safetyErr.quarantine, "diff", outcome.BaselineTree, "--", "."); !strings.Contains(diff, "actor result") {
 		t.Fatalf("rejected quarantine is not inspectable against its baseline: %q", diff)
 	}
@@ -284,9 +281,7 @@ func TestActorQuarantineKeepsRejectedBaselinePinnedForInspection(t *testing.T) {
 		t.Fatalf("durable safety restart invoked provider %d times", p.calls)
 	}
 	gitIn(t, repo, "gc", "--prune=now")
-	if !restarted.Repo.ObjectExists(outcome.BaselineTree + "^{tree}") {
-		t.Fatal("durable safety restart released the rejected quarantine baseline")
-	}
+	gitIn(t, safetyErr.quarantine, "cat-file", "-e", outcome.BaselineTree+"^{tree}")
 }
 
 func TestActorQuarantineRejectsOutOfScopePermissionOnlyChanges(t *testing.T) {

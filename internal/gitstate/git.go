@@ -18,32 +18,6 @@ import (
 // Repo represents a Git repository and provides operations for repository interaction.
 type Repo struct{ Root string }
 
-// GitCommonDir returns the canonical absolute path to the repository's shared
-// Git metadata. Actor sandboxes may read this path so Git continues to work
-// while the authoritative checkout itself remains unreadable.
-func (r Repo) GitCommonDir() (string, error) {
-	output, err := r.run(nil, "rev-parse", "--git-common-dir")
-	if err != nil {
-		return "", err
-	}
-	path := strings.TrimSpace(string(output))
-	if path == "" {
-		return "", fmt.Errorf("Git common directory is empty")
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.Root, path)
-	}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
 // run executes a git command in the repository with optional stdin input.
 func (r Repo) run(stdin []byte, args ...string) ([]byte, error) {
 	return r.runWithEnv(stdin, nil, args...)

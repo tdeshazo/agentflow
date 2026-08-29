@@ -128,7 +128,7 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	if err := policyEngine.assertActorChangedPathsAllowed(changed); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
-	if err := policyEngine.assertActorCumulativeScope(); err != nil {
+	if err := e.assertActorCumulativeScope(); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
 	primaryHead, err := e.Repo.Head()
@@ -154,6 +154,9 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
 	if rootMoved && primaryHead != head {
+		if err := e.Repo.ImportActorHead(worktree.Repo, head); err != nil {
+			return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
+		}
 		if err := e.Repo.AdoptActorHead(head); err != nil {
 			return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, fmt.Errorf("import authorized actor commits: %w", err))
 		}

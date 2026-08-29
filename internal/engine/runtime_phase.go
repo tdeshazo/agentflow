@@ -660,13 +660,8 @@ func (e *Engine) actorFilesystemBoundary() ([]provider.FilesystemRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	commonDir, err := e.Repo.GitCommonDir()
-	if err != nil {
-		return nil, err
-	}
 	return []provider.FilesystemRule{
 		{Path: authoritativeRoot, Access: provider.FilesystemDeny},
-		{Path: commonDir, Access: provider.FilesystemRead},
 	}, nil
 }
 

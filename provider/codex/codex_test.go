@@ -63,7 +63,6 @@ func TestBuildArgsEnforcesActorFilesystemBoundary(t *testing.T) {
 		Workspace: "/quarantine",
 		Sandbox:   "workspace-write",
 		FilesystemBoundary: []provider.FilesystemRule{
-			{Path: "/authoritative/.git", Access: provider.FilesystemRead},
 			{Path: "/authoritative", Access: provider.FilesystemDeny},
 		},
 	}, "/tmp/last")
@@ -77,7 +76,7 @@ func TestBuildArgsEnforcesActorFilesystemBoundary(t *testing.T) {
 		"--strict-config",
 		`default_permissions="actor_isolated"`,
 		`permissions.actor_isolated.extends=":workspace"`,
-		`permissions.actor_isolated.filesystem={"/authoritative"="deny","/authoritative/.git"="read"}`,
+		`permissions.actor_isolated.filesystem={"/authoritative"="deny"}`,
 	} {
 		if !contains(args, required) {
 			t.Fatalf("isolated Codex args missing %q: %#v", required, args)

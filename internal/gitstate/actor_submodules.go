@@ -43,35 +43,20 @@ func copyInitializedSubmoduleSnapshotsAt(source, destination Repo, parentPath, w
 		if err != nil {
 			return nil, fmt.Errorf("resolve initialized submodule %q: %w", submodule.path, err)
 		}
-		sourceRoot := sourceSubmodule.Root
 		if err := rejectTrackedActorPrivatePaths(sourceSubmodule); err != nil {
 			return nil, fmt.Errorf("validate initialized submodule %q actor view: %w", submodule.path, err)
 		}
-		if err := initializeActorSubmodule(destination, submodule, sourceRoot); err != nil {
+		startCommit, err := sourceSubmodule.Head()
+		if err != nil {
+			return nil, fmt.Errorf("inspect initialized submodule %q HEAD: %w", submodule.path, err)
+		}
+		if err := initializeActorSubmodule(destination, submodule, sourceSubmodule, startCommit); err != nil {
 			return nil, err
 		}
 
 		destinationSubmodule, err := actorSubmoduleRepo(destination.Root, submodule.path)
 		if err != nil {
 			return nil, fmt.Errorf("resolve quarantined submodule %q: %w", submodule.path, err)
-		}
-		startCommit, err := sourceSubmodule.Head()
-		if err != nil {
-			return nil, fmt.Errorf("inspect initialized submodule %q HEAD: %w", submodule.path, err)
-		}
-		if _, err := destinationSubmodule.run(
-			nil,
-			"-c",
-			"protocol.file.allow=always",
-			"fetch",
-			"--no-tags",
-			sourceRoot,
-			startCommit,
-		); err != nil {
-			return nil, fmt.Errorf("copy initialized submodule %q objects: %w", submodule.path, err)
-		}
-		if _, err := destinationSubmodule.run(nil, "checkout", "--detach", "--force", startCommit); err != nil {
-			return nil, fmt.Errorf("align initialized submodule %q HEAD: %w", submodule.path, err)
 		}
 
 		patch, err := sourceSubmodule.run(nil, "diff", "--binary", "--full-index", "HEAD", "--")
@@ -133,22 +118,12 @@ func copyInitializedSubmoduleSnapshotsAt(source, destination Repo, parentPath, w
 	return snapshots, nil
 }
 
-func initializeActorSubmodule(destination Repo, submodule initializedSubmodule, sourceRoot string) error {
-	urlOverride := "submodule." + submodule.name + ".url=" + sourceRoot
-	if _, err := destination.run(
-		nil,
-		"-c",
-		"protocol.file.allow=always",
-		"-c",
-		urlOverride,
-		"submodule",
-		"update",
-		"--init",
-		"--checkout",
-		"--no-fetch",
-		"--",
-		submodule.path,
-	); err != nil {
+func initializeActorSubmodule(destination Repo, submodule initializedSubmodule, source Repo, startCommit string) error {
+	path := filepath.Join(destination.Root, filepath.FromSlash(submodule.path))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create initialized submodule %q parent: %w", submodule.path, err)
+	}
+	if err := initializeIsolatedActorRepo(source, Repo{Root: path}, startCommit); err != nil {
 		return fmt.Errorf("populate initialized submodule %q: %w", submodule.path, err)
 	}
 	return nil

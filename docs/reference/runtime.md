@@ -570,18 +570,21 @@ unavailable values fail closed.
 The Codex adapter uses headless `codex exec`. Actor workspaces exclude
 `.agentflow/**` and `.agents/skills/agentflow-spec/**`, including ignored and
 untracked files. AgentFlow refuses to invoke an actor when either namespace is
-tracked in the current Git snapshot because the shared Git object database would
-otherwise keep that content readable even after removing its checkout files.
+tracked in the current Git snapshot because the depth-one actor repository would
+otherwise contain that private content in its `HEAD` tree.
 Actor-created changes in either namespace are rejected regardless of mutation
 allowlists or ignored-control patterns, including within initialized submodules.
 Runtime-private integrity paths remain in the authoritative baseline and are
 validated there after every provider invocation; the actor checkout validates
 only the visible portion of each integrity manifest.
 
-For actor invocations, the adapter uses a strict named Codex permissions profile
-that denies reads from the authoritative checkout while granting read access to
-only the shared Git metadata required by the quarantine worktree. It ignores
-user Codex configuration for that isolated invocation so a configured sandbox
+Each actor quarantine is an independent depth-one Git repository at the
+authoritative `HEAD`, not a linked worktree. This keeps normal actor Git commands
+and authorized actor commits available without exposing authoritative refs,
+parent history, or object storage. For actor invocations, the adapter uses a
+strict named Codex permissions profile that denies reads from the authoritative
+checkout. It ignores user Codex configuration for that isolated invocation so a
+configured sandbox
 cannot weaken the boundary. `danger-full-access` is rejected when this boundary
 is present. Custom providers receive the same provider-neutral filesystem rules.
 The engine invokes one only when it implements `FilesystemBoundaryEnforcer` and

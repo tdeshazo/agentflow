@@ -128,10 +128,67 @@ func TestActorWorktreeRejectsTrackedRuntimeControlFiles(t *testing.T) {
 			actorWorktreeGit(t, repo.Root, "commit", "-qm", "track runtime control")
 
 			_, err := repo.CreateActorWorktree()
-			if err == nil || !strings.Contains(err.Error(), "would remain readable through repository history") {
+			if err == nil || !strings.Contains(err.Error(), "would remain readable from the actor repository snapshot") {
 				t.Fatalf("CreateActorWorktree() error = %v, want tracked private-path rejection", err)
 			}
 		})
+	}
+}
+
+func TestActorWorktreeUsesIsolatedShallowGitMetadata(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	writeActorWorktreeFile(t, repo.Root, ".gitignore", ".agentflow/\n")
+	if err := os.MkdirAll(filepath.Join(repo.Root, ".agentflow", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeActorWorktreeFile(t, repo.Root, ".agentflow/workflows/task.yaml", "historical private workflow\n")
+	actorWorktreeGit(t, repo.Root, "add", "-f", ".agentflow/workflows/task.yaml")
+	actorWorktreeGit(t, repo.Root, "add", ".gitignore")
+	actorWorktreeGit(t, repo.Root, "commit", "-qm", "historical private workflow")
+	actorWorktreeGit(t, repo.Root, "rm", "-q", ".agentflow/workflows/task.yaml")
+	actorWorktreeGit(t, repo.Root, "commit", "-qm", "make runtime workflow private")
+	historicalBlobOutput, err := repo.run(nil, "rev-parse", "HEAD^:.agentflow/workflows/task.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalBlob := strings.TrimSpace(string(historicalBlobOutput))
+	if err := os.MkdirAll(filepath.Join(repo.Root, ".agentflow", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeActorWorktreeFile(t, repo.Root, ".agentflow/workflows/task.yaml", "current private workflow\n")
+
+	quarantine, err := repo.CreateActorWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = quarantine.Remove() })
+
+	gitInfo, err := os.Lstat(filepath.Join(quarantine.Repo.Root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitInfo.IsDir() || gitInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("quarantine Git metadata mode = %s, want independent directory", gitInfo.Mode())
+	}
+	output, err := quarantine.Repo.run(nil, "rev-list", "--count", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.TrimSpace(string(output)); count != "1" {
+		t.Fatalf("quarantine history depth = %q, want 1", count)
+	}
+	output, err = quarantine.Repo.run(nil, "log", "--all", "--format=%H", "--", ".agentflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history := strings.TrimSpace(string(output)); history != "" {
+		t.Fatalf("quarantine exposes private workflow history: %q", history)
+	}
+	if quarantine.Repo.ObjectExists(historicalBlob) {
+		t.Fatalf("quarantine object database exposes historical private workflow blob %s", historicalBlob)
+	}
+	if _, err := os.Stat(filepath.Join(quarantine.Repo.Root, ".agentflow")); !os.IsNotExist(err) {
+		t.Fatalf("quarantine exposes current private workflow: %v", err)
 	}
 }
 
@@ -227,7 +284,7 @@ func TestActorWorktreeRecoverySurvivesImmediateGarbageCollection(t *testing.T) {
 	}
 }
 
-func TestActorWorktreeCleanupFinishesAfterWorktreeRemoval(t *testing.T) {
+func TestActorWorktreeCleanupFinishesAfterRepositoryRemoval(t *testing.T) {
 	repo := newDiscoveryRepo(t)
 	writeActorWorktreeFile(t, repo.Root, "tracked.txt", "committed\n")
 	actorWorktreeGit(t, repo.Root, "add", "tracked.txt")
@@ -242,11 +299,11 @@ func TestActorWorktreeCleanupFinishesAfterWorktreeRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.run(nil, "worktree", "remove", "--force", quarantine.Repo.Root); err != nil {
+	if err := os.RemoveAll(quarantine.Repo.Root); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok, err := readActorBaselinePin(repo, baselineRef); err != nil || !ok || got != quarantine.BaselineTree {
-		t.Fatalf("baseline pin after worktree removal = %q present=%t err=%v, want %q", got, ok, err, quarantine.BaselineTree)
+	if _, ok, err := readActorBaselinePin(repo, baselineRef); err != nil || ok {
+		t.Fatalf("authoritative repository retained isolated baseline pin: present=%t err=%v", ok, err)
 	}
 	if err := CleanupRemovedActorWorktree(repo, quarantine.Repo.Root, quarantine.BaselineTree); err != nil {
 		t.Fatal(err)
@@ -295,6 +352,20 @@ func TestActorWorktreeUsesCommonGitDirectoryFromLinkedWorktree(t *testing.T) {
 	}
 	if got := filepath.Dir(quarantine.Parent); got != primaryRoot {
 		t.Fatalf("quarantine root = %q, want %q", got, primaryRoot)
+	}
+	linkedHead, err := linked.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quarantine.StartCommit != linkedHead {
+		t.Fatalf("linked-worktree quarantine start = %q, want %q", quarantine.StartCommit, linkedHead)
+	}
+	gitInfo, err := os.Lstat(filepath.Join(quarantine.Repo.Root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitInfo.IsDir() {
+		t.Fatalf("linked-source quarantine Git metadata mode = %s, want independent directory", gitInfo.Mode())
 	}
 	if err := quarantine.Remove(); err != nil {
 		t.Fatal(err)

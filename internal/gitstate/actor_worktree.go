@@ -21,8 +21,8 @@ const (
 	actorWorktreeDirectoryName           = "worktree"
 )
 
-// ActorWorktree is a detached, disposable checkout used to isolate one actor
-// invocation from the workflow's authoritative workspace.
+// ActorWorktree is a detached, disposable, depth-one repository used to
+// isolate one actor invocation from the workflow's authoritative workspace.
 type ActorWorktree struct {
 	Primary             Repo
 	Repo                Repo
@@ -38,8 +38,9 @@ type ActorWorktree struct {
 // alongside tree snapshots when exact filesystem state matters.
 type FilePermissions map[string]uint32
 
-// CreateActorWorktree creates a detached worktree whose files match the
-// primary workspace, including tracked dirt and ignored or untracked files.
+// CreateActorWorktree creates a detached, isolated repository whose files
+// match the primary workspace, including tracked dirt and ignored or untracked
+// files.
 // The returned baseline tree makes later imports relative to the exact state
 // the actor observed rather than merely to HEAD.
 func (r Repo) CreateActorWorktree() (_ *ActorWorktree, returnErr error) {
@@ -80,11 +81,8 @@ func (r Repo) createActorWorktree(resolveRoot func(Repo) (string, error)) (_ *Ac
 		}
 	}()
 
-	if _, err := r.run(nil, "worktree", "add", "--detach", "--no-checkout", path, start); err != nil {
-		return nil, fmt.Errorf("create actor quarantine worktree: %w", err)
-	}
-	if _, err := worktree.Repo.run(nil, "checkout", "--force", start, "--"); err != nil {
-		return nil, fmt.Errorf("populate actor quarantine worktree: %w", err)
+	if err := initializeIsolatedActorRepo(r, worktree.Repo, start); err != nil {
+		return nil, err
 	}
 	patch, err := r.run(nil, "diff", "--binary", "--full-index", "HEAD", "--")
 	if err != nil {
@@ -137,6 +135,29 @@ func (r Repo) createActorWorktree(resolveRoot func(Repo) (string, error)) (_ *Ac
 		return nil, fmt.Errorf("prepare actor quarantine workspace: %w", err)
 	}
 	return worktree, nil
+}
+
+func initializeIsolatedActorRepo(source, destination Repo, startCommit string) error {
+	if _, err := (Repo{Root: filepath.Dir(destination.Root)}).run(nil, "init", "--quiet", destination.Root); err != nil {
+		return fmt.Errorf("initialize actor quarantine repository: %w", err)
+	}
+	if _, err := destination.run(
+		nil,
+		"-c",
+		"protocol.file.allow=always",
+		"fetch",
+		"--quiet",
+		"--depth=1",
+		"--no-tags",
+		source.Root,
+		startCommit,
+	); err != nil {
+		return fmt.Errorf("copy actor quarantine snapshot: %w", err)
+	}
+	if _, err := destination.run(nil, "checkout", "--quiet", "--detach", "--force", startCommit); err != nil {
+		return fmt.Errorf("populate actor quarantine repository: %w", err)
+	}
+	return nil
 }
 
 // RecoverActorWorktree reconstructs an actor worktree from durable state only
@@ -985,8 +1006,32 @@ func (r Repo) AdoptActorHead(commit string) error {
 	return err
 }
 
-// Remove unregisters and deletes a compliant actor worktree. Safety failures
-// deliberately do not call Remove so operators can inspect the checkout.
+// ImportActorHead copies a validated actor-created commit lineage from an
+// isolated quarantine before the authoritative branch adopts it.
+func (r Repo) ImportActorHead(actor Repo, commit string) error {
+	if commit == "" {
+		return fmt.Errorf("actor commit is empty")
+	}
+	if r.ObjectExists(commit) {
+		return nil
+	}
+	if _, err := r.run(
+		nil,
+		"-c",
+		"protocol.file.allow=always",
+		"fetch",
+		"--no-tags",
+		actor.Root,
+		commit,
+	); err != nil {
+		return fmt.Errorf("import actor commit objects: %w", err)
+	}
+	return nil
+}
+
+// Remove deletes a compliant actor quarantine, including legacy linked
+// worktree registrations. Safety failures deliberately do not call Remove so
+// operators can inspect the checkout.
 func (w *ActorWorktree) Remove() error {
 	if w == nil {
 		return nil
@@ -1009,6 +1054,16 @@ func (w *ActorWorktree) Remove() error {
 		return fmt.Errorf("open actor quarantine root: %w", err)
 	}
 	defer root.Close()
+	rootRepo, err := w.rootBaselineRepo()
+	if err != nil {
+		return fmt.Errorf("inspect actor quarantine Git metadata: %w", err)
+	}
+	if rootRepo.Root == w.Repo.Root {
+		if err := os.RemoveAll(w.Parent); err != nil {
+			return fmt.Errorf("remove isolated actor quarantine: %w", err)
+		}
+		return nil
+	}
 	if _, err := w.Primary.run(nil, "worktree", "remove", "--force", w.Repo.Root); err != nil {
 		return fmt.Errorf("remove actor quarantine worktree: %w", err)
 	}

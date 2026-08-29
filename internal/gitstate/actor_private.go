@@ -41,7 +41,7 @@ func rejectTrackedActorPrivatePaths(repo Repo) error {
 	}
 	sort.Strings(private)
 	return fmt.Errorf(
-		"actor-private runtime control path is tracked by Git and would remain readable through repository history: %s",
+		"actor-private runtime control path is tracked by Git and would remain readable from the actor repository snapshot: %s",
 		strings.Join(private, ", "),
 	)
 }
