@@ -206,6 +206,8 @@ substantially implemented. It must distinguish delivered behavior from
 remaining specification, diagnostic, compatibility, and evidence gaps. A
 foundation is not complete merely because later milestones used part of it.
 
+- [ ] Foundation closure exit criteria are satisfied and linked to durable evidence.
+
 ---
 
 ### Stage 1A — Executable schema, validation, and diagnostics
