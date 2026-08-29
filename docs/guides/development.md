@@ -25,8 +25,8 @@ Run the repository-owned gate from the repository root:
 ```
 
 It checks Go formatting and diff hygiene, tests, vet, race-enabled tests, and
-the reference workflow definition. Treat it as the canonical development gate;
-CI invokes the same script.
+every checked-in executable workflow definition under `spec/` and `examples/`.
+Treat it as the canonical development gate; CI invokes the same script.
 
 ## Focused commands
 

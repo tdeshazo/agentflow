@@ -91,3 +91,52 @@ func TestReferenceDocumentsPointToGeneratedSchemas(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
+	cases := []struct {
+		path      string
+		fragments []string
+	}{
+		{
+			path: filepath.Join("..", "..", "README.md"),
+			fragments: []string{
+				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2",
+				"every checked-in executable workflow definition under `spec/` and `examples/`",
+				"does not make live model calls",
+			},
+		},
+		{
+			path: filepath.Join("..", "..", "docs", "guides", "development.md"),
+			fragments: []string{
+				"every checked-in executable workflow definition under `spec/` and `examples/`",
+				"examples/feature.agent-workflow.yaml", "plan --expanded",
+			},
+		},
+		{
+			path: filepath.Join("..", "..", "skills", "agentflow-spec", "SKILL.md"),
+			fragments: []string{
+				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2",
+				"../../docs/reference/agentflow-v1alpha2.md", "normalizedExecution",
+			},
+		},
+		{
+			path: filepath.Join("..", "..", "scripts", "check.sh"),
+			fragments: []string{
+				"rg --files spec examples", "validate -f \"$workflow\"",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(filepath.Base(tc.path), func(t *testing.T) {
+			contents, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fragment := range tc.fragments {
+				if !strings.Contains(string(contents), fragment) {
+					t.Fatalf("%s must contain %q", tc.path, fragment)
+				}
+			}
+		})
+	}
+}

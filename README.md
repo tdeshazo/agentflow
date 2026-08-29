@@ -134,8 +134,9 @@ Run the repository-owned deterministic development gate:
 ./scripts/check.sh
 ```
 
-It checks formatting and diff hygiene, tests, vet, race-enabled tests, and the
-reference workflow definition. It does not make live model calls. For
+It checks formatting and diff hygiene, tests, vet, race-enabled tests, and
+every checked-in executable workflow definition under `spec/` and `examples/`.
+It does not make live model calls. For
 individual workflow validation, see the
 [development guide](docs/guides/development.md).
 

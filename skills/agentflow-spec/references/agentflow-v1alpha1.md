@@ -26,7 +26,9 @@ This reference describes the semantics used by the workflow definitions in this 
 
 ## Top level
 
-- `apiVersion`: DSL version. Current examples use `agentflow.dev/v1alpha1`.
+- `apiVersion`: DSL version. This v1alpha1 reference and the art portfolio
+  example use `agentflow.dev/v1alpha1`; the concise feature example uses
+  `agentflow.dev/v1alpha2`.
 - `kind`: `AgentWorkflow`.
 - `metadata`: workflow identity, description, and optional source provenance.
 - `spec`: executable orchestration contract.

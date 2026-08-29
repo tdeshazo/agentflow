@@ -45,8 +45,8 @@ step "Build AgentFlow CLI"
 AGENTFLOW="$GATE_TMP/agentflow"
 go build -o "$AGENTFLOW" .
 
-step "Reference AgentWorkflow definition"
-mapfile -t WORKFLOW_FILES < <(rg --files spec -g '*.yaml' -g '*.yml' | sort)
+step "Checked-in executable AgentWorkflow definitions"
+mapfile -t WORKFLOW_FILES < <(rg --files spec examples -g '*.yaml' -g '*.yml' | sort)
 for workflow in "${WORKFLOW_FILES[@]}"; do
   printf '\n-- validating %s --\n' "$workflow"
   "$AGENTFLOW" validate -f "$workflow"

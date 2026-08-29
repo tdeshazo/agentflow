@@ -1,6 +1,6 @@
 ---
 name: agentflow-spec
-description: Create, modify, explain, review, validate, or compare AgentFlow `agentflow.dev/v1alpha1` `AgentWorkflow` YAML specifications. Use when turning a task or process into an AgentFlow workflow; changing an existing workflow; explaining, auditing, or comparing workflow behavior; or diagnosing specification validation, safety, resumability, or design problems.
+description: Create, modify, explain, review, validate, or compare AgentFlow `agentflow.dev/v1alpha1` and `agentflow.dev/v1alpha2` `AgentWorkflow` YAML specifications. Use when turning a task or process into an AgentFlow workflow; changing an existing workflow; explaining, auditing, or comparing workflow behavior; or diagnosing specification validation, safety, resumability, or design problems.
 ---
 
 # AgentFlow specifications
@@ -18,6 +18,7 @@ Read resources progressively:
 
 - Read [the authoring guide](references/authoring-agentflow-v1alpha1.md) before authoring or modifying a workflow. It contains supported values, patterns, templates, and the validation loop.
 - Read [the field guide](references/agentflow-v1alpha1.md) only for a field’s semantics, an expanded-plan interpretation, or a review question that needs detail.
+- For a v1alpha2 workflow, read the checked-in [v1alpha2 authoring contract](../../docs/reference/agentflow-v1alpha2.md) before authoring or modifying it. Do not infer v1alpha1-only authority from the concise form.
 
 ## Modes
 
@@ -130,7 +131,7 @@ Do not run a workflow merely to learn whether its YAML is valid.
 When asked to create a workflow:
 
 - Return or write one complete AgentWorkflow YAML document unless the user asks for fragments. For named discovery, `workflow-name.yaml` or `workflow-name.yml` is sufficient.
-- Use the current `agentflow.dev/v1alpha1` / `AgentWorkflow` identifiers.
+- Use either supported `agentflow.dev/v1alpha1` or `agentflow.dev/v1alpha2` identifier with `kind: AgentWorkflow`; prefer v1alpha2 only when its concise contract can express every required authority.
 - Prefer concise defaults and runtime-owned safe resume.
 - Include comments only where they explain a non-obvious safety or authority decision.
 - Keep prompts shorter than orchestration logic.

@@ -40,7 +40,10 @@ only the environment-specific read-only Go module stat-cache warning; the gate
 completed successfully.
 
 The gate implementation is [scripts/check.sh](../../scripts/check.sh), and its
-scope is described in [README.md](../../README.md). The test and race commands
+scope is described in [README.md](../../README.md). It validates every
+checked-in executable workflow definition under `spec/` and `examples/`; the
+conformance corpus, generated schemas, public references, and authoring skill
+are covered by its ordinary Go tests. The test and race commands
 were given a writable temporary `GOCACHE`; no repository source or protected
 path was changed.
 
@@ -199,3 +202,11 @@ reruns after a declared dependency changes, the expanded plan includes the
 complete normalized execution contract, and the v1alpha1-to-v1alpha2 migration
 path is explicit and authority-preserving. These findings are limited to
 checked-in repository evidence and do not change the roadmap.
+
+The canonical offline gate now closes the public-contract seam directly: it
+validates the reference and both shipped examples, while
+`TestPublicAuthoringContractCoversBothExecutableVersions` prevents the README,
+development guide, authoring skill, and gate definition from drifting apart on
+supported versions, expanded-plan inspection, or the no-live-model-call
+boundary. Schema generation, conformance diagnostics, normalized plans, and
+runtime behavior remain covered by the same gate's deterministic Go tests.
