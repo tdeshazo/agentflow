@@ -1,0 +1,254 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+
+metadata:
+  name: workflows-as-branches
+  description: >-
+    Add repository-local active workflow selection and branch-like CLI ergonomics
+    while preserving AgentFlow's current selector, picker, configuration, and
+    error behavior whenever no active workflow is selected.
+
+spec:
+  parameters:
+    repo_root:
+      type: path
+      default: "."
+    implementer_model:
+      type: string
+      default: "{{ env.AGENTFLOW_IMPLEMENTER_MODEL | default('gpt-5.6-terra') }}"
+    reviewer_model:
+      type: string
+      default: "{{ env.AGENTFLOW_REVIEWER_MODEL | default('gpt-5.6-luna') }}"
+
+  workspace:
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - internal/agentflowcli/**
+        - internal/gitstate/**
+        - internal/workflow/**
+        - README.md
+        - docs/reference/runtime.md
+        - docs/guides/development.md
+      integrity:
+        - id: canonical-quality-gate
+          mode: exact-hash
+          paths:
+            - scripts/check.sh
+            - .github/workflows/quality.yml
+        - id: dependency-surface
+          mode: exact-hash
+          paths:
+            - go.mod
+            - go.sum
+        - id: workflow-contract
+          mode: exact-hash
+          paths:
+            - spec/**
+            - skills/agentflow-spec/**
+            - docs/reference/agentflow-v1alpha1.md
+            - docs/reference/agentflow-v1alpha2.md
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+      validation: quality
+      checkpoint: checkpoint
+    phases:
+      implementation:
+        actor: implementer
+        reasoning: high
+        requiresChange: true
+      audit:
+        actor: reviewer
+        reasoning: high
+        requiresChange: false
+    repair:
+      actor: implementer
+      reasoning: high
+      prompt: |
+        The deterministic AgentFlow quality gate failed. Repair only the failure
+        caused by this feature. Preserve existing behavior outside the active
+        workflow feature, do not weaken tests or validation, and do not change
+        the public workflow specification or dependency set.
+
+  agents:
+    implementer:
+      model: "{{ parameters.implementer_model }}"
+    reviewer:
+      model: "{{ parameters.reviewer_model }}"
+
+  tools:
+    quality-gate:
+      type: shell
+      command: "./scripts/check.sh"
+      mutates_workspace: false
+    assert-scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+      mutates_workspace: false
+    checkpoint:
+      type: git-checkpoint
+      stage: allowed-dirty-files
+      commit_if_dirty: true
+      require_clean_after: true
+
+  preconditions:
+    - id: repository-root
+      type: git-repository
+      path: "{{ parameters.repo_root }}"
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, go, rg]
+    - id: required-files
+      type: files-exist
+      paths:
+        - internal/agentflowcli/main.go
+        - internal/agentflowcli/config.go
+        - internal/gitstate/git.go
+        - internal/workflow/discovery.go
+        - docs/reference/runtime.md
+        - scripts/check.sh
+        - .github/workflows/quality.yml
+    - id: ci-uses-canonical-gate
+      type: file-contains
+      path: .github/workflows/quality.yml
+      text: scripts/check.sh
+
+  validation:
+    quality:
+      repair: once
+      steps:
+        - uses: assert-scope
+        - uses: quality-gate
+    final-quality:
+      repair: none
+      steps:
+        - uses: assert-scope
+        - uses: quality-gate
+
+  phases:
+    - id: active-workflow-selection
+      kind: implementation
+      label: add-active-workflow-selection-state
+      prompt: |
+        Implement repository-local active workflow selection as lightweight CLI
+        state, distinct from durable workflow execution state such as an active
+        phase. Treat it like Git's current branch: the selection must never dirty
+        the implementation workspace, must work correctly in linked worktrees,
+        and must not grant execution or acceptance authority.
+
+        Store only logical workflow selector identity plus the minimum state
+        needed for branch-like switching (including a previous selection for
+        `switch -`). Reuse Git-path resolution rather than assuming `.git` is a
+        directory. Provide focused tests for read, write, replace, previous,
+        clear, linked-worktree-safe path resolution, and malformed/stale state.
+        Do not add dependencies or change workflow DSL semantics.
+
+    - id: active-selector-fallback
+      kind: implementation
+      label: default-commands-to-active-workflow
+      prompt: |
+        Integrate active workflow selection into existing CLI selector resolution
+        without changing behavior when no active workflow exists.
+
+        Preserve existing precedence and make active selection only a fallback:
+        explicit command selectors (`-f`, positional selectors, and logs'
+        `--workflow`) win first; existing per-command config defaults win next;
+        an active workflow is consulted only when those are absent; if no active
+        workflow exists, continue through the exact current picker/error path.
+        `status --all` (including configured all-mode) must ignore active
+        selection. One-off explicit selectors must never silently switch the
+        active workflow.
+
+        Apply the fallback consistently to run, status, reset, validate, plan,
+        and logs. If active state names a workflow that is no longer discoverable,
+        fail clearly with guidance to switch or clear it rather than silently
+        selecting another workflow. Add regression tests proving the legacy
+        no-active behavior is unchanged in interactive and non-interactive paths.
+
+    - id: branch-style-sugar
+      kind: implementation
+      label: add-branch-style-cli-sugar
+      prompt: |
+        Add a small, coherent branch-like CLI surface on top of active workflow
+        selection. Required ergonomics:
+
+        - `agentflow switch <name>` selects an existing discovered workflow.
+        - `agentflow switch` reuses the existing interactive picker in a terminal
+          and follows the existing non-interactive error style otherwise.
+        - `agentflow switch -` returns to the previous active workflow.
+        - `agentflow switch --clear` clears active/previous selection and restores
+          the legacy no-active path.
+        - `agentflow checkout ...` is an exact compatibility alias for `switch`.
+        - `agentflow current` prints only the active logical name; with no active
+          workflow it prints nothing and succeeds for shell-friendly use.
+        - `agentflow workflows` lists discovered workflow names deterministically
+          and marks the active one with a branch-style `*` indicator.
+        - `agentflow logs` may omit `--workflow` when an active workflow supplies
+          it, while retaining the current error when neither is available.
+
+        Keep command output concise, reuse discovery/picker/config helpers, and
+        update usage plus the runtime/development documentation with selector
+        precedence, repository/worktree scope, stale-selection behavior, and
+        examples. Avoid changing existing status/run output formats merely to
+        advertise the active selection.
+
+    - id: compatibility-audit
+      kind: audit
+      label: audit-active-workflow-compatibility
+      validation: final-quality
+      prompt: |
+        Review the complete branch-like workflow feature as a compatibility and
+        safety change. Inspect tests before trusting implementation claims.
+        Confirm that no active workflow means exactly the pre-feature behavior,
+        config and explicit-selector precedence remain intact, status --all is
+        unaffected, active selection is worktree-safe and never workspace state,
+        stale selections fail explicitly, and new sugar is internally
+        consistent. Repair genuine in-scope defects only; do not expand the DSL,
+        add dependencies, weaken the canonical gate, or introduce unrelated CLI
+        redesign.
+
+  completion:
+    branch-like-workflows:
+      assertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+      finalValidation: final-quality
+      checkpoint:
+        uses: checkpoint
+        label: finalize-workflows-as-branches
+      afterCheckpointAssertions:
+        - type: workspace-integrity
+          policy: spec.workspace.mutationPolicy.integrity
+        - type: implementation-workspace-clean
+      writeMarker:
+        value: head_commit
+      summary:
+        title: "Branch-like workflow selection implemented."
+        include:
+          - branch
+          - base_commit
+          - head_commit
+          - commits_since_base
+          - changed_files_since_base
+          - workspace_clean
+
+  flow:
+    - phase: active-workflow-selection
+    - phase: active-selector-fallback
+    - phase: branch-style-sugar
+    - phase: compatibility-audit
+    - complete: branch-like-workflows
