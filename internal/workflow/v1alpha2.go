@@ -291,6 +291,10 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			Workspace: WorkspaceSpec{MutationPolicy: MutationPolicy{
 				Allowed: append([]string(nil), authored.Spec.Workspace.AllowWrites...),
 			}},
+			// v1alpha2 deliberately has no procedural lifecycle fields. Lower the
+			// normal safe path to an explicit shared policy so the executable
+			// representation and expanded plan cannot hide that authority.
+			Lifecycle:  LifecyclePolicy{Policy: "safe-resume"},
 			Agents:     make(map[string]Agent, len(authored.Spec.Agents)),
 			Tools:      make(map[string]Tool, len(authored.Spec.Validation)),
 			Validation: make(map[string]Validation, len(authored.Spec.Validation)),

@@ -9,7 +9,14 @@ import (
 // ExpandedPlan is a read-only explanation of the actual executable contract.
 // It intentionally contains no provider invocation or mutable tool operation.
 type ExpandedPlan struct {
-	Workflow                   string               `yaml:"workflow"`
+	Workflow string `yaml:"workflow"`
+	// NormalizedExecution is the complete executable projection after concise
+	// defaults and version-specific syntax have been lowered. It deliberately
+	// retains every shared workflow field that can affect execution so plan
+	// output is a comparison surface, not a summary that hides policy.
+	// Authoring defaults are cleared because their resolved values appear at
+	// their authority-owning locations below.
+	NormalizedExecution        Workflow             `yaml:"normalizedExecution"`
 	WorkspaceMutationAllowlist []string             `yaml:"workspaceMutationAllowlist"`
 	ResolvedAgents             []PlannedAgent       `yaml:"resolvedAgents"`
 	ResolvedLifecycle          LifecyclePolicy      `yaml:"resolvedLifecycle"`
@@ -81,6 +88,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 	}
 	plan := ExpandedPlan{
 		Workflow:                   w.Metadata.Name,
+		NormalizedExecution:        normalizedExecutionProjection(w, n.DependencyGraph),
 		WorkspaceMutationAllowlist: append([]string{}, w.Spec.Workspace.MutationPolicy.Allowed...),
 		DependencyGraph:            clonePhaseDependencyGraph(n.DependencyGraph),
 		ResolvedLifecycle:          resolvedLifecycle,
@@ -183,6 +191,18 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 	}
 	sort.Strings(plan.HumanGates)
 	return plan, nil
+}
+
+func normalizedExecutionProjection(w *Workflow, graph PhaseDependencyGraph) Workflow {
+	projection := *w
+	projection.Spec = w.Spec
+	// Defaults are authoring-only inputs. NormalizeWorkflow has already applied
+	// them to the effective agents, lifecycle, phases, and repair policies.
+	// Leaving them here would make it unclear whether an authority came from a
+	// generated default or from the resolved execution contract.
+	projection.Spec.Defaults = AuthoringDefaults{}
+	projection.DependencyGraph = clonePhaseDependencyGraph(graph)
+	return projection
 }
 
 func runtimeOwnsPhaseLifecycle(w *Workflow, p Phase) bool {

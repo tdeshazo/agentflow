@@ -27,7 +27,10 @@ func (p *referenceWorkflowProvider) Run(_ context.Context, request provider.Requ
 		return provider.Result{}, nil
 	}
 	path := filepath.Join(request.Workspace, "internal", "reference-"+phase+".txt")
-	return provider.Result{}, os.WriteFile(path, []byte("implemented\n"), 0o644)
+	if err := os.WriteFile(path, []byte("implemented\n"), 0o644); err != nil {
+		return provider.Result{}, err
+	}
+	return provider.Result{}, nil
 }
 
 func TestReferenceV1Alpha1WorkflowCompletesWithRuntimeOwnedLifecycle(t *testing.T) {
@@ -100,6 +103,111 @@ func TestReferenceV1Alpha1WorkflowCompletesWithRuntimeOwnedLifecycle(t *testing.
 	}
 }
 
+func TestReferenceV1Alpha1SafeResumeRecoversRetainedWorkWithoutProceduralRecovery(t *testing.T) {
+	reference := referenceWorkflow(t)
+	result := workflow.ValidateFile(reference)
+	if result.Status != workflow.Executable || result.Normalized == nil {
+		t.Fatalf("reference workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	if len(result.Document.Workflow.Spec.Recovery.ActivePhase) != 0 {
+		t.Fatalf("reference workflow declares procedural recovery: %#v", result.Document.Workflow.Spec.Recovery.ActivePhase)
+	}
+
+	repo := referenceWorkflowRepository(t)
+	p := &referenceWorkflowProvider{calls: map[string]int{}}
+	first, err := New(
+		result.Normalized.Workflow,
+		map[string]provider.Provider{"codex": p},
+		Options{RepoRoot: repo, Overrides: map[string]string{"require_human_verification": "false"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := first.phaseByID("01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := first.newActivePhaseFor(phase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Store.SetJSON(first.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.runPhaseActor(context.Background(), phase, phase.Prompt, &active); err != nil {
+		t.Fatal(err)
+	}
+	if !active.ActorCompleted {
+		t.Fatal("successful actor invocation did not persist actor_completed")
+	}
+
+	resumed, err := New(
+		result.Normalized.Workflow,
+		map[string]provider.Provider{"codex": p},
+		Options{RepoRoot: repo, Overrides: map[string]string{"require_human_verification": "false"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed.In = strings.NewReader("")
+	resumed.Out = io.Discard
+	if err := resumed.Run(context.Background()); err != nil {
+		t.Fatalf("safe-resume failed: %v", err)
+	}
+	if p.calls["01"] != 1 {
+		t.Fatalf("safe-resume replayed phase 01 actor %d times", p.calls["01"])
+	}
+	for _, phase := range []string{"02", "07", "08"} {
+		if p.calls[phase] != 1 {
+			t.Fatalf("phase %s calls = %d, want 1", phase, p.calls[phase])
+		}
+	}
+}
+
+func TestReferenceV1Alpha1CanonicalGateEvidenceReusesAndInvalidates(t *testing.T) {
+	reference := referenceWorkflow(t)
+	result := workflow.ValidateFile(reference)
+	if result.Status != workflow.Executable || result.Normalized == nil {
+		t.Fatalf("reference workflow status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+
+	repo := referenceWorkflowRepository(t)
+	counter := filepath.Join(t.TempDir(), "canonical-gate-invocations")
+	t.Setenv("AGENTFLOW_REFERENCE_GATE_COUNTER", counter)
+	e, err := New(
+		result.Normalized.Workflow,
+		map[string]provider.Provider{"codex": &referenceWorkflowProvider{calls: map[string]int{}}},
+		Options{RepoRoot: repo},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runValidation(context.Background(), "phaseGate", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runValidation(context.Background(), "phaseGate", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := validationInvocationCount(t, counter); got != 1 {
+		t.Fatalf("canonical gate invocations after identical validation = %d, want 1", got)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "internal", ".keep"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runValidation(context.Background(), "phaseGate", nil); err != nil {
+		t.Fatalf("changed declared dependency did not rerun canonical gate: %v", err)
+	}
+	if got := validationInvocationCount(t, counter); got != 2 {
+		t.Fatalf("canonical gate invocations after dependency change = %d, want 2", got)
+	}
+}
+
 func referenceWorkflow(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -123,7 +231,7 @@ func referenceWorkflowRepository(t *testing.T) string {
 		}
 	}
 	writeReferenceFile("AGENTS.md", "reference fixture instructions\n", 0o644)
-	writeReferenceFile("scripts/check.sh", "#!/bin/sh\nset -eu\ntest -f .agentflow-reference-gate\n", 0o755)
+	writeReferenceFile("scripts/check.sh", "#!/bin/sh\nset -eu\ntest -f .agentflow-reference-gate\nif [ -n \"${AGENTFLOW_REFERENCE_GATE_COUNTER:-}\" ]; then\n  printf x >> \"$AGENTFLOW_REFERENCE_GATE_COUNTER\"\nfi\n", 0o755)
 	writeReferenceFile(".github/workflows/quality.yml", "jobs:\n  quality:\n    steps:\n      - run: scripts/check.sh\n", 0o644)
 	writeReferenceFile(".agentflow-reference-gate", "ready\n", 0o644)
 	writeReferenceFile("docs/planning/roadmap-current.md", "Status: In progress\n- [ ] First acceptance criterion text\n- [ ] Second acceptance criterion text\n", 0o644)

@@ -40,6 +40,9 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	if got := d.Workflow.Spec.Workspace.MutationPolicy.Allowed; len(got) != 2 || got[0] != "src/**" || got[1] != "tests/**" {
 		t.Fatalf("normalized allowlist = %#v", got)
 	}
+	if got := d.Workflow.Spec.Lifecycle.Policy; got != "safe-resume" {
+		t.Fatalf("normalized lifecycle policy = %q, want safe-resume", got)
+	}
 	if got := d.PhaseDependencies["review"]; len(got) != 1 || got[0] != "implement" {
 		t.Fatalf("dependencies = %#v", d.PhaseDependencies)
 	}

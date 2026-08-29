@@ -172,6 +172,13 @@ conformance suite. The v1alpha2 contract shares the core agent capability
 fields, but intentionally does not claim the full v1alpha1 schema, including
 `spec.defaults.agent` inheritance.
 
+For new workflows that fit its core contract, prefer v1alpha2: safe resume,
+checkpointing, durable phase evidence, and completion ordering are runtime
+owned rather than procedural authoring work. The
+[v1alpha1-to-v1alpha2 migration guide](docs/guides/migrating-v1alpha1-to-v1alpha2.md)
+defines the authority-preserving migration procedure and the cases that must
+remain on v1alpha1 until they are expressible.
+
 ## Publishing
 
 This package intentionally does **not** select a software license for you.

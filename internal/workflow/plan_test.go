@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,59 @@ func TestExpandedPlanRevealsResolvedDefaultsAndAcceptanceOrder(t *testing.T) {
 	}
 	if strings.Index(acceptance, "deterministic validation") > strings.Index(acceptance, "checkpoint") {
 		t.Fatalf("validation occurs after checkpoint: %q", acceptance)
+	}
+}
+
+func TestExpandedPlanIncludesCompleteNormalizedExecutionContract(t *testing.T) {
+	d, err := Decode(filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildExpandedPlan(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized, err := NormalizeWorkflow(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := *normalized.Workflow
+	want.Spec = normalized.Workflow.Spec
+	want.Spec.Defaults = AuthoringDefaults{}
+	want.DependencyGraph = clonePhaseDependencyGraph(normalized.DependencyGraph)
+	if !reflect.DeepEqual(plan.NormalizedExecution, want) {
+		t.Fatalf("normalized execution differs from executable workflow:\n got %#v\nwant %#v", plan.NormalizedExecution, want)
+	}
+	if len(plan.NormalizedExecution.Spec.Preconditions) == 0 ||
+		len(plan.NormalizedExecution.Spec.Workspace.MutationPolicy.Integrity) == 0 ||
+		len(plan.NormalizedExecution.Spec.Flow) == 0 ||
+		len(plan.NormalizedExecution.Spec.Completion) == 0 {
+		t.Fatalf("complete execution contract omitted stateful policy: %#v", plan.NormalizedExecution.Spec)
+	}
+}
+
+func TestExpandedPlanMaterializesConciseDefaultsWithoutRetainingAuthoringDefaults(t *testing.T) {
+	d, err := Decode(writeWorkflow(t, conciseFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildExpandedPlan(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plan.NormalizedExecution.Spec.Defaults, AuthoringDefaults{}) {
+		t.Fatalf("normalized execution retained authoring defaults: %#v", plan.NormalizedExecution.Spec.Defaults)
+	}
+	actor := plan.NormalizedExecution.Spec.Agents["worker"]
+	if actor.Runner != "codex" || actor.Sandbox != "workspace-write" || actor.MayCommit {
+		t.Fatalf("normalized execution hid resolved actor authority: %#v", actor)
+	}
+	phase := plan.NormalizedExecution.Spec.Phases[0]
+	if phase.Validation != "gate" || !phase.RequiresChange || phase.Actor != "worker" {
+		t.Fatalf("normalized execution hid resolved phase authority: %#v", phase)
+	}
+	repair := plan.NormalizedExecution.Spec.Validation["gate"].OnFailure
+	if repair.Strategy != "repair-once" || repair.MaxRepairAttempts != 1 || repair.Repair.Actor != "worker" {
+		t.Fatalf("normalized execution hid resolved repair authority: %#v", repair)
 	}
 }

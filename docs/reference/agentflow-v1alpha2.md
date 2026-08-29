@@ -47,8 +47,9 @@ AgentFlow's existing executable authority concepts wherever possible:
 
 Normalization must preserve the authority boundary: actors can attempt work,
 workspace policy limits mutations, and deterministic validation authorizes
-advancement. Normalization must not create a second execution model or allow
-actor output to become acceptance evidence.
+advancement. It explicitly lowers the omitted v1alpha2 lifecycle plumbing to
+the shared `safe-resume` policy; it does not create a second execution model or
+allow actor output to become acceptance evidence.
 
 v1alpha2 has capability parity for the shared agent execution fields, not full
 v1alpha1 schema parity. In particular, the v1alpha1 `spec.defaults.agent`
@@ -394,6 +395,14 @@ agentflow plan --expanded -f examples/feature.agent-workflow.yaml
 The expanded plan exposes resolved named actors, the workspace authority,
 bounded repair behavior, dependency edges and their acceptance condition, the
 phase acceptance boundary, deterministic final validation, and durable
-completion behavior. Its safety section also makes the per-invocation
-`may_commit` check explicit—even when a provider returns an error—and labels
-checkpoint commits as runtime-owned rather than actor-created.
+completion behavior. Its `normalizedExecution` object is the complete lowered
+workflow contract: state, preconditions, mutation/integrity/lineage policy,
+validation definitions, lifecycle, flow conditions, phase actions, and
+completion declarations are all visible there. Authoring defaults are not
+retained as a second authority layer; their resolved values appear at the
+locations that own execution. Its safety section also makes the
+per-invocation `may_commit` check explicit—even when a provider returns an
+error—and labels checkpoint commits as runtime-owned rather than actor-created.
+
+For the explicit, authority-preserving path from v1alpha1, see the
+[migration guide](../guides/migrating-v1alpha1-to-v1alpha2.md).
