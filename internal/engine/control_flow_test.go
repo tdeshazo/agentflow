@@ -17,7 +17,8 @@ type checklistProvider struct {
 	closeAll bool
 }
 
-func (p *checklistProvider) Name() string { return "checklist" }
+func (p *checklistProvider) Name() string                     { return "checklist" }
+func (p *checklistProvider) EnforcesFilesystemBoundary() bool { return true }
 func (p *checklistProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++
 	path := filepath.Join(request.Workspace, "progress.md")

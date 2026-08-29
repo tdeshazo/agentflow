@@ -476,11 +476,13 @@ type Provider interface {
 }
 ```
 
-`Request` describes workspace, model, reasoning effort, prompt, sandbox, and
-execution-lifetime preferences without exposing Codex-specific command-line
-arguments to the interpreter. The authored `Agent.Sandbox` value is copied to
-the provider-neutral `Request.Sandbox` value; an empty value is not defaulted by
-the engine. The shared runtime evaluates actor-created commit permission as:
+`Request` describes workspace, model, reasoning effort, prompt, sandbox,
+execution-lifetime preferences, and an engine-owned filesystem boundary without
+exposing Codex-specific command-line arguments to the interpreter. Providers
+must enforce every `FilesystemBoundary` rule or reject the request; treating the
+rules as prompt advice is unsafe. The authored `Agent.Sandbox` value is copied
+to the provider-neutral `Request.Sandbox` value; an empty value is not defaulted
+by the engine. The shared runtime evaluates actor-created commit permission as:
 
 ```text
 agent.MayCommit
@@ -565,14 +567,35 @@ unavailable values fail closed.
 
 ## Codex adapter
 
-The Codex adapter uses headless `codex exec`. It supports the workflow's `never`
+The Codex adapter uses headless `codex exec`. Actor workspaces exclude
+`.agentflow/**` and `.agents/skills/agentflow-spec/**`, including ignored and
+untracked files. AgentFlow refuses to invoke an actor when either namespace is
+tracked in the current Git snapshot because the shared Git object database would
+otherwise keep that content readable even after removing its checkout files.
+Actor-created changes in either namespace are rejected regardless of mutation
+allowlists or ignored-control patterns, including within initialized submodules.
+Runtime-private integrity paths remain in the authoritative baseline and are
+validated there after every provider invocation; the actor checkout validates
+only the visible portion of each integrity manifest.
+
+For actor invocations, the adapter uses a strict named Codex permissions profile
+that denies reads from the authoritative checkout while granting read access to
+only the shared Git metadata required by the quarantine worktree. It ignores
+user Codex configuration for that isolated invocation so a configured sandbox
+cannot weaken the boundary. `danger-full-access` is rejected when this boundary
+is present. Custom providers receive the same provider-neutral filesystem rules.
+The engine invokes one only when it implements `FilesystemBoundaryEnforcer` and
+explicitly reports that it enforces the boundary; the adapter must then enforce
+every rule or reject the request.
+
+The adapter supports the workflow's `never`
 approval policy and fails closed for other approval policies rather than silently
 ignoring them. It explicitly passes `-c approval_policy="never"`, which overrides
 any user configuration for that process. If the authored sandbox is omitted or
 empty, the adapter resolves it to the explicit safe default `workspace-write`;
-it does not inherit arbitrary user Codex configuration. Explicit authored
-sandbox values pass through. This default is specific to the built-in Codex
-provider and is not imposed on injected or custom providers. The adapter uses
+explicit `read-only` and `workspace-write` values select the corresponding base
+permissions profile. This default is specific to the built-in Codex provider and
+is not imposed on injected or custom providers. The adapter uses
 `output_last_message` to decide whether to request final-message capture; any
 returned message remains diagnostic/presentation output rather than workflow
 evidence or authority.

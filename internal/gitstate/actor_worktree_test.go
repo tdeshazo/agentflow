@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,61 @@ func TestActorWorktreeSnapshotsAndImportsWorkspaceDelta(t *testing.T) {
 	}
 	if _, err := os.Stat(quarantinePath); !os.IsNotExist(err) {
 		t.Fatalf("compliant quarantine remains after cleanup: %v", err)
+	}
+}
+
+func TestActorWorktreeOmitsIgnoredRuntimeControlFiles(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	writeActorWorktreeFile(t, repo.Root, ".gitignore", ".agentflow/\n.agents/skills/agentflow-spec/\n")
+	actorWorktreeGit(t, repo.Root, "add", ".gitignore")
+	actorWorktreeGit(t, repo.Root, "commit", "-qm", "ignore runtime controls")
+	if err := os.MkdirAll(filepath.Join(repo.Root, ".agentflow", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo.Root, ".agents", "skills", "agentflow-spec"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeActorWorktreeFile(t, repo.Root, ".agentflow/workflows/task.yaml", "private workflow\n")
+	writeActorWorktreeFile(t, repo.Root, ".agents/skills/agentflow-spec/SKILL.md", "private skill\n")
+
+	quarantine, err := repo.CreateActorWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = quarantine.Remove() })
+
+	for _, path := range []string{
+		".agentflow/workflows/task.yaml",
+		".agents/skills/agentflow-spec/SKILL.md",
+	} {
+		if _, err := os.Stat(filepath.Join(quarantine.Repo.Root, filepath.FromSlash(path))); !os.IsNotExist(err) {
+			t.Fatalf("actor-private path %q is visible: %v", path, err)
+		}
+		if _, ok := quarantine.BaselinePermissions[path]; ok {
+			t.Fatalf("actor-private path %q is present in baseline permissions", path)
+		}
+	}
+}
+
+func TestActorWorktreeRejectsTrackedRuntimeControlFiles(t *testing.T) {
+	for _, path := range []string{
+		".agentflow/workflows/task.yaml",
+		".agents/skills/agentflow-spec/SKILL.md",
+	} {
+		t.Run(path, func(t *testing.T) {
+			repo := newDiscoveryRepo(t)
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(repo.Root, filepath.FromSlash(path))), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeActorWorktreeFile(t, repo.Root, path, "tracked runtime control\n")
+			actorWorktreeGit(t, repo.Root, "add", path)
+			actorWorktreeGit(t, repo.Root, "commit", "-qm", "track runtime control")
+
+			_, err := repo.CreateActorWorktree()
+			if err == nil || !strings.Contains(err.Error(), "would remain readable through repository history") {
+				t.Fatalf("CreateActorWorktree() error = %v, want tracked private-path rejection", err)
+			}
+		})
 	}
 }
 

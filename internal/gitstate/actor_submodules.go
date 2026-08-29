@@ -44,6 +44,9 @@ func copyInitializedSubmoduleSnapshotsAt(source, destination Repo, parentPath, w
 			return nil, fmt.Errorf("resolve initialized submodule %q: %w", submodule.path, err)
 		}
 		sourceRoot := sourceSubmodule.Root
+		if err := rejectTrackedActorPrivatePaths(sourceSubmodule); err != nil {
+			return nil, fmt.Errorf("validate initialized submodule %q actor view: %w", submodule.path, err)
+		}
 		if err := initializeActorSubmodule(destination, submodule, sourceRoot); err != nil {
 			return nil, err
 		}
@@ -80,6 +83,9 @@ func copyInitializedSubmoduleSnapshotsAt(source, destination Repo, parentPath, w
 				return nil, fmt.Errorf("copy initialized submodule %q tracked changes: %w", submodule.path, err)
 			}
 		}
+		if err := removeActorPrivatePaths(destinationSubmodule.Root); err != nil {
+			return nil, fmt.Errorf("remove initialized submodule %q private paths: %w", submodule.path, err)
+		}
 		if err := copyWorkspaceDirectories(sourceSubmodule, destinationSubmodule); err != nil {
 			return nil, fmt.Errorf("copy initialized submodule %q directories: %w", submodule.path, err)
 		}
@@ -90,6 +96,7 @@ func copyInitializedSubmoduleSnapshotsAt(source, destination Repo, parentPath, w
 		if err != nil {
 			return nil, fmt.Errorf("snapshot initialized submodule %q baseline permissions: %w", submodule.path, err)
 		}
+		baselinePermissions = actorVisibleFilePermissions(baselinePermissions)
 		if err := applyFilePermissions(destinationSubmodule.Root, baselinePermissions); err != nil {
 			return nil, fmt.Errorf("copy initialized submodule %q permissions: %w", submodule.path, err)
 		}

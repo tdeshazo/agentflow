@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -329,6 +330,63 @@ func (e *Engine) assertIntegrity() error {
 		}
 	}
 	return nil
+}
+
+// assertActorIntegrity validates the actor-visible portion of every integrity
+// rule. Runtime-private paths are deliberately absent from actorRepo and are
+// validated separately against the authoritative workspace by assertIntegrity.
+func (e *Engine) assertActorIntegrity(actorRepo gitstate.Repo) error {
+	var baseline IntegrityBaseline
+	ok, err := e.Store.GetJSON(e.integrityRecord(), &baseline)
+	if err != nil || !ok {
+		return err
+	}
+	actorEngine := *e
+	actorEngine.Repo = actorRepo
+	actorCurrent, err := actorEngine.computeIntegrityBaseline(false)
+	if err != nil {
+		return err
+	}
+	authoritativeCurrent, err := e.computeIntegrityBaseline(false)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(baseline))
+	for id := range baseline {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		want := baseline[id]
+		got, exists := actorCurrent[id]
+		expectedPaths := want.Paths
+		if want.Paths == nil {
+			// A legacy aggregate has no path manifest to filter. assertIntegrity
+			// already proved the authoritative checkout still matches that
+			// aggregate, so its freshly computed manifest is the valid expected
+			// state for the actor-visible subset.
+			expectedPaths = authoritativeCurrent[id].Paths
+		}
+		wantPaths := actorVisibleIntegrityManifest(expectedPaths)
+		gotPaths := actorVisibleIntegrityManifest(got.Paths)
+		if !exists || !maps.Equal(gotPaths, wantPaths) {
+			return &safetyViolation{
+				err:                fmt.Errorf("protected integrity rule %s changed", id),
+				integrityViolation: diffIntegrityManifests(id, wantPaths, gotPaths),
+			}
+		}
+	}
+	return nil
+}
+
+func actorVisibleIntegrityManifest(manifest map[string]string) map[string]string {
+	visible := make(map[string]string, len(manifest))
+	for path, digest := range manifest {
+		if !gitstate.IsActorPrivatePath(path) {
+			visible[path] = digest
+		}
+	}
+	return visible
 }
 
 func (e *Engine) integrityHash(rule workflow.IntegrityRule) (string, error) {

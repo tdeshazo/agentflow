@@ -47,6 +47,9 @@ func (r Repo) CreateActorWorktree() (_ *ActorWorktree, returnErr error) {
 }
 
 func (r Repo) createActorWorktree(resolveRoot func(Repo) (string, error)) (_ *ActorWorktree, returnErr error) {
+	if err := rejectTrackedActorPrivatePaths(r); err != nil {
+		return nil, err
+	}
 	start, err := r.Head()
 	if err != nil {
 		return nil, err
@@ -92,6 +95,9 @@ func (r Repo) createActorWorktree(resolveRoot func(Repo) (string, error)) (_ *Ac
 			return nil, fmt.Errorf("copy primary tracked changes into actor quarantine: %w", err)
 		}
 	}
+	if err := removeActorPrivatePaths(worktree.Repo.Root); err != nil {
+		return nil, err
+	}
 	submodules, err := copyInitializedSubmoduleSnapshots(r, worktree.Repo)
 	if err != nil {
 		return nil, err
@@ -110,6 +116,7 @@ func (r Repo) createActorWorktree(resolveRoot func(Repo) (string, error)) (_ *Ac
 	if err != nil {
 		return nil, fmt.Errorf("snapshot actor quarantine baseline permissions: %w", err)
 	}
+	baselinePermissions = actorVisibleFilePermissions(baselinePermissions)
 	if err := applyFilePermissions(worktree.Repo.Root, baselinePermissions); err != nil {
 		return nil, fmt.Errorf("copy primary permissions into actor quarantine: %w", err)
 	}
@@ -561,6 +568,12 @@ func copyWorkspaceDirectories(source, destination Repo) error {
 			}
 			return nil
 		}
+		if IsActorPrivatePath(relative) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if relative == "." || !entry.IsDir() {
 			return nil
 		}
@@ -577,6 +590,9 @@ func copyUntrackedWorkspaceFiles(source, destination Repo) error {
 		return fmt.Errorf("list non-tracked workspace files: %w", err)
 	}
 	for _, path := range paths {
+		if IsActorPrivatePath(path) {
+			continue
+		}
 		if path == "" || filepath.IsAbs(path) || !filepath.IsLocal(path) {
 			return fmt.Errorf("unsafe non-tracked workspace path %q", path)
 		}

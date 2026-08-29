@@ -58,6 +58,46 @@ func TestBuildArgsEmptySandboxCannotInheritCodexUserConfiguration(t *testing.T) 
 	}
 }
 
+func TestBuildArgsEnforcesActorFilesystemBoundary(t *testing.T) {
+	args := buildArgs(provider.Request{
+		Workspace: "/quarantine",
+		Sandbox:   "workspace-write",
+		FilesystemBoundary: []provider.FilesystemRule{
+			{Path: "/authoritative/.git", Access: provider.FilesystemRead},
+			{Path: "/authoritative", Access: provider.FilesystemDeny},
+		},
+	}, "/tmp/last")
+	for _, forbidden := range []string{"--sandbox", "danger-full-access", ".agentflow", "agentflow-spec"} {
+		if contains(args, forbidden) || strings.Contains(strings.Join(args, "\n"), forbidden) {
+			t.Fatalf("isolated Codex args expose forbidden value %q: %#v", forbidden, args)
+		}
+	}
+	for _, required := range []string{
+		"--ignore-user-config",
+		"--strict-config",
+		`default_permissions="actor_isolated"`,
+		`permissions.actor_isolated.extends=":workspace"`,
+		`permissions.actor_isolated.filesystem={"/authoritative"="deny","/authoritative/.git"="read"}`,
+	} {
+		if !contains(args, required) {
+			t.Fatalf("isolated Codex args missing %q: %#v", required, args)
+		}
+	}
+}
+
+func TestValidateRequestRejectsUnenforceableActorFilesystemBoundary(t *testing.T) {
+	err := validateRequest(provider.Request{
+		Sandbox: "danger-full-access",
+		FilesystemBoundary: []provider.FilesystemRule{{
+			Path:   "/authoritative",
+			Access: provider.FilesystemDeny,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot enforce the actor read boundary") {
+		t.Fatalf("validateRequest() error = %v, want fail-closed sandbox rejection", err)
+	}
+}
+
 func TestNormalizedAgentsUseTheSameCodexSandboxBehavior(t *testing.T) {
 	tests := []struct {
 		name     string

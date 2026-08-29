@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -97,6 +98,14 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	if err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, fmt.Errorf("inspect actor changes: %w", err))
 	}
+	if prohibited := actorPrivateChangedPath(pending, changed); prohibited != "" {
+		return result, e.quarantineSafetyViolation(
+			pending.Actor,
+			head,
+			pending.QuarantinePath,
+			fmt.Errorf("repository policy: actor changed runtime-private path %s", prohibited),
+		)
+	}
 	if prohibited, err := e.actorEngineOwnedPath(pending, changed); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	} else if prohibited != "" {
@@ -108,11 +117,14 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 		)
 	}
 
-	policyEngine := *e
-	policyEngine.Repo = worktree.Repo
-	if err := policyEngine.assertIntegrity(); err != nil {
+	if err := e.assertIntegrity(); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
+	if err := e.assertActorIntegrity(worktree.Repo); err != nil {
+		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
+	}
+	policyEngine := *e
+	policyEngine.Repo = worktree.Repo
 	if err := policyEngine.assertActorChangedPathsAllowed(changed); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
@@ -148,6 +160,22 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	}
 	result.imported = true
 	return result, nil
+}
+
+func actorPrivateChangedPath(pending PendingActorInvocation, changed []string) string {
+	for _, path := range changed {
+		path = filepath.ToSlash(filepath.Clean(path))
+		if gitstate.IsActorPrivatePath(path) {
+			return path
+		}
+		for _, submodule := range pending.Submodules {
+			root := filepath.ToSlash(filepath.Clean(submodule.Path))
+			if relative, ok := strings.CutPrefix(path, root+"/"); ok && gitstate.IsActorPrivatePath(relative) {
+				return path
+			}
+		}
+	}
+	return ""
 }
 
 func (e *Engine) assertActorChangedPathsAllowed(changed []string) error {

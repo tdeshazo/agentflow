@@ -17,7 +17,8 @@ type writeProvider struct {
 	calls int
 }
 
-func (p *writeProvider) Name() string { return "test" }
+func (p *writeProvider) Name() string                     { return "test" }
+func (p *writeProvider) EnforcesFilesystemBoundary() bool { return true }
 func (p *writeProvider) Run(_ context.Context, req provider.Request) (provider.Result, error) {
 	p.calls++
 	return provider.Result{}, os.WriteFile(filepath.Join(req.Workspace, "work.txt"), []byte("done\n"), 0o644)

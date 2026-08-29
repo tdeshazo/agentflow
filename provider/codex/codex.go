@@ -8,6 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/provider"
@@ -23,7 +26,11 @@ type Provider struct {
 
 const defaultSandbox = "workspace-write"
 
+const isolatedPermissionsProfile = "actor_isolated"
+
 func (p Provider) Name() string { return "codex" }
+
+func (p Provider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Result, error) {
 	bin := p.Binary
@@ -31,8 +38,8 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 		bin = "codex"
 	}
 
-	if req.Approval != "" && req.Approval != "never" {
-		return provider.Result{}, fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
+	if err := validateRequest(req); err != nil {
+		return provider.Result{}, err
 	}
 
 	var last string
@@ -81,9 +88,20 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	// Codex loads user configuration by default. Override its approval setting so
 	// the workflow's only supported policy remains authoritative for this run.
 	args = append(args, "-c", `approval_policy="never"`)
-	// Keep the provider-neutral request unchanged at the engine boundary, but
-	// make the built-in adapter's empty-sandbox behavior explicit to Codex.
-	args = append(args, "--sandbox", resolveSandbox(req.Sandbox))
+	if len(req.FilesystemBoundary) == 0 {
+		// Keep the provider-neutral request unchanged at the engine boundary, but
+		// make the built-in adapter's empty-sandbox behavior explicit to Codex.
+		args = append(args, "--sandbox", resolveSandbox(req.Sandbox))
+	} else {
+		args = append(
+			args,
+			"--ignore-user-config",
+			"--strict-config",
+			"-c", fmt.Sprintf("default_permissions=%q", isolatedPermissionsProfile),
+			"-c", fmt.Sprintf("permissions.%s.extends=%q", isolatedPermissionsProfile, codexPermissionsBase(req.Sandbox)),
+			"-c", fmt.Sprintf("permissions.%s.filesystem=%s", isolatedPermissionsProfile, codexFilesystemBoundary(req.FilesystemBoundary)),
+		)
+	}
 	if req.Ephemeral {
 		args = append(args, "--ephemeral")
 	}
@@ -99,6 +117,60 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	}
 	args = append(args, "-")
 	return args
+}
+
+func validateRequest(req provider.Request) error {
+	if req.Approval != "" && req.Approval != "never" {
+		return fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
+	}
+	if len(req.FilesystemBoundary) == 0 {
+		return nil
+	}
+	sandbox := resolveSandbox(req.Sandbox)
+	if sandbox == "danger-full-access" {
+		return fmt.Errorf("codex provider cannot enforce the actor read boundary with sandbox %q", sandbox)
+	}
+	if sandbox != "workspace-write" && sandbox != "read-only" {
+		return fmt.Errorf("codex provider cannot enforce the actor read boundary with unsupported sandbox %q", sandbox)
+	}
+	seen := make(map[string]provider.FilesystemAccess, len(req.FilesystemBoundary))
+	for _, rule := range req.FilesystemBoundary {
+		if rule.Path == "" || !filepath.IsAbs(rule.Path) || filepath.Clean(rule.Path) != rule.Path {
+			return fmt.Errorf("codex provider actor read boundary has invalid path %q", rule.Path)
+		}
+		if rule.Access != provider.FilesystemRead && rule.Access != provider.FilesystemDeny {
+			return fmt.Errorf("codex provider actor read boundary has invalid access %q for %q", rule.Access, rule.Path)
+		}
+		if prior, ok := seen[rule.Path]; ok && prior != rule.Access {
+			return fmt.Errorf("codex provider actor read boundary has conflicting access for %q", rule.Path)
+		}
+		seen[rule.Path] = rule.Access
+	}
+	return nil
+}
+
+func codexPermissionsBase(sandbox string) string {
+	if resolveSandbox(sandbox) == "read-only" {
+		return ":read-only"
+	}
+	return ":workspace"
+}
+
+func codexFilesystemBoundary(rules []provider.FilesystemRule) string {
+	byPath := make(map[string]provider.FilesystemAccess, len(rules))
+	paths := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		if _, ok := byPath[rule.Path]; !ok {
+			paths = append(paths, rule.Path)
+		}
+		byPath[rule.Path] = rule.Access
+	}
+	sort.Strings(paths)
+	entries := make([]string, 0, len(paths))
+	for _, path := range paths {
+		entries = append(entries, strconv.Quote(path)+"="+strconv.Quote(string(byPath[path])))
+	}
+	return "{" + strings.Join(entries, ",") + "}"
 }
 
 func resolveSandbox(sandbox string) string {

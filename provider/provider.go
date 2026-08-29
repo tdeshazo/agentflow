@@ -11,6 +11,13 @@ type Provider interface {
 	Run(context.Context, Request) (Result, error)
 }
 
+// FilesystemBoundaryEnforcer is required for actor execution. It makes
+// filesystem isolation an explicit adapter capability instead of an optional
+// Request field that a provider could silently ignore.
+type FilesystemBoundaryEnforcer interface {
+	EnforcesFilesystemBoundary() bool
+}
+
 // PresentationIntent describes the runtime's desired human-facing presentation
 // without naming a provider's command-line flags. Providers resolve it against
 // their actual output destination.
@@ -59,6 +66,25 @@ type Request struct {
 	OutputLastMessage bool
 	Presentation      PresentationIntent
 	Metadata          map[string]string
+	// FilesystemBoundary is an engine-owned read boundary for the provider's
+	// actor process. Adapters must enforce every rule or reject the request.
+	// It is not advisory prompt content.
+	FilesystemBoundary []FilesystemRule
+}
+
+// FilesystemAccess is the access granted to one absolute filesystem path.
+type FilesystemAccess string
+
+const (
+	FilesystemRead FilesystemAccess = "read"
+	FilesystemDeny FilesystemAccess = "deny"
+)
+
+// FilesystemRule describes one provider process filesystem rule. Paths are
+// canonical absolute paths and more-specific rules may narrow a parent rule.
+type FilesystemRule struct {
+	Path   string
+	Access FilesystemAccess
 }
 
 // Result contains provider output useful for audit and debugging purposes.

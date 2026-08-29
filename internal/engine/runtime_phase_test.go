@@ -21,11 +21,42 @@ type presentationRecordingProvider struct {
 	request provider.Request
 }
 
-func (p *presentationRecordingProvider) Name() string { return "presentation-test" }
+func (p *presentationRecordingProvider) Name() string                     { return "presentation-test" }
+func (p *presentationRecordingProvider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p *presentationRecordingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.request = request
 	return provider.Result{}, nil
+}
+
+type nonIsolatingProvider struct {
+	runs int
+}
+
+func (p *nonIsolatingProvider) Name() string { return "non-isolating-test" }
+
+func (p *nonIsolatingProvider) Run(context.Context, provider.Request) (provider.Result, error) {
+	p.runs++
+	return provider.Result{}, nil
+}
+
+func TestRunAgentRejectsProviderWithoutFilesystemBoundaryEnforcement(t *testing.T) {
+	providerImpl := &nonIsolatingProvider{}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{Agents: map[string]workflow.Agent{
+			"worker": {Runner: "custom"},
+		}}},
+		Providers: map[string]provider.Provider{"custom": providerImpl},
+		Repo:      gitstate.Repo{Root: newDurableRepo(t)},
+	}
+
+	err := e.runAgent(context.Background(), "worker", "", "do work", nil)
+	if err == nil || !strings.Contains(err.Error(), "cannot enforce the actor filesystem boundary") {
+		t.Fatalf("runAgent() error = %v, want fail-closed provider boundary rejection", err)
+	}
+	if providerImpl.runs != 0 {
+		t.Fatalf("provider runs = %d, want zero", providerImpl.runs)
+	}
 }
 
 func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
@@ -629,7 +660,8 @@ type capabilityRecordingProvider struct {
 	result  provider.Result
 }
 
-func (p *capabilityRecordingProvider) Name() string { return "capability-test" }
+func (p *capabilityRecordingProvider) Name() string                     { return "capability-test" }
+func (p *capabilityRecordingProvider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p *capabilityRecordingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.request = request
@@ -642,7 +674,8 @@ type capabilityActionProvider struct {
 	action func(context.Context, provider.Request) error
 }
 
-func (p *capabilityActionProvider) Name() string { return "capability-action-test" }
+func (p *capabilityActionProvider) Name() string                     { return "capability-action-test" }
+func (p *capabilityActionProvider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p *capabilityActionProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++

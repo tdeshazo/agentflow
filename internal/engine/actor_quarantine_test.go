@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 )
 
@@ -55,7 +56,20 @@ func TestActorQuarantineIgnoresUnchangedIgnoredBaselineFiles(t *testing.T) {
 	}
 
 	w := durableWorkflow(repo, "actor-quarantine-ignored-baseline")
+	w.Spec.Workspace.MutationPolicy.Integrity = []workflow.IntegrityRule{{
+		ID:    "runtime-control",
+		Paths: []string{".agentflow/workflows/**"},
+		Mode:  "exact-hash",
+	}}
 	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		if _, err := os.Stat(filepath.Join(request.Workspace, ".agentflow", "workflows", "example.yaml")); !os.IsNotExist(err) {
+			return errors.New("actor can read the private workflow")
+		}
+		if len(request.FilesystemBoundary) != 2 ||
+			request.FilesystemBoundary[0].Access != provider.FilesystemDeny ||
+			request.FilesystemBoundary[1].Access != provider.FilesystemRead {
+			return errors.New("provider did not receive the authoritative read boundary")
+		}
 		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
 	}}
 	e := newDurableEngine(t, w, p)
@@ -66,6 +80,103 @@ func TestActorQuarantineIgnoresUnchangedIgnoredBaselineFiles(t *testing.T) {
 	assertDurableCompletion(t, e, repo)
 	if got := string(mustReadFile(t, workflowPath)); got != "workflow baseline\n" {
 		t.Fatalf("ignored workflow baseline = %q", got)
+	}
+}
+
+func TestActorQuarantineDetectsAuthoritativeRuntimeControlTampering(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agentflow/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", ".gitignore")
+	gitIn(t, repo, "commit", "-qm", "ignore runtime controls")
+	workflowPath := filepath.Join(repo, ".agentflow", "workflows", "example.yaml")
+	if err := os.MkdirAll(filepath.Dir(workflowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workflowPath, []byte("workflow baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := durableWorkflow(repo, "actor-quarantine-authoritative-integrity")
+	w.Spec.Workspace.MutationPolicy.Integrity = []workflow.IntegrityRule{{
+		ID:    "runtime-control",
+		Paths: []string{".agentflow/workflows/**"},
+		Mode:  "exact-hash",
+	}}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		if err := os.WriteFile(workflowPath, []byte("tampered\n"), 0o644); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+
+	err := e.Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "protected integrity rule runtime-control changed") {
+		t.Fatalf("Run() error = %v, want authoritative runtime-control integrity violation", err)
+	}
+}
+
+func TestActorQuarantineStillProtectsVisibleFilesInMixedIntegrityRule(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agentflow/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "protected.txt"), []byte("protected baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", ".gitignore", "protected.txt")
+	gitIn(t, repo, "commit", "-qm", "add protected baseline")
+	workflowPath := filepath.Join(repo, ".agentflow", "workflows", "example.yaml")
+	if err := os.MkdirAll(filepath.Dir(workflowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workflowPath, []byte("workflow baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := durableWorkflow(repo, "actor-quarantine-mixed-integrity")
+	w.Spec.Workspace.MutationPolicy.Allowed = append(w.Spec.Workspace.MutationPolicy.Allowed, "protected.txt")
+	w.Spec.Workspace.MutationPolicy.Integrity = []workflow.IntegrityRule{{
+		ID:    "mixed-control-and-source",
+		Paths: []string{"protected.txt", ".agentflow/workflows/**"},
+		Mode:  "exact-hash",
+	}}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "protected.txt"), []byte("actor change\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+
+	err := e.Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "protected integrity rule mixed-control-and-source changed") {
+		t.Fatalf("Run() error = %v, want visible-file integrity violation", err)
+	}
+}
+
+func TestActorQuarantineRejectsCreationOfRuntimePrivatePaths(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "actor-quarantine-private-path-creation")
+	w.Spec.Workspace.MutationPolicy.Allowed = append(w.Spec.Workspace.MutationPolicy.Allowed, ".agentflow/**")
+	w.Spec.Workspace.MutationPolicy.IgnoredControlFiles = []string{".agentflow/**"}
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		path := filepath.Join(request.Workspace, ".agentflow", "workflows", "injected.yaml")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("actor-created control\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+
+	err := e.Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "actor changed runtime-private path .agentflow/workflows/injected.yaml") {
+		t.Fatalf("Run() error = %v, want immutable runtime-private path violation", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".agentflow", "workflows", "injected.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("actor-created runtime control reached authoritative workspace: %v", statErr)
 	}
 }
 

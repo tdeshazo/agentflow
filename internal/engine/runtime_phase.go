@@ -559,9 +559,7 @@ func writeProtectedPromptPatterns(prompt *strings.Builder, rules []workflow.Inte
 }
 
 func actorPromptInternalPath(path string) bool {
-	path = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
-	return path == ".agentflow" || strings.HasPrefix(path, ".agentflow/") ||
-		path == ".agents/skills/agentflow-spec" || strings.HasPrefix(path, ".agents/skills/agentflow-spec/")
+	return gitstate.IsActorPrivatePath(path)
 }
 
 func quotedPromptValues(values []string) string {
@@ -599,6 +597,16 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		return false, fmt.Errorf("create quarantine for actor %q: %w", actorName, err)
 	}
 	request = remapProviderRequestWorkspace(request, e.Repo.Root, quarantine.Repo.Root)
+	request.FilesystemBoundary, err = e.actorFilesystemBoundary()
+	if err != nil {
+		_ = quarantine.Remove()
+		return false, fmt.Errorf("create provider filesystem boundary for actor %q: %w", actorName, err)
+	}
+	enforcer, ok := prov.(provider.FilesystemBoundaryEnforcer)
+	if !ok || !enforcer.EnforcesFilesystemBoundary() {
+		_ = quarantine.Remove()
+		return false, fmt.Errorf("provider %q cannot enforce the actor filesystem boundary", prov.Name())
+	}
 	invocation.Version = pendingActorInvocationVersion
 	invocation.Actor = actorName
 	invocation.StartCommit = before
@@ -641,6 +649,25 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		return result.moved, fmt.Errorf("remove compliant actor quarantine: %w", err)
 	}
 	return result.moved, providerErr
+}
+
+func (e *Engine) actorFilesystemBoundary() ([]provider.FilesystemRule, error) {
+	authoritativeRoot, err := filepath.Abs(e.Repo.Root)
+	if err != nil {
+		return nil, err
+	}
+	authoritativeRoot, err = filepath.EvalSymlinks(authoritativeRoot)
+	if err != nil {
+		return nil, err
+	}
+	commonDir, err := e.Repo.GitCommonDir()
+	if err != nil {
+		return nil, err
+	}
+	return []provider.FilesystemRule{
+		{Path: authoritativeRoot, Access: provider.FilesystemDeny},
+		{Path: commonDir, Access: provider.FilesystemRead},
+	}, nil
 }
 
 // remapProviderRequestWorkspace replaces authoritative-workspace path
