@@ -76,6 +76,7 @@ spec:
         - "cmd/**/*_test.go"
         - "README.md"
         - "docs/guides/**"
+        - "docs/planning/**"
 
       # Local orchestration/control files can be ignored when judging dirty state.
       ignoredControlFiles:
@@ -91,13 +92,6 @@ spec:
         - id: canonical-quality-gate
           paths: ["scripts/check.sh", ".github/workflows/quality.yml"]
           mode: exact-hash
-
-        - id: unrelated-planning
-          paths: ["docs/planning/*.md"]
-          mode: exact-hash
-          exclude:
-            - "docs/planning/roadmap-current.md"
-            - "docs/planning/README.md"
 
         # Use normalized-hash when selected bookkeeping fields may change while
         # the surrounding document structure must remain frozen.
@@ -140,10 +134,6 @@ spec:
     quality-gate:
       type: shell
       command: "sh scripts/check.sh"
-      capture:
-        stdout: true
-        stderr: true
-        log: "logs/gate-{{ invocation.id }}.log"
       mutates_workspace: false
 
     assert-scope:
@@ -179,12 +169,6 @@ spec:
       path: .github/workflows/quality.yml
       text: scripts/check.sh
 
-    - id: state-lineage
-      type: git-lineage
-      base: "{{ state.base_commit }}"
-      require_ancestor_of_head: true
-      require_branch: "{{ state.branch }}"
-
   # Optional source-of-truth progress model for roadmap/checklist workflows.
   progress:
     source:
@@ -194,7 +178,12 @@ spec:
       checkedPattern: '^- \[[xX]\] (.+)$'
     selection:
       strategy: first-unchecked
-    phaseInvariant:
+    criteria:
+      - id: first-acceptance-criterion
+        text: "First acceptance criterion text"
+      - id: second-acceptance-criterion
+        text: "Second acceptance criterion text"
+    criterionPhaseInvariant:
       # A criterion phase may close its targeted item, but must not close others.
       targeted_item_must_be_checked: true
       unchecked_count_delta: -1
@@ -234,39 +223,38 @@ spec:
         - uses: assert-scope
         - uses: quality-gate
 
+  lifecycle:
+    policy: safe-resume
+    validation: phaseGate
+    checkpoint: checkpoint
+
   # Phase kinds are deliberately distinct: criterion, implementation, audit,
-  # bookkeeping, tool, and human. `requiresChange: false` supports audits.
+  # and engine-owned bookkeeping. `requiresChange: false` supports audits.
   phases:
     - id: "01"
       kind: criterion
       label: implement-first-criterion
       actor: terra
       reasoning: high
-      criterion: "First acceptance criterion text"
+      criterionID: first-acceptance-criterion
+      advanceProgress: true
       requiresChange: true
       prompt: |
         Read repository instructions and complete only this acceptance criterion.
-        Add focused tests. Do not work ahead. Mark only this criterion complete
-        after verification.
-      after:
-        - validate: phaseGate
-        - assertProgress: true
-        - checkpoint: checkpoint
+        Add focused tests. Do not work ahead. The runtime records only the
+        declared criterion after deterministic verification.
 
     - id: "02"
       kind: criterion
       label: implement-second-criterion
       actor: luna
       reasoning: high
-      criterion: "Second acceptance criterion text"
+      criterionID: second-acceptance-criterion
+      advanceProgress: true
       requiresChange: true
       prompt: |
         Complete only the second bounded criterion. Preserve existing behavior
         outside its scope and add deterministic regression coverage.
-      after:
-        - validate: phaseGate
-        - assertProgress: true
-        - checkpoint: checkpoint
 
     - id: "07"
       kind: audit
@@ -278,9 +266,6 @@ spec:
         Audit the completed implementation as an integrated subsystem. Repair
         genuine regressions, but do not add new features or alter completion
         bookkeeping.
-      after:
-        - validate: phaseGate
-        - checkpoint: checkpoint
 
     - id: "08"
       kind: audit
@@ -291,30 +276,28 @@ spec:
       prompt: |
         Perform a final cross-cutting audit. Verify that checked criteria are
         actually true in implementation and tests. Repair genuine defects only.
-      after:
-        - validate: phaseGate
-        - checkpoint: checkpoint
 
     - id: "09"
       kind: bookkeeping
       label: completion-bookkeeping
-      actor: luna
-      reasoning: low
       requiresChange: false
-      prompt: |
-        After implementation, validation, audits, and requested human verification
-        have completed, update only the authorized completion bookkeeping fields.
-      after:
-        - validate: phaseGate
-        - checkpoint: checkpoint
+      bookkeeping:
+        - type: markdown-status
+          path: docs/planning/roadmap-current.md
+          label: Status
+          from: In progress
+          to: Complete
+        - type: markdown-index
+          path: docs/planning/README.md
+          item: "Stage 1B runtime parity"
+          state: checked
 
   # Human verification is a gate with durable evidence, not part of an AI prompt.
   humanGates:
     - id: terminal-confirmation
       when: "{{ parameters.require_human_verification }}"
       requires:
-        - final-implementation-audit
-        - final-automated-validation
+        - "08"
       instructions: >-
         Run the repository's isolated local procedure and verify the behavior in
         the real target terminal/environment.
@@ -333,29 +316,6 @@ spec:
       skip:
         allowed_when: "{{ not parameters.require_human_verification }}"
         record: skipped-with-head-commit
-
-  # Recovery behavior for interrupted phases is explicit and idempotent.
-  recovery:
-    activePhase:
-      - assert: saved_phase_start_exists
-      - assert: saved_phase_start_is_ancestor_of_head
-      - restore_phase_definition: true
-      - validate_existing_state_first: true
-      - if_valid:
-          - assert_progress_if_applicable: true
-          - checkpoint: checkpoint
-          - mark_phase_complete: true
-      - if_invalid:
-          - run_repair_policy: phaseGate.onFailure
-          - if_still_incomplete:
-              rerun_same_agent_phase_with_prefix: |
-                Resume this phase from the repository state already present.
-                Inspect partial commits and working-tree changes first; preserve
-                correct work and finish only this phase's objective.
-          - validate: phaseGate
-          - assert_progress_if_applicable: true
-          - checkpoint: checkpoint
-          - mark_phase_complete: true
 
   # Control flow supports both explicit phase sequences (newer scripts) and
   # dynamic next-unchecked-criterion loops (older Priority 3/4 scripts).
@@ -399,7 +359,7 @@ spec:
         - uses: assert-regex
           with:
             path: docs/planning/README.md
-            regex: '^5\\. \\[[xX]\\] '
+            regex: '^5\. \[[xX]\] '
         - uses: assert-scope
         - type: integrity-baseline-unchanged
 

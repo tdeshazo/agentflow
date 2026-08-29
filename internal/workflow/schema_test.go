@@ -57,6 +57,10 @@ func TestGeneratedSchemaDeclaresAuthorityAndRuntimeBoundary(t *testing.T) {
 	if got := properties["allowed_semantic_changes"].(map[string]any)["x-agentflow-runtime-status"]; got != "unsupported" {
 		t.Fatalf("allowed_semantic_changes status = %#v", got)
 	}
+	recovery := definitions["Recovery"].(map[string]any)["properties"].(map[string]any)
+	if got := recovery["activePhase"].(map[string]any)["x-agentflow-runtime-status"]; got != "unsupported" {
+		t.Fatalf("activePhase recovery status = %#v", got)
+	}
 	workspace := definitions["WorkspaceSpec"].(map[string]any)["properties"].(map[string]any)
 	if _, ok := workspace["allowWrites"]; !ok {
 		t.Fatal("v1alpha1 schema omitted concise workspace.allowWrites")

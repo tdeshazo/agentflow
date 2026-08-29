@@ -355,10 +355,12 @@ The optional lifecycle `checkpoint` names an existing checkpoint tool for
 workflow-specific semantics. Omitting it uses the runtime Git checkpoint.
 Lifecycle safety properties are fixed: an override cannot disable deterministic
 acceptance, protected-resource checks, scope checks, lineage checks, or the
-clean checkpoint boundary. Legacy `phaseDefaults`, phase `after` actions, and
-`recovery.activePhase` remain supported for v1alpha1 compatibility and are
-treated as explicit procedural escape hatches; their markers are still subject
-to the runtime acceptance contract.
+clean checkpoint boundary. Legacy `phaseDefaults` and phase `after` actions
+remain generalized v1alpha1 lifecycle declarations and are subject to the same
+acceptance contract. `recovery.activePhase` is different: the runtime has never
+executed an authored recovery sequence, so it is explicitly non-executable and
+validation rejects it as unsupported before an engine is constructed. Recovery
+is always derived from durable state and the selected lifecycle policy.
 
 After the stored run identity matches, interrupted recovery first reconciles the
 pending invocation record. If the record's start commit differs from current
@@ -552,8 +554,8 @@ The current runtime supports the following executable core:
 - resumable active phases and commit-aware phase markers;
 - interactive human gates with conditional skip, placement prerequisites, and
   durable configured evidence records;
-- conditional flow steps, validation steps, phase lifecycle actions, phases,
-  declarative active-phase recovery, and human gates;
+- conditional flow steps, validation steps, generalized phase lifecycle
+  actions, phases, runtime-derived active-phase recovery, and human gates;
 - flow assertions for clean workspace and empty progress; and
 - completion assertions, final validation, checkpoint, configured completion
   marker, and deterministic summary fields.
@@ -611,6 +613,9 @@ this runtime and are rejected by validation: for the built-in Codex provider,
 approval policies other than `never`, state backends other than
 `git-dir`, non-Git workspaces, non-Markdown progress sources, non-`on-exit` temp
 cleanup, `tool` and `human` phase kinds, and tool types outside the list above.
+`recovery.activePhase` is also non-executable: it is accepted structurally only
+so the validator can report a source-aware unsupported diagnostic before any
+repository access or mutation. Runtime-derived safe resume replaces it.
 Parallel DAG scheduling,
 arbitrary programming-language expressions, and custom tool plugins remain
 future work. Unsupported executable constructs produce an error rather than

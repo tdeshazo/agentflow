@@ -144,6 +144,13 @@ func (g *schemaGenerator) field(owner reflect.Type, field reflect.StructField) a
 		return map[string]any{"oneOf": []any{map[string]any{"type": "string"}, g.schema(reflect.TypeFor[V1Alpha2Agent]())}}
 	}
 	schema := g.schema(field.Type)
+	if owner.Name() == "Recovery" && field.Name == "ActivePhase" {
+		return map[string]any{
+			"allOf":                      []any{schema},
+			"x-agentflow-runtime-status": "unsupported",
+			"description":                activePhaseRecoveryUnsupportedReason,
+		}
+	}
 	if field.Name == "AllowedSemanticChanges" {
 		annotated := map[string]any{"allOf": []any{schema}, "x-agentflow-runtime-status": "unsupported", "description": allowedSemanticChangesUnsupportedReason}
 		return annotated
@@ -152,3 +159,5 @@ func (g *schemaGenerator) field(owner reflect.Type, field reflect.StructField) a
 }
 
 const allowedSemanticChangesUnsupportedReason = "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution"
+
+const activePhaseRecoveryUnsupportedReason = "recovery.activePhase is retained for v1alpha1 source compatibility but the runtime derives recovery from durable state; its use is reported as unsupported before execution"

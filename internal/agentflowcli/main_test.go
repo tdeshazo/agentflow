@@ -30,6 +30,19 @@ func TestValidateCLIRejectsInvalidReferencesBeforeRepositoryAccess(t *testing.T)
 	}
 }
 
+func TestValidateCLIRejectsNonExecutableRecoveryBeforeRepositoryAccess(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "unsupported", "active-phase-recovery.yaml")
+	missingRepository := filepath.Join(t.TempDir(), "not-a-repository")
+	var output bytes.Buffer
+	err := runArgsWithIO([]string{"validate", "-C", missingRepository, "-f", workflowFile}, strings.NewReader(""), &output)
+	if err != nil {
+		t.Fatalf("validate error = %v, want source-only unsupported result", err)
+	}
+	if !strings.Contains(output.String(), "spec.recovery.activePhase") || !strings.Contains(output.String(), "unsupported") {
+		t.Fatalf("validate output = %q, want source-aware unsupported diagnostic", output.String())
+	}
+}
+
 func TestPlanExpandedCLI(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	read, write, err := os.Pipe()

@@ -285,6 +285,17 @@ func (v validator) uniqueIntegrity() {
 }
 
 func (v validator) references() {
+	// activePhase was an early, reference-workflow-specific attempt to script
+	// recovery from YAML. The engine deliberately derives recovery from durable
+	// phase state instead. Retain the shape so old files receive a precise
+	// diagnostic, but never let an authored recovery program reach mutation.
+	if len(v.w.Spec.Recovery.ActivePhase) != 0 {
+		v.add(
+			Unsupported,
+			"spec.recovery.activePhase",
+			"authored activePhase recovery is not executable; use the runtime-owned safe-resume lifecycle",
+		)
+	}
 	for _, name := range sortedKeys(v.w.Spec.Validation) {
 		validation := v.w.Spec.Validation[name]
 		path := "spec.validation." + name

@@ -1009,10 +1009,16 @@
       "additionalProperties": false,
       "properties": {
         "activePhase": {
-          "items": {
-            "$ref": "#/$defs/RecoveryAction"
-          },
-          "type": "array"
+          "allOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RecoveryAction"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "recovery.activePhase is retained for v1alpha1 source compatibility but the runtime derives recovery from durable state; its use is reported as unsupported before execution",
+          "x-agentflow-runtime-status": "unsupported"
         }
       },
       "type": "object"

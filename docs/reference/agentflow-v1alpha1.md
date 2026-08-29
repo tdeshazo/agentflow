@@ -373,8 +373,10 @@ Common kinds:
 - `implementation`: bounded code or configuration change not directly tied to a checklist item.
 - `audit`: cross-cutting review/repair; may legitimately produce no diff.
 - `bookkeeping`: authorized completion metadata only.
-- `tool`: deterministic operation.
-- `human`: human-owned verification when represented as a phase rather than `humanGates`.
+
+`tool` and `human` are structurally recognized legacy phase kinds, but are
+**non-executable** in this runtime and fail validation before execution. Use a
+flow `checkpoint`/`validate` step or a `humanGates` entry respectively.
 
 Key fields:
 
@@ -422,26 +424,18 @@ evidence at the current commit.
 
 ## `spec.recovery`
 
-Explicit legacy recovery escape hatch for an interrupted active phase. Normal
-safe recovery is runtime-derived from the durable active-phase record and
+Normal recovery is runtime-derived from the durable active-phase record and
 `spec.lifecycle`; it does not require a `flow` recovery step or a procedural
-`activePhase` sequence. Existing `spec.recovery` documents remain valid, but an
-override cannot mark a phase complete without the same deterministic acceptance
-and checkpoint contract.
+`activePhase` sequence. `recovery.activePhase` remains structurally decodable
+only for v1alpha1 source compatibility. It is **non-executable** and
+`agentflow validate` reports it as `unsupported` before repository access or
+workspace mutation. Use `lifecycle.policy: safe-resume` instead.
 
-A strong recovery contract:
-
-1. reads durable active-phase state;
-2. restores the same phase definition;
-3. validates saved phase-start lineage;
-4. treats a valid completed phase marker as accepted and clears only stale active state;
-5. reruns the same actor when `actor_completed` is absent, preserving partial work;
-6. resumes deterministic validation/checkpoint/marker work without replaying the actor when `actor_completed` is present;
-7. preflights retained commits and working-tree changes before rerunning an actor,
-   preserves them, and never deletes them as a recovery side effect;
-8. keeps deterministic validation repair budgets bounded, while a persisted
-   repository-policy safety failure remains terminal until explicit
-   reset/abandon state disposal.
+Safe resume validates saved phase-start lineage, preserves partial commits and
+working-tree changes, reruns the same actor only when `actor_completed` is
+absent, and otherwise resumes deterministic validation/checkpoint/marker work.
+A persisted repository-policy safety failure is terminal until reset/abandon
+state disposal; validation repair remains bounded by the selected gate.
 
 ## `spec.flow`
 

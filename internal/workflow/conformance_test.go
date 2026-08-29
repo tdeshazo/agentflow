@@ -19,6 +19,7 @@ func TestConformanceCorpus(t *testing.T) {
 		{name: "valid/v1alpha2-concise.yaml", status: Executable},
 		{name: "unsupported/runtime-surface.yaml", status: Unsupported},
 		{name: "unsupported/allowed-semantic-changes.yaml", status: Unsupported},
+		{name: "unsupported/active-phase-recovery.yaml", status: Unsupported},
 		{name: "unsupported/v1alpha2-approval-policy.yaml", status: Unsupported},
 	}
 	for _, tc := range cases {

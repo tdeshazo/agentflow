@@ -1,0 +1,8 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: legacy-active-phase-recovery
+spec:
+  recovery:
+    activePhase:
+      - restore_phase_definition: true

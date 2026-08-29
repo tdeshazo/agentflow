@@ -31,6 +31,19 @@ func TestNewAcceptsV1Alpha2ForDependencyScheduling(t *testing.T) {
 	}
 }
 
+func TestNewRejectsNonExecutableActivePhaseRecovery(t *testing.T) {
+	_, err := New(
+		&workflow.Workflow{
+			Spec: workflow.Spec{Recovery: workflow.Recovery{ActivePhase: []workflow.RecoveryAction{{RestorePhaseDefinition: true}}}},
+		},
+		nil,
+		Options{RepoRoot: t.TempDir()},
+	)
+	if err == nil || !strings.Contains(err.Error(), "recovery.activePhase is unsupported") {
+		t.Fatalf("New() error = %v, want unsupported active-phase recovery", err)
+	}
+}
+
 func TestRunPersistsCompletionInGitRefs(t *testing.T) {
 	repo := t.TempDir()
 	git := func(args ...string) string {

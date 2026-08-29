@@ -199,6 +199,13 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 	if w == nil {
 		return nil, fmt.Errorf("empty workflow")
 	}
+	// File callers receive this diagnostic from workflow.Validate before Engine
+	// construction. Keep the same boundary for Go callers that construct a
+	// Workflow directly: recovery is runtime-derived, so an authored recovery
+	// program must never become executable merely by bypassing the CLI loader.
+	if len(w.Spec.Recovery.ActivePhase) != 0 {
+		return nil, fmt.Errorf("workflow recovery.activePhase is unsupported; use the runtime-owned safe-resume lifecycle")
+	}
 	// Callers in Go may construct a Workflow directly, while file callers have
 	// already validated the authored form. Normalize here as the final boundary
 	// so execution always sees the same explicit contract as `plan --expanded`.
