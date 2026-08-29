@@ -1064,11 +1064,32 @@ func TestCheckpointExpandsDefaultCommitSubjectLabelBeforeFormatting(t *testing.T
 		t.Fatal(err)
 	}
 
-	phase := &workflow.Phase{Label: "implement-{{ parameters.issue_id }}"}
+	phase := &workflow.Phase{ID: "fallback-phase-id", Label: "implement-{{ parameters.issue_id }}"}
 	if err := e.checkpoint("checkpoint", phase); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Implement agentflow 123" {
+		t.Fatalf("checkpoint commit subject = %q", got)
+	}
+}
+
+func TestCheckpointUsesPhaseIDWhenLabelIsOmitted(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "phase-id-checkpoint")
+	w.Spec.Workspace.Checkpointing.CommitMessage = ""
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	phase := &workflow.Phase{ID: "audit-foundation-gaps"}
+	if err := e.checkpoint("checkpoint", phase); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%s")); got != "Audit foundation gaps" {
 		t.Fatalf("checkpoint commit subject = %q", got)
 	}
 }

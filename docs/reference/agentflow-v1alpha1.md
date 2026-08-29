@@ -179,11 +179,12 @@ Runtime-owned checkpoint commits are separate from actor-created commits and
 do not consume actor commit authority.
 
 `checkpointing.commit_message` overrides the runtime-generated Git subject.
-When it is omitted, AgentFlow turns the checkpoint label into a readable,
-declarative subject (for example, `implement-error-recovery` becomes
-`Implement error recovery`) instead of adding an `AgentFlow:` prefix. An
-unlabeled checkpoint uses `Record workflow changes` so it never creates an
-empty subject.
+When it is omitted, AgentFlow prefers the phase label, then the phase ID, then
+the checkpoint label, and turns that value into a readable, declarative subject
+(for example, `implement-error-recovery` becomes `Implement error recovery`)
+instead of adding an `AgentFlow:` prefix. Only a checkpoint with no phase and
+no label uses `Record workflow changes`, so phase checkpoints remain
+descriptive even when authors omit the optional phase label.
 
 ## `spec.agents`
 

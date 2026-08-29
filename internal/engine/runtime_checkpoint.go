@@ -39,11 +39,8 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 		if staged {
 			msg := e.Workflow.Spec.Workspace.Checkpointing.CommitMessage
 			if msg == "" {
-				msg = label
+				msg = checkpointCommitLabel(label, p)
 				if p != nil {
-					if p.Label != "" {
-						msg = p.Label
-					}
 					if expanded, err := e.context(p).Expand(msg); err == nil {
 						msg = expanded
 					}
@@ -67,6 +64,19 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 		return fmt.Errorf("workspace remains dirty after checkpoint: %s", strings.Join(dirty, ", "))
 	}
 	return e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p))
+}
+
+func checkpointCommitLabel(label string, p *workflow.Phase) string {
+	if p == nil {
+		return label
+	}
+	if p.Label != "" {
+		return p.Label
+	}
+	if p.ID != "" {
+		return p.ID
+	}
+	return label
 }
 
 func checkpointCommitSubject(label string) string {
