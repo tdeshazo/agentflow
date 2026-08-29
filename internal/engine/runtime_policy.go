@@ -194,7 +194,7 @@ func (e *Engine) changedImplementationFiles() ([]string, error) {
 	if !ok {
 		return nil, nil
 	}
-	files, err := e.Repo.ChangedFilesSince(base)
+	files, err := e.Repo.ChangedFilesSinceRecursive(base)
 	if err != nil {
 		return nil, err
 	}

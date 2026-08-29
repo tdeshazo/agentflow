@@ -28,6 +28,7 @@ type StatusSnapshot struct {
 	ValidationFailed string `json:"validation_failed,omitempty"`
 	FailureStage     string `json:"failure_stage,omitempty"`
 	LastError        string `json:"last_error,omitempty"`
+	QuarantinePath   string `json:"quarantine_path,omitempty"`
 	// Recovery and NextAction are stable, non-secret classifications. They
 	// describe how the existing runtime will evaluate a later run; they never
 	// authorize recovery or expose validation command output.
@@ -58,6 +59,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		return StatusSnapshot{}, err
 	}
 	if activeExists {
+		if err := gitstate.ValidateQuarantinePath(e.Repo, active.QuarantinePath); err != nil {
+			return StatusSnapshot{}, fmt.Errorf("active phase quarantine diagnostic: %w", err)
+		}
 		if err := active.IntegrityViolation.Validate(); err != nil {
 			return StatusSnapshot{}, fmt.Errorf("active phase integrity diagnostic: %w", err)
 		}
@@ -78,6 +82,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	}
 	if err := lastFailure.IntegrityViolation.Validate(); err != nil {
 		return StatusSnapshot{}, fmt.Errorf("last failure integrity diagnostic: %w", err)
+	}
+	if err := gitstate.ValidateQuarantinePath(e.Repo, lastFailure.QuarantinePath); err != nil {
+		return StatusSnapshot{}, fmt.Errorf("last failure quarantine diagnostic: %w", err)
 	}
 
 	state := "uninitialized"
@@ -137,6 +144,7 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		CompleteCommit:     completeCommit,
 		FailureStage:       lastFailure.Stage,
 		LastError:          lastFailure.Error,
+		QuarantinePath:     lastFailure.QuarantinePath,
 		IntegrityViolation: lastFailure.IntegrityViolation,
 	}
 	if activeExists {
@@ -145,6 +153,7 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		snapshot.ActorCompleted = active.ActorCompleted
 		snapshot.FailureKind = string(active.FailureKind)
 		snapshot.ValidationFailed = active.Validation
+		snapshot.QuarantinePath = active.QuarantinePath
 		snapshot.validationError = active.ValidationError
 		snapshot.IntegrityViolation = active.IntegrityViolation
 	}
@@ -220,6 +229,9 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	if snapshot.FailureStage != "" {
 		p.MetadataStyled("failure_stage", snapshot.FailureStage, clioutput.RoleWarning)
 		p.MetadataStyled("last_error", snapshot.LastError, clioutput.RoleError)
+	}
+	if snapshot.QuarantinePath != "" {
+		p.Metadata("quarantine", p.Hyperlink(snapshot.QuarantinePath, clioutput.FileURL(snapshot.QuarantinePath)))
 	}
 	writeIntegrityViolation(p, "", snapshot.IntegrityViolation)
 	if snapshot.Recovery != "" {

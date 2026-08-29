@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -36,7 +37,7 @@ func TestReconcilePendingInvocationAttributesAuthorizedRepairCommit(t *testing.T
 	gitIn(t, repo, "add", "work.txt")
 	gitIn(t, repo, "commit", "-qm", "repair commit")
 	if err := e.Store.SetJSON(e.pendingInvocationRecord(), PendingActorInvocation{
-		Version: pendingActorInvocationVersion, Actor: "repair", StartCommit: active.StartCommit,
+		Version: legacyPendingActorInvocationVersion, Actor: "repair", StartCommit: active.StartCommit,
 		Role: "validation-repair", PhaseID: phase.ID, ValidationScope: "phase/change/phaseGate",
 	}); err != nil {
 		t.Fatal(err)
@@ -118,7 +119,7 @@ func TestReconcilePendingInvocationWithoutHeadMovementDoesNotAttributeCommit(t *
 		t.Fatal(err)
 	}
 	if err := e.Store.SetJSON(e.pendingInvocationRecord(), PendingActorInvocation{
-		Version: pendingActorInvocationVersion, Actor: "worker", StartCommit: active.StartCommit,
+		Version: legacyPendingActorInvocationVersion, Actor: "worker", StartCommit: active.StartCommit,
 		Role: "phase", PhaseID: phase.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -133,6 +134,165 @@ func TestReconcilePendingInvocationWithoutHeadMovementDoesNotAttributeCommit(t *
 	}
 	if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil || !ok || active.CommitActor != "" || active.ActorCompleted {
 		t.Fatalf("active state after no-commit reconciliation: %+v ok=%t err=%v", active, ok, err)
+	}
+}
+
+func TestReconcilePendingInvocationV1UsesLegacyPrimaryWorkspaceSemantics(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "pending-v1-primary-workspace")
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	start, err := e.Repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingActorInvocation{
+		Version:        legacyPendingActorInvocationVersion,
+		Actor:          "worker",
+		StartCommit:    start,
+		Role:           "phase",
+		QuarantinePath: repo,
+		BaselineTree:   "ignored-by-version-1",
+	}
+	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := e.reconcilePendingInvocation()
+	if err != nil || moved {
+		t.Fatalf("reconcile version 1 invocation: moved=%t err=%v", moved, err)
+	}
+	if _, ok, err := e.Store.Resolve(e.pendingInvocationRecord()); err != nil || ok {
+		t.Fatalf("version 1 pending record: ok=%t err=%v", ok, err)
+	}
+	var outcome ActorInvocationOutcome
+	if ok, err := e.Store.GetJSON(e.invocationOutcomeRecord(), &outcome); err != nil || !ok {
+		t.Fatalf("version 1 invocation outcome: ok=%t err=%v", ok, err)
+	}
+	if outcome.Version != legacyPendingActorInvocationVersion || outcome.Imported {
+		t.Fatalf("version 1 invocation outcome = %+v", outcome)
+	}
+}
+
+func TestReconcilePendingInvocationV2RequiresQuarantineAuthority(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "pending-v2-requires-quarantine")
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	start, err := e.Repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingActorInvocation{
+		Version:     pendingActorInvocationVersion,
+		Actor:       "worker",
+		StartCommit: start,
+		Role:        "phase",
+	}
+	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	if moved, err := e.reconcilePendingInvocation(); err == nil || moved || !strings.Contains(err.Error(), "pending actor quarantine is incomplete") {
+		t.Fatalf("reconcile incomplete version 2 invocation: moved=%t err=%v", moved, err)
+	}
+	var persisted PendingActorInvocation
+	if ok, err := e.Store.GetJSON(e.pendingInvocationRecord(), &persisted); err != nil || !ok || persisted.Version != pendingActorInvocationVersion {
+		t.Fatalf("version 2 pending invocation after rejected recovery: %+v ok=%t err=%v", persisted, ok, err)
+	}
+}
+
+func TestReconcilePendingActorQuarantineSurvivesImmediateGarbageCollection(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "pending-quarantine-gc")
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("primary dirty baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	quarantine, err := e.Repo.CreateActorWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = quarantine.Remove() })
+	if err := os.WriteFile(filepath.Join(quarantine.Repo.Root, "work.txt"), []byte("actor result\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingActorInvocation{
+		Version:             pendingActorInvocationVersion,
+		Actor:               "worker",
+		StartCommit:         quarantine.StartCommit,
+		Role:                "phase",
+		QuarantinePath:      quarantine.Repo.Root,
+		BaselineTree:        quarantine.BaselineTree,
+		BaselinePermissions: quarantine.BaselinePermissions,
+		Submodules:          quarantine.Submodules,
+	}
+	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	gitIn(t, repo, "gc", "--prune=now")
+	if !e.Repo.ObjectExists(quarantine.BaselineTree + "^{tree}") {
+		t.Fatal("garbage collection pruned the pending quarantine baseline")
+	}
+	if moved, err := e.reconcilePendingInvocation(); err != nil || moved {
+		t.Fatalf("reconcile garbage-collected quarantine: moved=%t err=%v", moved, err)
+	}
+	if got := string(mustReadFile(t, filepath.Join(repo, "work.txt"))); got != "actor result\n" {
+		t.Fatalf("recovered actor result = %q", got)
+	}
+	if _, err := os.Stat(quarantine.Repo.Root); !os.IsNotExist(err) {
+		t.Fatalf("reconciled quarantine remains: %v", err)
+	}
+	if _, ok, err := e.Store.Resolve(e.pendingInvocationRecord()); err != nil || ok {
+		t.Fatalf("pending invocation after reconciliation: present=%t err=%v", ok, err)
+	}
+	gitIn(t, repo, "gc", "--prune=now")
+	if e.Repo.ObjectExists(quarantine.BaselineTree + "^{tree}") {
+		t.Fatal("cleaned quarantine baseline remains pinned")
+	}
+}
+
+func TestReconcilePendingInvocationRejectsUnsafeQuarantinePath(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "pending-unsafe-quarantine")
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	start, err := e.Repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineTree := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD^{tree}"))
+	pending := PendingActorInvocation{
+		Version:        pendingActorInvocationVersion,
+		Actor:          "worker",
+		StartCommit:    start,
+		Role:           "phase",
+		QuarantinePath: repo,
+		BaselineTree:   baselineTree,
+	}
+	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := e.reconcilePendingInvocation(); err == nil || !strings.Contains(err.Error(), "invalid actor quarantine path") {
+		t.Fatalf("reconcile unsafe quarantine error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "README.md")); err != nil {
+		t.Fatalf("unsafe recovery cleanup removed the authoritative workspace: %v", err)
+	}
+	var persisted PendingActorInvocation
+	if ok, err := e.Store.GetJSON(e.pendingInvocationRecord(), &persisted); err != nil || !ok || persisted.QuarantinePath != repo {
+		t.Fatalf("pending invocation after rejected cleanup: %+v ok=%t err=%v", persisted, ok, err)
 	}
 }
 
@@ -162,7 +322,7 @@ func TestReconcilePendingInvocationFailsClosedBeforeRecoveryWork(t *testing.T) {
 	gitIn(t, repo, "add", "work.txt")
 	gitIn(t, repo, "commit", "-qm", "unauthorized actor commit")
 	if err := e.Store.SetJSON(e.pendingInvocationRecord(), PendingActorInvocation{
-		Version: pendingActorInvocationVersion, Actor: "worker", StartCommit: active.StartCommit,
+		Version: legacyPendingActorInvocationVersion, Actor: "worker", StartCommit: active.StartCommit,
 		Role: "phase", PhaseID: phase.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -202,7 +362,7 @@ func TestReconcilePendingInvocationRetainsCompletionRepairAttribution(t *testing
 	gitIn(t, repo, "add", "completion.txt")
 	gitIn(t, repo, "commit", "-qm", "completion repair commit")
 	if err := e.Store.SetJSON(e.pendingInvocationRecord(), PendingActorInvocation{
-		Version: pendingActorInvocationVersion, Actor: "repair", StartCommit: start,
+		Version: legacyPendingActorInvocationVersion, Actor: "repair", StartCommit: start,
 		Role: "validation-repair", ValidationScope: "completion/default/final",
 	}); err != nil {
 		t.Fatal(err)

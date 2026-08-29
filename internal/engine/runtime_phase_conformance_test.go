@@ -158,6 +158,16 @@ func TestAdversarialPendingWriteInterruptionRunsNoProviderBeforeRestart(t *testi
 		t.Fatalf("provider ran before pending-write interruption: calls=%d", p.calls)
 	}
 	assertPendingInvocationExists(t, e)
+	var pending PendingActorInvocation
+	if ok, err := e.Store.GetJSON(e.pendingInvocationRecord(), &pending); err != nil || !ok {
+		t.Fatalf("read pending invocation: ok=%t err=%v", ok, err)
+	}
+	if pending.Version != 2 {
+		t.Fatalf("pending invocation version = %d, want 2 so legacy binaries reject quarantine records", pending.Version)
+	}
+	if pending.QuarantinePath == "" || pending.BaselineTree == "" {
+		t.Fatalf("version 2 pending invocation lacks quarantine recovery authority: %+v", pending)
+	}
 
 	if err := newDurableEngine(t, w, p).Run(context.Background()); err != nil {
 		t.Fatal(err)

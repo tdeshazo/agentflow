@@ -743,7 +743,7 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 		t.Fatalf("safety failure = %v", err)
 	}
 	var active ActivePhase
-	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || !active.ActorCompleted || active.FailureKind != PhaseFailureSafety {
+	if ok, err := e.Store.GetJSON("active", &active); err != nil || !ok || active.ActorCompleted || active.FailureKind != PhaseFailureSafety || active.QuarantinePath == "" {
 		t.Fatalf("durable safety state: active=%+v ok=%v err=%v", active, ok, err)
 	}
 	var out bytes.Buffer
@@ -751,7 +751,7 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 	if err := e.Status(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "state: safety-failed/terminal") || !strings.Contains(out.String(), "actor_completed: true") || !strings.Contains(out.String(), "failure_kind: safety") {
+	if !strings.Contains(out.String(), "state: safety-failed/terminal") || !strings.Contains(out.String(), "actor_completed: false") || !strings.Contains(out.String(), "failure_kind: safety") || !strings.Contains(out.String(), "quarantine:") {
 		t.Fatalf("safety status = %s", out.String())
 	}
 	if !strings.Contains(out.String(), "recovery: operator-action-required") || !strings.Contains(out.String(), "next_action: reset-or-abandon") {
@@ -781,7 +781,7 @@ func TestSafetyFailureIsDurableAndDoesNotReplayCompletedActor(t *testing.T) {
 		t.Fatalf("safety failure replayed a completed actor: calls = %d", p.calls)
 	}
 
-	if err := os.Remove(filepath.Join(repo, "not-allowed.txt")); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "work.txt"), []byte("complete\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitIn(t, repo, "add", "work.txt")

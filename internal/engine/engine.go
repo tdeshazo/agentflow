@@ -110,23 +110,31 @@ type ActivePhase struct {
 	FailureKind             PhaseFailureKind             `json:"failure_kind,omitempty"`
 	Validation              string                       `json:"validation,omitempty"`
 	ValidationError         string                       `json:"validation_error,omitempty"`
+	QuarantinePath          string                       `json:"quarantine_path,omitempty"`
 	ValidationPassed        bool                         `json:"validation_passed,omitempty"`
 	IntegrityViolation      *gitstate.IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
-const pendingActorInvocationVersion = 1
+const (
+	legacyPendingActorInvocationVersion = 1
+	pendingActorInvocationVersion       = 2
+)
 
 // PendingActorInvocation is the minimal durable authority record written
 // before a provider is allowed to run. It deliberately excludes requests and
 // their resolved content: prompts, provider output, parameters, and
 // environment values are execution inputs, not recovery authority.
 type PendingActorInvocation struct {
-	Version         int    `json:"version"`
-	Actor           string `json:"actor"`
-	StartCommit     string `json:"start_commit"`
-	Role            string `json:"role"`
-	PhaseID         string `json:"phase_id,omitempty"`
-	ValidationScope string `json:"validation_scope,omitempty"`
+	Version             int                               `json:"version"`
+	Actor               string                            `json:"actor"`
+	StartCommit         string                            `json:"start_commit"`
+	Role                string                            `json:"role"`
+	PhaseID             string                            `json:"phase_id,omitempty"`
+	ValidationScope     string                            `json:"validation_scope,omitempty"`
+	QuarantinePath      string                            `json:"quarantine_path,omitempty"`
+	BaselineTree        string                            `json:"baseline_tree,omitempty"`
+	BaselinePermissions gitstate.FilePermissions          `json:"baseline_permissions"`
+	Submodules          []gitstate.ActorSubmoduleSnapshot `json:"submodules,omitempty"`
 }
 
 // ActorInvocationOutcome keeps the durable attribution produced while
@@ -137,6 +145,7 @@ type ActorInvocationOutcome struct {
 	Commit     string `json:"commit,omitempty"`
 	HeadMoved  bool   `json:"head_moved"`
 	Authorized bool   `json:"authorized"`
+	Imported   bool   `json:"imported"`
 }
 
 // ProgressItemState is the durable, ordered Markdown progress baseline used
@@ -414,6 +423,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 					failure := gitstate.FailureRecord{Stage: e.runStage, Error: errorOutput(runErr)}
 					var safetyErr *safetyViolation
 					if errors.As(runErr, &safetyErr) {
+						failure.QuarantinePath = safetyErr.quarantine
 						failure.IntegrityViolation = safetyErr.integrityViolation
 					}
 					_ = e.Store.SetJSON(e.lastFailureRecord(), failure)
@@ -745,6 +755,9 @@ func (e *Engine) Reset() error {
 		if len(dirty) != 0 {
 			return fmt.Errorf("reset requires clean implementation workspace; dirty: %s", strings.Join(dirty, ", "))
 		}
+	}
+	if err := e.cleanupRetainedActorQuarantines(); err != nil {
+		return err
 	}
 	return e.Store.Reset()
 }

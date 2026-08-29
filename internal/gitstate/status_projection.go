@@ -75,6 +75,21 @@ func safeIntegrityText(value string) bool {
 	return true
 }
 
+// ValidateQuarantinePath rejects malformed durable paths before status or
+// terminal presentation can expose them. Runtime-created quarantine paths are
+// direct worktree children of uniquely named quarantine directories inside the
+// repository's durable, Git-identity-scoped quarantine root.
+func ValidateQuarantinePath(repo Repo, path string) error {
+	if path == "" {
+		return nil
+	}
+	if !safeIntegrityText(path) {
+		return fmt.Errorf("invalid actor quarantine path")
+	}
+	_, err := actorQuarantineParent(repo, path)
+	return err
+}
+
 // StatusProjection is the generic, non-secret status view used by repository-
 // wide inspection. Its acceptance fields come from existing Git-backed
 // records, not from the descriptor.
@@ -95,6 +110,7 @@ type StatusProjection struct {
 	ValidationFailed string `json:"validation_failed,omitempty"`
 	FailureStage     string `json:"failure_stage,omitempty"`
 	LastError        string `json:"last_error,omitempty"`
+	QuarantinePath   string `json:"quarantine_path,omitempty"`
 	Recovery         string `json:"recovery,omitempty"`
 	NextAction       string `json:"next_action,omitempty"`
 	*IntegrityViolation
@@ -111,6 +127,7 @@ type projectedActivePhase struct {
 	FailureKind        string              `json:"failure_kind,omitempty"`
 	Validation         string              `json:"validation,omitempty"`
 	IntegrityViolation *IntegrityViolation `json:"integrity_violation,omitempty"`
+	QuarantinePath     string              `json:"quarantine_path,omitempty"`
 }
 
 // ProjectStatus reads the existing acceptance records named by d. A malformed
@@ -142,6 +159,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		return StatusProjection{}, err
 	}
 	if activeExists {
+		if err := ValidateQuarantinePath(repo, active.QuarantinePath); err != nil {
+			return StatusProjection{}, fmt.Errorf("active phase quarantine diagnostic: %w", err)
+		}
 		if err := active.IntegrityViolation.Validate(); err != nil {
 			return StatusProjection{}, fmt.Errorf("active phase integrity diagnostic: %w", err)
 		}
@@ -169,6 +189,9 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		}
 		if err := lastFailure.IntegrityViolation.Validate(); err != nil {
 			return StatusProjection{}, fmt.Errorf("last failure integrity diagnostic: %w", err)
+		}
+		if err := ValidateQuarantinePath(repo, lastFailure.QuarantinePath); err != nil {
+			return StatusProjection{}, fmt.Errorf("last failure quarantine diagnostic: %w", err)
 		}
 	}
 
@@ -210,6 +233,7 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		Complete:           complete,
 		FailureStage:       lastFailure.Stage,
 		LastError:          lastFailure.Error,
+		QuarantinePath:     lastFailure.QuarantinePath,
 		IntegrityViolation: lastFailure.IntegrityViolation,
 	}
 	if initialized {
@@ -227,6 +251,7 @@ func (d Descriptor) ProjectStatus(repo Repo, namespace string) (StatusProjection
 		projection.ActorCompleted = active.ActorCompleted
 		projection.FailureKind = active.FailureKind
 		projection.ValidationFailed = active.Validation
+		projection.QuarantinePath = active.QuarantinePath
 		projection.IntegrityViolation = active.IntegrityViolation
 	}
 	setRecoveryMetadata(&projection)

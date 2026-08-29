@@ -30,6 +30,7 @@ type RecordNames struct {
 type FailureRecord struct {
 	Stage              string              `json:"stage"`
 	Error              string              `json:"error"`
+	QuarantinePath     string              `json:"quarantine_path,omitempty"`
 	IntegrityViolation *IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 

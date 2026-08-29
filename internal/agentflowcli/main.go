@@ -656,6 +656,9 @@ func runAllStatusTo(repoRoot string, jsonOutput bool, out io.Writer, tty, color 
 			presenter.IndentedMetadata("  ", "failure_stage", status.FailureStage, clioutput.RoleWarning)
 			presenter.IndentedMetadata("  ", "last_error", status.LastError, clioutput.RoleError)
 		}
+		if status.QuarantinePath != "" {
+			presenter.IndentedMetadata("  ", "quarantine", status.QuarantinePath, clioutput.RoleWarning)
+		}
 		if status.Recovery != "" {
 			presenter.IndentedMetadata("  ", "recovery", status.Recovery, clioutput.StateRole(status.Recovery))
 			presenter.IndentedMetadata("  ", "next_action", status.NextAction, clioutput.StateRole(status.NextAction))

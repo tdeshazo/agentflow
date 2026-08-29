@@ -105,7 +105,7 @@ func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
 	}
 	for _, want := range []string{
 		"writable path patterns:\n  - \"src/**\"\n  - \"docs/*.md\"",
-		"protected path patterns:\n  - \"data/mothership/v1.2/**\" [rule=\"roadmap-and-rules-governance\", mode=\"normalized-hash\", excludes=[\"data/mothership/v1.2/generated/**\"], allowed_semantic_changes=[\"criterion checkbox state\"]]",
+		"protected path patterns:\n  - \"data/mothership/v1.2/**\" [rule=\"roadmap-and-rules-governance\", mode=\"normalized-hash\", excludes=[\"data/mothership/v1.2/generated/**\"]]",
 		"engine-owned progress files (do not edit):\n  - \"docs/roadmap.md\"",
 		"commit authority: forbidden; do not create commits",
 		"selected validation gate(s):\n  - \"phaseGate\"",
@@ -114,6 +114,151 @@ func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("provider prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "allowed_semantic_changes") {
+		t.Fatalf("provider prompt advertises unenforced semantic changes:\n%s", prompt)
+	}
+}
+
+func TestRunAgentRemapsExpandedAuthoritativeWorkspacePathsIntoQuarantine(t *testing.T) {
+	repo := newDurableRepo(t)
+	unrelated := t.TempDir()
+	providerImpl := &capabilityRecordingProvider{}
+	p := &workflow.Phase{
+		ID:              "implement",
+		Kind:            "implementation",
+		Actor:           "worker",
+		AdvanceProgress: true,
+	}
+	e := &Engine{
+		Workflow: &workflow.Workflow{Spec: workflow.Spec{
+			Workspace: workflow.WorkspaceSpec{MutationPolicy: workflow.MutationPolicy{Allowed: []string{"work.txt"}}},
+			Progress:  workflow.ProgressSpec{Source: workflow.ProgressSource{Path: "{{ parameters.repo_root }}/progress.md"}},
+			Agents: map[string]workflow.Agent{
+				"worker": {Runner: "test", Model: "{{ parameters.repo_root }}/models/actor"},
+			},
+		}},
+		Parameters: map[string]any{"repo_root": repo},
+		Providers:  map[string]provider.Provider{"test": providerImpl},
+		Repo:       gitstate.Repo{Root: repo},
+	}
+
+	prompt := fmt.Sprintf(
+		"Edit {{ parameters.repo_root }}/work.txt, but leave the unrelated absolute path %s unchanged.",
+		filepath.Join(unrelated, "reference.txt"),
+	)
+	if err := e.runAgent(context.Background(), "worker", "high", prompt, p); err != nil {
+		t.Fatal(err)
+	}
+
+	request := providerImpl.request
+	if request.Workspace == repo {
+		t.Fatal("provider received the authoritative workspace")
+	}
+	if strings.Contains(request.Model, repo) {
+		t.Fatalf("provider model leaked authoritative workspace %q: %q", repo, request.Model)
+	}
+	if strings.Contains(request.Prompt, repo) {
+		t.Fatalf("provider prompt leaked authoritative workspace %q:\n%s", repo, request.Prompt)
+	}
+	for _, want := range []string{
+		filepath.Join(request.Workspace, "models/actor"),
+		filepath.Join(request.Workspace, "work.txt"),
+		filepath.Join(request.Workspace, "progress.md"),
+		filepath.Join(unrelated, "reference.txt"),
+	} {
+		if !strings.Contains(request.Model+"\n"+request.Prompt, want) {
+			t.Fatalf("provider request did not preserve/remap %q: model=%q prompt=%q", want, request.Model, request.Prompt)
+		}
+	}
+}
+
+func TestRunAgentRemappedPromptCannotWriteAuthoritativeWorkspace(t *testing.T) {
+	repo := newDurableRepo(t)
+	authoritativeTarget := filepath.Join(repo, "blocked.txt")
+	var providerRequest provider.Request
+	providerImpl := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		providerRequest = request
+		target := authoritativeTarget
+		if !strings.Contains(request.Prompt, authoritativeTarget) {
+			target = filepath.Join(request.Workspace, "blocked.txt")
+		}
+		return os.WriteFile(target, []byte("provider edit\n"), 0o644)
+	}}
+	w := durableWorkflow(repo, "remapped-prompt-cannot-bypass-quarantine")
+	w.Spec.Phases[0].Prompt = "Write {{ parameters.repo_root }}/blocked.txt."
+	e := newDurableEngine(t, w, providerImpl)
+
+	err := e.Run(context.Background())
+	var safetyErr *safetyViolation
+	if !errors.As(err, &safetyErr) {
+		t.Fatalf("runAgent error = %v, want quarantined mutation-policy violation", err)
+	}
+	if strings.Contains(providerRequest.Prompt, authoritativeTarget) {
+		t.Fatalf("provider prompt leaked authoritative target %q: %q", authoritativeTarget, providerRequest.Prompt)
+	}
+	if _, err := os.Stat(authoritativeTarget); !os.IsNotExist(err) {
+		t.Fatalf("provider modified authoritative workspace through expanded prompt path: %v", err)
+	}
+}
+
+func TestRemapWorkspacePathReferencesPreservesUnrelatedAbsolutePaths(t *testing.T) {
+	authoritative := filepath.Join(string(filepath.Separator), "srv", "agentflow", "repository")
+	quarantine := filepath.Join(string(filepath.Separator), "tmp", "agentflow-quarantine", "worktree")
+	sibling := authoritative + "-archive"
+	containing := filepath.Join(string(filepath.Separator), "mirror") + authoritative
+	unrelated := filepath.Join(string(filepath.Separator), "opt", "reference", "asset.txt")
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "exact root", value: authoritative, want: quarantine},
+		{
+			name:  "descendant in prose",
+			value: "edit " + filepath.Join(authoritative, "work.txt") + ", then validate",
+			want:  "edit " + filepath.Join(quarantine, "work.txt") + ", then validate",
+		},
+		{
+			name:  "multiple quoted references",
+			value: fmt.Sprintf("%q and %q", authoritative, filepath.Join(authoritative, "nested", "work.txt")),
+			want:  fmt.Sprintf("%q and %q", quarantine, filepath.Join(quarantine, "nested", "work.txt")),
+		},
+		{
+			name:  "file URI",
+			value: "file://" + filepath.Join(authoritative, "work.txt"),
+			want:  "file://" + filepath.Join(quarantine, "work.txt"),
+		},
+		{name: "sibling prefix", value: sibling, want: sibling},
+		{name: "root text inside another absolute path", value: containing, want: containing},
+		{name: "unrelated absolute path", value: unrelated, want: unrelated},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := remapWorkspacePathReferences(test.value, authoritative, quarantine); got != test.want {
+				t.Fatalf("remapWorkspacePathReferences(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestWriteProtectedPromptPatternsOmitsUnenforcedSemanticChanges(t *testing.T) {
+	for _, mode := range []string{"exact-hash", "normalized-hash"} {
+		t.Run(mode, func(t *testing.T) {
+			var prompt strings.Builder
+			writeProtectedPromptPatterns(&prompt, []workflow.IntegrityRule{{
+				ID:                     "protected",
+				Paths:                  []string{"protected/**"},
+				Mode:                   mode,
+				AllowedSemanticChanges: []string{"documented exception"},
+			}})
+
+			if strings.Contains(prompt.String(), "allowed_semantic_changes") {
+				t.Fatalf("prompt advertises unenforced semantic changes:\n%s", prompt.String())
+			}
+		})
 	}
 }
 
@@ -530,6 +675,10 @@ func TestRunAgentV1Alpha2ProviderCapabilitiesMatchSharedAgent(t *testing.T) {
 			}
 			providerRequests = append(providerRequests, got)
 		})
+	}
+	if !reflect.DeepEqual(providerRequests[0], providerRequests[1]) {
+		providerRequests[0].Workspace = ""
+		providerRequests[1].Workspace = ""
 	}
 	if !reflect.DeepEqual(providerRequests[0], providerRequests[1]) {
 		t.Fatalf("normalized v1alpha2 provider request = %#v, shared agent provider request = %#v", providerRequests[0], providerRequests[1])

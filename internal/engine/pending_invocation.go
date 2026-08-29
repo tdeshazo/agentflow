@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
@@ -40,42 +41,63 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 	if err != nil || !ok {
 		return false, err
 	}
-	if pending.Version != pendingActorInvocationVersion {
+	if pending.Version != legacyPendingActorInvocationVersion && pending.Version != pendingActorInvocationVersion {
 		return false, fmt.Errorf("unsupported pending actor invocation version %d", pending.Version)
 	}
 	if pending.Actor == "" || pending.StartCommit == "" || pending.Role == "" {
 		return false, errors.New("pending actor invocation is incomplete")
 	}
 
-	head, err := e.Repo.Head()
-	if err != nil {
-		return false, fmt.Errorf("inspect repository HEAD while reconciling actor %q: %w", pending.Actor, err)
+	agent, knownActor := e.Workflow.Spec.Agents[pending.Actor]
+	if !knownActor {
+		return false, fmt.Errorf("pending actor invocation references unknown actor %q", pending.Actor)
 	}
-	moved := head != pending.StartCommit
+	head := ""
+	moved := false
 	authorized := true
+	imported := false
+	var quarantine *gitstate.ActorWorktree
 	var violation *safetyViolation
-	if moved {
-		agent, ok := e.Workflow.Spec.Agents[pending.Actor]
-		if !ok {
-			return true, fmt.Errorf("pending actor invocation references unknown actor %q", pending.Actor)
-		}
-		authorized = e.effectiveActorCommitPermission(agent)
-
-		if pending.PhaseID != "" {
-			phase, err := e.phaseByID(pending.PhaseID)
-			if err != nil {
-				return true, fmt.Errorf("resolve pending invocation phase %q: %w", pending.PhaseID, err)
-			}
-			if err := e.recordPhaseCommitActor(phase, pending.Actor); err != nil {
-				return true, err
+	if pending.Version == pendingActorInvocationVersion {
+		result, quarantineErr := e.reconcileActorQuarantine(pending, agent)
+		head = result.commit
+		moved = result.moved
+		authorized = result.authorized
+		imported = result.imported
+		quarantine = result.worktree
+		if quarantineErr != nil {
+			if !errors.As(quarantineErr, &violation) {
+				return moved, quarantineErr
 			}
 		}
-		if !authorized {
-			violation = &safetyViolation{
-				err:    fmt.Errorf("repository policy: actor %q moved HEAD but effective actor commit permission is false (may_commit is false and no workflow actor-commit permission is enabled)", pending.Actor),
-				actor:  pending.Actor,
-				commit: head,
+	} else {
+		// Version 1 actors ran directly in the authoritative workspace. Ignore
+		// fields unknown to that schema so its recovery behavior remains exactly
+		// the HEAD-based reconciliation implemented by the binaries that wrote it.
+		var err error
+		head, err = e.Repo.Head()
+		if err != nil {
+			return false, fmt.Errorf("inspect repository HEAD while reconciling actor %q: %w", pending.Actor, err)
+		}
+		moved = head != pending.StartCommit
+		if moved {
+			authorized = e.effectiveActorCommitPermission(agent)
+			if !authorized {
+				violation = &safetyViolation{
+					err:    fmt.Errorf("repository policy: actor %q moved HEAD but effective actor commit permission is false (may_commit is false and no workflow actor-commit permission is enabled)", pending.Actor),
+					actor:  pending.Actor,
+					commit: head,
+				}
 			}
+		}
+	}
+	if moved && pending.PhaseID != "" {
+		phase, err := e.phaseByID(pending.PhaseID)
+		if err != nil {
+			return true, fmt.Errorf("resolve pending invocation phase %q: %w", pending.PhaseID, err)
+		}
+		if err := e.recordPhaseCommitActor(phase, pending.Actor); err != nil {
+			return true, err
 		}
 	}
 
@@ -84,6 +106,7 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 		Commit:                 head,
 		HeadMoved:              moved,
 		Authorized:             authorized,
+		Imported:               imported,
 	}); err != nil {
 		return moved, fmt.Errorf("persist actor invocation outcome for %q: %w", pending.Actor, err)
 	}
@@ -94,6 +117,11 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 	}
 	if err := e.runInterruptionHook(interruptionAfterAuthority, pending); err != nil {
 		return moved, err
+	}
+	if violation == nil && quarantine != nil {
+		if err := quarantine.Remove(); err != nil {
+			return moved, fmt.Errorf("remove compliant actor quarantine: %w", err)
+		}
 	}
 	if err := e.Store.Delete(e.pendingInvocationRecord()); err != nil {
 		return moved, fmt.Errorf("clear pending actor invocation for %q: %w", pending.Actor, err)
@@ -138,6 +166,7 @@ func (e *Engine) persistPendingInvocationSafety(pending PendingActorInvocation, 
 		Output:             errorOutput(violation),
 		Actor:              violation.actor,
 		Commit:             violation.commit,
+		QuarantinePath:     violation.quarantine,
 		IntegrityViolation: violation.integrityViolation,
 	}); err != nil {
 		return fmt.Errorf("persist pending actor safety failure: %w", err)

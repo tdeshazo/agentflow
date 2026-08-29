@@ -32,6 +32,7 @@ type safetyViolation struct {
 	err                error
 	actor              string
 	commit             string
+	quarantine         string
 	integrityViolation *gitstate.IntegrityViolation
 }
 
@@ -545,9 +546,6 @@ func writeProtectedPromptPatterns(prompt *strings.Builder, rules []workflow.Inte
 			if len(rule.Exclude) > 0 {
 				fmt.Fprintf(prompt, ", excludes=%s", quotedPromptValues(rule.Exclude))
 			}
-			if len(rule.AllowedSemanticChanges) > 0 {
-				fmt.Fprintf(prompt, ", allowed_semantic_changes=%s", quotedPromptValues(rule.AllowedSemanticChanges))
-			}
 			prompt.WriteString("]\n")
 			count++
 		}
@@ -579,18 +577,26 @@ func (e *Engine) effectiveActorCommitPermission(agent workflow.Agent) bool {
 
 // invokeAgent is the shared repository-authority boundary for every named
 // actor invocation, including primary actors, repairs, and recovered reruns.
-// It deliberately observes only HEAD: actor commit permission governs
-// actor-created commits, while ordinary workspace edits remain subject to the
-// independent mutation-boundary checks and may later be checkpointed by the
-// runtime.
+// Actors execute in detached quarantine worktrees. Their complete resulting
+// state is checked against runtime policy before any delta or authorized commit
+// lineage is imported into the authoritative workspace.
 func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workflow.Agent, prov provider.Provider, request provider.Request, invocation PendingActorInvocation) (bool, error) {
 	before, err := e.Repo.Head()
 	if err != nil {
 		return false, fmt.Errorf("capture repository HEAD before actor %q: %w", actorName, err)
 	}
+	quarantine, err := e.Repo.CreateActorWorktree()
+	if err != nil {
+		return false, fmt.Errorf("create quarantine for actor %q: %w", actorName, err)
+	}
+	request = remapProviderRequestWorkspace(request, e.Repo.Root, quarantine.Repo.Root)
 	invocation.Version = pendingActorInvocationVersion
 	invocation.Actor = actorName
 	invocation.StartCommit = before
+	invocation.QuarantinePath = quarantine.Repo.Root
+	invocation.BaselineTree = quarantine.BaselineTree
+	invocation.BaselinePermissions = quarantine.BaselinePermissions
+	invocation.Submodules = append([]gitstate.ActorSubmoduleSnapshot(nil), quarantine.Submodules...)
 	if invocation.Role == "" {
 		invocation.Role = "phase"
 	}
@@ -599,6 +605,7 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 	}
 	if e.invocationStateAvailable() {
 		if err := e.persistPendingInvocation(invocation); err != nil {
+			_ = quarantine.Remove()
 			return false, err
 		}
 		if err := e.runInterruptionHook(interruptionAfterPendingInvocation, invocation); err != nil {
@@ -617,18 +624,88 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		}
 		return moved, providerErr
 	}
-	after, headErr := e.Repo.Head()
-	if headErr != nil {
-		return false, fmt.Errorf("inspect repository HEAD after actor %q: %w", actorName, headErr)
+	result, reconcileErr := e.reconcileActorQuarantine(invocation, agent)
+	if reconcileErr != nil {
+		return result.moved, reconcileErr
 	}
-	if before != after && !e.effectiveActorCommitPermission(agent) {
-		return true, &safetyViolation{
-			err:    fmt.Errorf("repository policy: actor %q moved HEAD but effective actor commit permission is false (may_commit is false and no workflow actor-commit permission is enabled)", actorName),
-			actor:  actorName,
-			commit: after,
+	if err := quarantine.Remove(); err != nil {
+		return result.moved, fmt.Errorf("remove compliant actor quarantine: %w", err)
+	}
+	return result.moved, providerErr
+}
+
+// remapProviderRequestWorkspace replaces authoritative-workspace path
+// references only when they identify that root or one of its descendants.
+// Providers receive the quarantine as their workspace, so leaving an expanded
+// authoritative path in any provider-visible field would bypass that boundary.
+func remapProviderRequestWorkspace(request provider.Request, authoritativeRoot, quarantineRoot string) provider.Request {
+	remap := func(value string) string {
+		return remapWorkspacePathReferences(value, authoritativeRoot, quarantineRoot)
+	}
+
+	request.Workspace = quarantineRoot
+	request.Model = remap(request.Model)
+	request.Reasoning = remap(request.Reasoning)
+	request.Prompt = remap(request.Prompt)
+	request.Sandbox = remap(request.Sandbox)
+	request.Approval = remap(request.Approval)
+	request.Presentation = provider.PresentationIntent(remap(string(request.Presentation)))
+	if request.Metadata != nil {
+		metadata := make(map[string]string, len(request.Metadata))
+		for key, value := range request.Metadata {
+			metadata[key] = remap(value)
 		}
+		request.Metadata = metadata
 	}
-	return before != after, providerErr
+	return request
+}
+
+func remapWorkspacePathReferences(value, authoritativeRoot, quarantineRoot string) string {
+	authoritativeRoot = filepath.Clean(authoritativeRoot)
+	quarantineRoot = filepath.Clean(quarantineRoot)
+	if value == "" || authoritativeRoot == "." || authoritativeRoot == quarantineRoot {
+		return value
+	}
+
+	var remapped strings.Builder
+	remaining := value
+	for {
+		index := strings.Index(remaining, authoritativeRoot)
+		if index < 0 {
+			remapped.WriteString(remaining)
+			return remapped.String()
+		}
+		end := index + len(authoritativeRoot)
+		remapped.WriteString(remaining[:index])
+		if workspacePathReferenceAt(remaining, index, end) {
+			remapped.WriteString(quarantineRoot)
+		} else {
+			remapped.WriteString(authoritativeRoot)
+		}
+		remaining = remaining[end:]
+	}
+}
+
+func workspacePathReferenceAt(value string, start, end int) bool {
+	if start > 0 && workspacePathTokenByte(value[start-1]) && !strings.HasSuffix(value[:start], "file://") {
+		return false
+	}
+	if end == len(value) || isPathSeparator(value[end]) {
+		return true
+	}
+	return !workspacePathTokenByte(value[end])
+}
+
+func workspacePathTokenByte(value byte) bool {
+	return value >= 0x80 ||
+		value >= 'a' && value <= 'z' ||
+		value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9' ||
+		strings.ContainsRune("_-.~+%@/\\", rune(value))
+}
+
+func isPathSeparator(value byte) bool {
+	return value == '/' || value == '\\'
 }
 
 // recordPhaseCommitActor persists the authority that was actually exercised
@@ -851,6 +928,7 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 		return e.Store.SetJSON(record, validationFailureEvidence{
 			Validation: name, FailureKind: kind, Output: errorOutput(failure),
 			Actor: safetyErrActor(safetyErr), Commit: safetyErrCommit(safetyErr),
+			QuarantinePath:     safetyErrQuarantine(safetyErr),
 			IntegrityViolation: safetyErrIntegrityViolation(safetyErr),
 		})
 	}
@@ -869,6 +947,7 @@ func (e *Engine) persistValidationFailure(p *workflow.Phase, name string, failur
 	}
 	active.Validation = name
 	active.ValidationError = errorOutput(failure)
+	active.QuarantinePath = safetyErrQuarantine(safetyErr)
 	active.IntegrityViolation = safetyErrIntegrityViolation(safetyErr)
 	if errors.As(failure, &safetyErr) && safetyErr.actor != "" {
 		active.CommitActor = safetyErr.actor
@@ -888,6 +967,13 @@ func safetyErrCommit(err *safetyViolation) string {
 		return ""
 	}
 	return err.commit
+}
+
+func safetyErrQuarantine(err *safetyViolation) string {
+	if err == nil {
+		return ""
+	}
+	return err.quarantine
 }
 
 func safetyErrIntegrityViolation(err *safetyViolation) *gitstate.IntegrityViolation {
@@ -919,6 +1005,7 @@ func (e *Engine) persistSafetyFailure(p *workflow.Phase, failure error) error {
 	active.ValidationError = errorOutput(failure)
 	var safetyErr *safetyViolation
 	if errors.As(failure, &safetyErr) {
+		active.QuarantinePath = safetyErr.quarantine
 		active.IntegrityViolation = safetyErr.integrityViolation
 	}
 	return e.Store.SetJSON(e.activeRecord(), active)
@@ -941,6 +1028,7 @@ func (e *Engine) clearValidationFailure(p *workflow.Phase, name string) error {
 			active.FailureKind = ""
 			active.Validation = ""
 			active.ValidationError = ""
+			active.QuarantinePath = ""
 			active.IntegrityViolation = nil
 			return e.Store.SetJSON(e.activeRecord(), active)
 		}
@@ -971,6 +1059,7 @@ type validationFailureEvidence struct {
 	Output             string                       `json:"output,omitempty"`
 	Actor              string                       `json:"actor,omitempty"`
 	Commit             string                       `json:"commit,omitempty"`
+	QuarantinePath     string                       `json:"quarantine_path,omitempty"`
 	IntegrityViolation *gitstate.IntegrityViolation `json:"integrity_violation,omitempty"`
 }
 
@@ -978,6 +1067,7 @@ func safetyViolationFromActive(active ActivePhase) *safetyViolation {
 	return &safetyViolation{
 		err:                durableSafetyError(active.ValidationError),
 		actor:              active.CommitActor,
+		quarantine:         active.QuarantinePath,
 		integrityViolation: active.IntegrityViolation,
 	}
 }
@@ -987,6 +1077,7 @@ func safetyViolationFromEvidence(evidence validationFailureEvidence) *safetyViol
 		err:                durableSafetyError(evidence.Output),
 		actor:              evidence.Actor,
 		commit:             evidence.Commit,
+		quarantine:         evidence.QuarantinePath,
 		integrityViolation: evidence.IntegrityViolation,
 	}
 }

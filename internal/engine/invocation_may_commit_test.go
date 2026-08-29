@@ -171,13 +171,15 @@ func TestCompletionValidationUsesRepairInvocationAuthority(t *testing.T) {
 						assertNoDurablePhaseOrCompletionMarkers(t, e, "root")
 						var failure validationFailureEvidence
 						ok, readErr := e.Store.GetJSON(failureRecord, &failure)
-						if readErr != nil || !ok || failure.FailureKind != PhaseFailureSafety {
+						if readErr != nil || !ok || failure.FailureKind != PhaseFailureSafety || failure.QuarantinePath == "" {
 							t.Fatalf("completion safety evidence = %+v ok=%v err=%v", failure, ok, readErr)
 						}
-						if err := e.runToolUses(context.Background(), w.Spec.Validation["final"].Steps, nil); err != nil {
-							t.Fatalf("final deterministic validation after rejected repair = %v", err)
+						if err := e.runToolUses(context.Background(), w.Spec.Validation["final"].Steps, nil); err == nil {
+							t.Fatal("final deterministic validation accepted quarantined repair changes")
 						}
-						gitIn(t, repo, "revert", "--no-edit", "HEAD")
+						if _, statErr := os.Stat(filepath.Join(repo, "completion.txt")); !os.IsNotExist(statErr) {
+							t.Fatalf("rejected repair poisoned primary workspace: %v", statErr)
+						}
 						if err := os.WriteFile(filepath.Join(repo, "completion.txt"), []byte("done\n"), 0o644); err != nil {
 							t.Fatal(err)
 						}
