@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	actorQuarantineDirectoryPrefix = "agentflow-quarantine-"
-	actorQuarantineRootDirectory   = ".agentflow-quarantines"
-	actorWorktreeDirectoryName     = "worktree"
+	actorQuarantineDirectoryPrefix       = "actor-quarantine-"
+	actorQuarantineRootDirectory         = ".actor-quarantines"
+	legacyActorQuarantineDirectoryPrefix = "agentflow-quarantine-"
+	legacyActorQuarantineRootDirectory   = ".agentflow-quarantines"
+	actorWorktreeDirectoryName           = "worktree"
 )
 
 // ActorWorktree is a detached, disposable checkout used to isolate one actor
@@ -382,10 +384,19 @@ func parseActorQuarantineParent(path string) (string, error) {
 
 	parent := filepath.Dir(path)
 	name := filepath.Base(parent)
-	if !strings.HasPrefix(name, actorQuarantineDirectoryPrefix) || len(name) == len(actorQuarantineDirectoryPrefix) {
+	if !actorQuarantineDirectoryNameValid(name) {
 		return "", fmt.Errorf("invalid actor quarantine path")
 	}
 	return parent, nil
+}
+
+func actorQuarantineDirectoryNameValid(name string) bool {
+	for _, prefix := range []string{actorQuarantineDirectoryPrefix, legacyActorQuarantineDirectoryPrefix} {
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func actorQuarantineParent(primary Repo, path string) (string, error) {
@@ -417,7 +428,9 @@ func validateRecordedActorQuarantineRoot(primary Repo, root string) error {
 	if err != nil {
 		return err
 	}
-	if filepath.Base(root) != repositoryID || filepath.Base(filepath.Dir(root)) != actorQuarantineRootDirectory {
+	rootDirectory := filepath.Base(filepath.Dir(root))
+	if filepath.Base(root) != repositoryID ||
+		(rootDirectory != actorQuarantineRootDirectory && rootDirectory != legacyActorQuarantineRootDirectory) {
 		return fmt.Errorf("invalid actor quarantine path")
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)

@@ -39,6 +39,36 @@ func TestActorQuarantineImportsCompliantChangesAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestActorQuarantineIgnoresUnchangedIgnoredBaselineFiles(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agentflow/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", ".gitignore")
+	gitIn(t, repo, "commit", "-qm", "ignore local agentflow files")
+	workflowPath := filepath.Join(repo, ".agentflow", "workflows", "example.yaml")
+	if err := os.MkdirAll(filepath.Dir(workflowPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workflowPath, []byte("workflow baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	w := durableWorkflow(repo, "actor-quarantine-ignored-baseline")
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run with unchanged ignored baseline: %v", err)
+	}
+	assertDurableCompletion(t, e, repo)
+	if got := string(mustReadFile(t, workflowPath)); got != "workflow baseline\n" {
+		t.Fatalf("ignored workflow baseline = %q", got)
+	}
+}
+
 func TestActorQuarantinePreservesRejectedChangesWithoutPoisoningPrimary(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "actor-quarantine-rejected")

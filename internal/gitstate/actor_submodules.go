@@ -158,6 +158,31 @@ func writeActorRepoTree(repo Repo) (string, error) {
 	return strings.TrimSpace(string(tree)), nil
 }
 
+func writeActorPolicyTree(repo Repo) (tree string, err error) {
+	indexDir, err := os.MkdirTemp("", "agentflow-index-")
+	if err != nil {
+		return "", fmt.Errorf("create actor policy index: %w", err)
+	}
+	defer func() {
+		if removeErr := os.RemoveAll(indexDir); err == nil && removeErr != nil {
+			err = fmt.Errorf("remove actor policy index: %w", removeErr)
+		}
+	}()
+
+	env := []string{"GIT_INDEX_FILE=" + filepath.Join(indexDir, "index")}
+	if _, err := repo.runWithEnv(nil, env, "read-tree", "HEAD"); err != nil {
+		return "", err
+	}
+	if _, err := repo.runWithEnv(nil, env, "add", "-A", "--", "."); err != nil {
+		return "", err
+	}
+	output, err := repo.runWithEnv(nil, env, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 func joinActorSubmodulePath(parent, child string) string {
 	if parent == "" {
 		return filepath.ToSlash(filepath.Clean(child))
@@ -353,12 +378,18 @@ func (r Repo) ChangedFilesSinceRecursive(base string) ([]string, error) {
 }
 
 func changedFilesSinceRecursive(repo Repo, base, prefix string, changed map[string]struct{}) error {
-	paths, err := repo.ChangedFilesSince(base)
+	policyTree, err := writeActorPolicyTree(repo)
 	if err != nil {
 		return err
 	}
-	for _, path := range paths {
-		changed[joinActorSubmodulePath(prefix, path)] = struct{}{}
+	output, err := repo.run(nil, "diff", "--name-only", "-z", base, policyTree, "--", ".")
+	if err != nil {
+		return err
+	}
+	for _, path := range bytes.Split(output, []byte{0}) {
+		if len(path) != 0 {
+			changed[joinActorSubmodulePath(prefix, string(path))] = struct{}{}
+		}
 	}
 
 	submodules, err := listInitializedSubmodules(repo)

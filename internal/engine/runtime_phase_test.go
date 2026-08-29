@@ -65,7 +65,7 @@ func TestRunAgentUsesRuntimeOwnedPresentationIntent(t *testing.T) {
 	}
 }
 
-func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
+func TestRunAgentPrependsNeutralRuntimeExecutionBoundary(t *testing.T) {
 	providerImpl := &presentationRecordingProvider{}
 	p := &workflow.Phase{
 		ID:              "implement",
@@ -78,13 +78,20 @@ func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
 		Workflow: &workflow.Workflow{Spec: workflow.Spec{
 			Workspace: workflow.WorkspaceSpec{MutationPolicy: workflow.MutationPolicy{
 				Allowed: []string{"src/**", "docs/*.md"},
-				Integrity: []workflow.IntegrityRule{{
-					ID:                     "roadmap-and-rules-governance",
-					Paths:                  []string{"data/mothership/v1.2/**"},
-					Exclude:                []string{"data/mothership/v1.2/generated/**"},
-					Mode:                   "normalized-hash",
-					AllowedSemanticChanges: []string{"criterion checkbox state"},
-				}},
+				Integrity: []workflow.IntegrityRule{
+					{
+						ID:                     "roadmap-and-rules-governance",
+						Paths:                  []string{"data/mothership/v1.2/**"},
+						Exclude:                []string{"data/mothership/v1.2/generated/**"},
+						Mode:                   "normalized-hash",
+						AllowedSemanticChanges: []string{"criterion checkbox state"},
+					},
+					{
+						ID:    "runtime-control",
+						Paths: []string{".agentflow/workflows/task.yaml", ".agents/skills/agentflow-spec"},
+						Mode:  "exact-hash",
+					},
+				},
 			}},
 			Progress: workflow.ProgressSpec{Source: workflow.ProgressSource{Path: "docs/roadmap.md"}},
 			Agents: map[string]workflow.Agent{
@@ -100,16 +107,16 @@ func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := providerImpl.request.Prompt
-	if !strings.HasPrefix(prompt, "AgentFlow runtime execution boundary (runtime-owned; enforcement remains authoritative):\n") {
+	if !strings.HasPrefix(prompt, "Runtime-enforced execution boundary:\n") {
 		t.Fatalf("provider prompt does not start with runtime boundary:\n%s", prompt)
 	}
 	for _, want := range []string{
 		"writable path patterns:\n  - \"src/**\"\n  - \"docs/*.md\"",
-		"protected path patterns:\n  - \"data/mothership/v1.2/**\" [rule=\"roadmap-and-rules-governance\", mode=\"normalized-hash\", excludes=[\"data/mothership/v1.2/generated/**\"]]",
-		"engine-owned progress files (do not edit):\n  - \"docs/roadmap.md\"",
+		"protected path patterns:\n  - \"data/mothership/v1.2/**\" [excludes=[\"data/mothership/v1.2/generated/**\"]]",
+		"runtime-owned progress files (do not edit):\n  - \"docs/roadmap.md\"",
 		"commit authority: forbidden; do not create commits",
-		"selected validation gate(s):\n  - \"phaseGate\"",
-		"\nAuthored prompt:\n" + authoredPrompt,
+		"required checks:\n  - \"phaseGate\"",
+		"\nTask:\n" + authoredPrompt,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("provider prompt missing %q:\n%s", want, prompt)
@@ -117,6 +124,11 @@ func TestRunAgentPrependsRuntimeOwnedExecutionBoundary(t *testing.T) {
 	}
 	if strings.Contains(prompt, "allowed_semantic_changes") {
 		t.Fatalf("provider prompt advertises unenforced semantic changes:\n%s", prompt)
+	}
+	for _, unwanted := range []string{"agentflow", "workflow"} {
+		if strings.Contains(strings.ToLower(prompt), unwanted) {
+			t.Fatalf("runtime prompt exposes implementation-specific reference %q:\n%s", unwanted, prompt)
+		}
 	}
 }
 
@@ -154,6 +166,15 @@ func TestRunAgentRemapsExpandedAuthoritativeWorkspacePathsIntoQuarantine(t *test
 	request := providerImpl.request
 	if request.Workspace == repo {
 		t.Fatal("provider received the authoritative workspace")
+	}
+	for label, value := range map[string]string{
+		"workspace": request.Workspace,
+		"model":     request.Model,
+		"prompt":    request.Prompt,
+	} {
+		if strings.Contains(strings.ToLower(value), "agentflow") {
+			t.Fatalf("provider %s exposes implementation-specific reference: %q", label, value)
+		}
 	}
 	if strings.Contains(request.Model, repo) {
 		t.Fatalf("provider model leaked authoritative workspace %q: %q", repo, request.Model)
@@ -288,8 +309,8 @@ func TestRunRepairAgentReceivesItsActualExecutionBoundary(t *testing.T) {
 	prompt := providerImpl.request.Prompt
 	for _, want := range []string{
 		"commit authority: allowed; commits created by this actor are permitted but do not establish acceptance",
-		"selected validation gate(s):\n  - \"repairGate\"",
-		"engine-owned progress files (do not edit):\n  - \"roadmap.md\"",
+		"required checks:\n  - \"repairGate\"",
+		"runtime-owned progress files (do not edit):\n  - \"roadmap.md\"",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
@@ -318,7 +339,7 @@ func TestRunAgentReportsLegacyProceduralValidationBoundary(t *testing.T) {
 	if err := e.runAgent(context.Background(), "worker", "", "Do legacy work.", p); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(providerImpl.request.Prompt, "selected validation gate(s):\n  - \"legacyGate\"") {
+	if !strings.Contains(providerImpl.request.Prompt, "required checks:\n  - \"legacyGate\"") {
 		t.Fatalf("legacy provider prompt = %s", providerImpl.request.Prompt)
 	}
 }

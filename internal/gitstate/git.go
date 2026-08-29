@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -19,7 +20,14 @@ type Repo struct{ Root string }
 
 // run executes a git command in the repository with optional stdin input.
 func (r Repo) run(stdin []byte, args ...string) ([]byte, error) {
+	return r.runWithEnv(stdin, nil, args...)
+}
+
+func (r Repo) runWithEnv(stdin []byte, env []string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-C", r.Root}, args...)...)
+	if len(env) != 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

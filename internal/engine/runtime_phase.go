@@ -475,7 +475,7 @@ func (e *Engine) selectedPhaseValidations(p *workflow.Phase) []string {
 
 func (e *Engine) runtimeOwnedActorPrompt(x workflow.Context, agent workflow.Agent, p *workflow.Phase, validations []string, authoredPrompt string) (string, error) {
 	var contract strings.Builder
-	contract.WriteString("AgentFlow runtime execution boundary (runtime-owned; enforcement remains authoritative):\n")
+	contract.WriteString("Runtime-enforced execution boundary:\n")
 	writePromptList(&contract, "writable path patterns", e.Workflow.Spec.Workspace.MutationPolicy.Allowed)
 	writeProtectedPromptPatterns(&contract, e.Workflow.Spec.Workspace.MutationPolicy.Integrity)
 
@@ -483,16 +483,16 @@ func (e *Engine) runtimeOwnedActorPrompt(x workflow.Context, agent workflow.Agen
 	if err != nil {
 		return "", err
 	}
-	writePromptList(&contract, "engine-owned progress files (do not edit)", progressFiles)
+	writePromptList(&contract, "runtime-owned progress files (do not edit)", progressFiles)
 
 	if e.effectiveActorCommitPermission(agent) {
 		contract.WriteString("commit authority: allowed; commits created by this actor are permitted but do not establish acceptance\n")
 	} else {
 		contract.WriteString("commit authority: forbidden; do not create commits\n")
 	}
-	writePromptList(&contract, "selected validation gate(s)", validations)
-	contract.WriteString("If the authored task conflicts with this boundary, stop and report the conflict instead of changing protected or out-of-scope files, editing engine-owned progress, or creating an unauthorized commit.\n")
-	contract.WriteString("\nAuthored prompt:\n")
+	writePromptList(&contract, "required checks", validations)
+	contract.WriteString("If the task conflicts with this boundary, stop and report the conflict instead of changing protected or out-of-scope files, editing runtime-owned progress, or creating an unauthorized commit.\n")
+	contract.WriteString("\nTask:\n")
 	contract.WriteString(authoredPrompt)
 	return contract.String(), nil
 }
@@ -542,17 +542,26 @@ func writeProtectedPromptPatterns(prompt *strings.Builder, rules []workflow.Inte
 	count := 0
 	for _, rule := range rules {
 		for _, path := range rule.Paths {
-			fmt.Fprintf(prompt, "  - %q [rule=%q, mode=%q", path, rule.ID, rule.Mode)
-			if len(rule.Exclude) > 0 {
-				fmt.Fprintf(prompt, ", excludes=%s", quotedPromptValues(rule.Exclude))
+			if actorPromptInternalPath(path) {
+				continue
 			}
-			prompt.WriteString("]\n")
+			fmt.Fprintf(prompt, "  - %q", path)
+			if len(rule.Exclude) > 0 {
+				fmt.Fprintf(prompt, " [excludes=%s]", quotedPromptValues(rule.Exclude))
+			}
+			prompt.WriteString("\n")
 			count++
 		}
 	}
 	if count == 0 {
 		prompt.WriteString("  - (none)\n")
 	}
+}
+
+func actorPromptInternalPath(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
+	return path == ".agentflow" || strings.HasPrefix(path, ".agentflow/") ||
+		path == ".agents/skills/agentflow-spec" || strings.HasPrefix(path, ".agents/skills/agentflow-spec/")
 }
 
 func quotedPromptValues(values []string) string {

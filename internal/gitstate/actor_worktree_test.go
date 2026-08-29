@@ -395,6 +395,36 @@ func TestActorWorktreeFallbackRecoverySurvivesCacheEnvironmentChange(t *testing.
 	}
 }
 
+func TestActorWorktreeAcceptsLegacyQuarantinePathForRecovery(t *testing.T) {
+	repo := newDiscoveryRepo(t)
+	mainWorktree, repositoryID, err := actorQuarantineIdentity(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRootParent := filepath.Join(filepath.Dir(mainWorktree), legacyActorQuarantineRootDirectory)
+	root := filepath.Join(legacyRootParent, repositoryID)
+	if err := initializeActorQuarantineRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.MkdirTemp(root, legacyActorQuarantineDirectoryPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(legacyRootParent) })
+	path := filepath.Join(parent, actorWorktreeDirectoryName)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := actorQuarantineParent(repo, path)
+	if err != nil {
+		t.Fatalf("accept legacy actor quarantine path: %v", err)
+	}
+	if got != parent {
+		t.Fatalf("legacy actor quarantine parent = %q, want %q", got, parent)
+	}
+}
+
 func TestCreateActorWorktreeRejectsFallbackInsideAuthoritativeWorkspace(t *testing.T) {
 	repo := newDiscoveryRepo(t)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(repo.Root, ".cache"))
