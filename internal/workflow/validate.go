@@ -266,6 +266,9 @@ func (v validator) uniqueIntegrity() {
 		if len(r.Paths) == 0 {
 			v.add(Invalid, strings.TrimSuffix(p, ".id")+".paths", "must protect at least one path")
 		}
+		if len(r.AllowedSemanticChanges) > 0 {
+			v.add(Unsupported, strings.TrimSuffix(p, ".id")+".allowed_semantic_changes", allowedSemanticChangesUnsupportedReason)
+		}
 		switch r.Mode {
 		case "exact-hash", "group-exact-hash":
 			if r.Normalize.Command != "" {

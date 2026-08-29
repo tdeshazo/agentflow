@@ -1,6 +1,7 @@
 package agentflowcli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,19 @@ import (
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/observability"
 )
+
+func TestValidateCLIRejectsInvalidReferencesBeforeRepositoryAccess(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "invalid", "unknown-references.yaml")
+	missingRepository := filepath.Join(t.TempDir(), "not-a-repository")
+	var output bytes.Buffer
+	err := runArgsWithIO([]string{"validate", "-C", missingRepository, "-f", workflowFile}, strings.NewReader(""), &output)
+	if err == nil || !strings.Contains(err.Error(), "workflow is invalid") {
+		t.Fatalf("validate error = %v, want invalid workflow", err)
+	}
+	if !strings.Contains(output.String(), "spec.phases[0].actor") || !strings.Contains(output.String(), "invalid") {
+		t.Fatalf("validate output = %q, want source-aware invalid diagnostic", output.String())
+	}
+}
 
 func TestPlanExpandedCLI(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")

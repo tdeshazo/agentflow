@@ -1,0 +1,14 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: unsupported-semantic-integrity-exception
+spec:
+  workspace:
+    mutationPolicy:
+      integrity:
+        - id: governed-document
+          paths: [README.md]
+          mode: normalized-hash
+          normalize:
+            command: cat
+          allowed_semantic_changes: [checklist marker]

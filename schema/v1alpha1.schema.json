@@ -1,0 +1,1527 @@
+{
+  "$defs": {
+    "Acknowledgement": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ActivePhasePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "preserve_existing_changes": {
+          "type": "boolean"
+        },
+        "preserve_partial_commits": {
+          "type": "boolean"
+        },
+        "preserve_partial_worktree_changes": {
+          "type": "boolean"
+        },
+        "require_phase_start_commit_exists": {
+          "type": "boolean"
+        },
+        "require_phase_start_is_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "rerun_agent_only_if_needed": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "may_commit": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "output_last_message": {
+          "type": "boolean"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "AgentCommits": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "checkpoint_uncommitted_success": {
+          "type": "boolean"
+        },
+        "commit_message": {
+          "type": "string"
+        },
+        "require_clean_after_checkpoint": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Assertion": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "uses": {
+          "type": "string"
+        },
+        "with": {
+          "$ref": "#/$defs/ToolArguments"
+        }
+      },
+      "type": "object"
+    },
+    "AuthoringDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/Agent"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/LifecyclePolicy"
+        },
+        "phases": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PhaseTemplate"
+          },
+          "type": "object"
+        },
+        "repair": {
+          "$ref": "#/$defs/Repair"
+        }
+      },
+      "type": "object"
+    },
+    "Capture": {
+      "additionalProperties": false,
+      "properties": {
+        "log": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Check": {
+      "additionalProperties": false,
+      "properties": {
+        "ancestor": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "descendant": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "require_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "require_branch": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ChecklistItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CheckpointSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_commits_allowed": {
+          "type": "boolean"
+        },
+        "assert_scope_before_and_after": {
+          "type": "boolean"
+        },
+        "checkpoint_uncommitted_success": {
+          "type": "boolean"
+        },
+        "commit_if_dirty": {
+          "type": "boolean"
+        },
+        "commit_message": {
+          "type": "string"
+        },
+        "require_clean_after": {
+          "type": "boolean"
+        },
+        "stage_only_allowed_dirty_files": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Cleanliness": {
+      "additionalProperties": false,
+      "properties": {
+        "after_checkpoint": {
+          "type": "string"
+        },
+        "allow_dirty_only_when_resuming_active_phase": {
+          "type": "boolean"
+        },
+        "before_each_new_phase": {
+          "type": "string"
+        },
+        "before_first_run": {
+          "type": "string"
+        },
+        "before_new_phase": {
+          "type": "string"
+        },
+        "outside_recoverable_active_phase": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Completion": {
+      "additionalProperties": false,
+      "properties": {
+        "afterCheckpointAssertions": {
+          "items": {
+            "$ref": "#/$defs/Assertion"
+          },
+          "type": "array"
+        },
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/Assertion"
+          },
+          "type": "array"
+        },
+        "checkpoint": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/CompletionStep"
+            }
+          ]
+        },
+        "finalValidation": {
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "writeMarker": {
+          "$ref": "#/$defs/Marker"
+        }
+      },
+      "type": "object"
+    },
+    "CompletionStep": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "uses": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Criterion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CriterionSkip": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "validate_before_marking": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "FailurePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "exhausted": {
+          "type": "string"
+        },
+        "maxRepairAttempts": {
+          "type": "integer"
+        },
+        "repair": {
+          "$ref": "#/$defs/Repair"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "then": {
+          "items": {
+            "$ref": "#/$defs/ToolUse"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "FlowAction": {
+      "additionalProperties": false,
+      "properties": {
+        "report": {
+          "type": "string"
+        },
+        "stop": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FlowStep": {
+      "additionalProperties": false,
+      "properties": {
+        "assert": {
+          "$ref": "#/$defs/Assertion"
+        },
+        "checkpoint": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "string"
+        },
+        "human": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "loop": {
+          "$ref": "#/$defs/Loop"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "recover": {
+          "type": "string"
+        },
+        "then": {
+          "items": {
+            "$ref": "#/$defs/FlowAction"
+          },
+          "type": "array"
+        },
+        "validate": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanAfter": {
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanGate": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgement": {
+          "$ref": "#/$defs/Acknowledgement"
+        },
+        "after": {
+          "items": {
+            "$ref": "#/$defs/HumanAfter"
+          },
+          "type": "array"
+        },
+        "checklist": {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ChecklistItem"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "$ref": "#/$defs/Marker"
+        },
+        "id": {
+          "type": "string"
+        },
+        "idempotent_record": {
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "requires": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "$ref": "#/$defs/HumanSkip"
+        },
+        "when": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanSkip": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_when": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/Marker"
+        },
+        "record": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "IncompleteAction": {
+      "additionalProperties": false,
+      "properties": {
+        "rerun_same_agent_phase_with_prefix": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "IntegrityRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_semantic_changes": {
+          "allOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution",
+          "x-agentflow-runtime-status": "unsupported"
+        },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "normalize": {
+          "$ref": "#/$defs/Normalize"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LifecyclePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "type": "string"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "LocalControl": {
+      "additionalProperties": false,
+      "properties": {
+        "ignoredForDirtyState": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Loop": {
+      "additionalProperties": false,
+      "properties": {
+        "dispatchByCriterion": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "maxIterations": {
+          "type": "string"
+        },
+        "requireUncheckedCountDelta": {
+          "type": "integer"
+        },
+        "select": {
+          "type": "string"
+        },
+        "while": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MarkdownTransition": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Marker": {
+      "additionalProperties": false,
+      "properties": {
+        "record": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "MarkerPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "valid_when_marker_commit_exists": {
+          "type": "boolean"
+        },
+        "valid_when_marker_is_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "descriptive"
+    },
+    "MutationLineage": {
+      "additionalProperties": false,
+      "properties": {
+        "require_base_is_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "require_same_branch_as_state": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "MutationPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ignoredControlFiles": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "integrity": {
+          "items": {
+            "$ref": "#/$defs/IntegrityRule"
+          },
+          "type": "array"
+        },
+        "lineage": {
+          "$ref": "#/$defs/MutationLineage"
+        }
+      },
+      "type": "object"
+    },
+    "Normalize": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "properties": {
+        "default": true,
+        "env": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PersistActivePhase": {
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Phase": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Agent"
+            }
+          ]
+        },
+        "advanceProgress": {
+          "type": "boolean"
+        },
+        "after": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "bookkeeping": {
+          "items": {
+            "$ref": "#/$defs/MarkdownTransition"
+          },
+          "type": "array"
+        },
+        "criterion": {
+          "type": "string"
+        },
+        "criterionID": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "requiresChange": {
+          "type": "boolean"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PhaseAction": {
+      "additionalProperties": false,
+      "properties": {
+        "assertNetRepositoryChangeSincePhaseStart": {
+          "type": "boolean"
+        },
+        "assertProgress": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ProgressAssertion"
+            }
+          ]
+        },
+        "assert_progress_if_applicable": {
+          "type": "boolean"
+        },
+        "capture_phase_start_commit": {
+          "type": "boolean"
+        },
+        "capture_unchecked_count_before": {
+          "type": "boolean"
+        },
+        "checkpoint": {
+          "type": "string"
+        },
+        "clearActivePhase": {
+          "type": "boolean"
+        },
+        "if": {
+          "type": "string"
+        },
+        "if_still_incomplete": {
+          "$ref": "#/$defs/IncompleteAction"
+        },
+        "markPhaseComplete": {
+          "$ref": "#/$defs/Marker"
+        },
+        "mark_phase_complete": {
+          "type": "boolean"
+        },
+        "persist_active_phase": {
+          "$ref": "#/$defs/PersistActivePhase"
+        },
+        "require_clean_implementation_workspace": {
+          "type": "boolean"
+        },
+        "return": {
+          "type": "string"
+        },
+        "run_repair_policy": {
+          "type": "string"
+        },
+        "validate": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "PhaseDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "before": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "$ref": "#/$defs/PhaseSkip"
+        }
+      },
+      "type": "object"
+    },
+    "PhaseSkip": {
+      "additionalProperties": false,
+      "properties": {
+        "completedMarker": {
+          "type": "string"
+        },
+        "criterionAlreadyChecked": {
+          "$ref": "#/$defs/CriterionSkip"
+        }
+      },
+      "type": "object"
+    },
+    "PhaseTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "requiresChange": {
+          "type": "boolean"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ProgressAssertion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion": {
+          "type": "string"
+        },
+        "uncheckedCountBefore": {
+          "type": "string"
+        },
+        "uncheckedCountDelta": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ProgressInvariant": {
+      "additionalProperties": false,
+      "properties": {
+        "no_other_criterion_may_close": {
+          "type": "boolean"
+        },
+        "targeted_item_must_be_checked": {
+          "type": "boolean"
+        },
+        "unchecked_count_delta": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ProgressSource": {
+      "additionalProperties": false,
+      "properties": {
+        "checkedPattern": {
+          "type": "string"
+        },
+        "checkedPatterns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "uncheckedPattern": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ProgressSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/Criterion"
+          },
+          "type": "array"
+        },
+        "criterionPhaseInvariant": {
+          "$ref": "#/$defs/ProgressInvariant"
+        },
+        "phaseInvariant": {
+          "$ref": "#/$defs/ProgressInvariant"
+        },
+        "selection": {
+          "$ref": "#/$defs/Selection"
+        },
+        "source": {
+          "$ref": "#/$defs/ProgressSource"
+        }
+      },
+      "type": "object"
+    },
+    "Recovery": {
+      "additionalProperties": false,
+      "properties": {
+        "activePhase": {
+          "items": {
+            "$ref": "#/$defs/RecoveryAction"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "RecoveryAction": {
+      "additionalProperties": false,
+      "properties": {
+        "assert": {
+          "type": "string"
+        },
+        "assertPhaseStartCommitExists": {
+          "type": "boolean"
+        },
+        "assertPhaseStartIsAncestorOfHead": {
+          "type": "boolean"
+        },
+        "if": {
+          "type": "string"
+        },
+        "if_invalid": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "if_valid": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "readActivePhase": {
+          "$ref": "#/$defs/PersistActivePhase"
+        },
+        "restorePhaseDefinition": {
+          "type": "boolean"
+        },
+        "restore_phase_definition": {
+          "type": "boolean"
+        },
+        "runAgent": {
+          "$ref": "#/$defs/RunAgent"
+        },
+        "runPhaseAfterSequence": {
+          "type": "boolean"
+        },
+        "then": {
+          "items": {
+            "$ref": "#/$defs/PhaseAction"
+          },
+          "type": "array"
+        },
+        "validate_existing_state_first": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Repair": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RunAgent": {
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "promptPrefix": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Selection": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Source": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "descriptive"
+    },
+    "Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Agent"
+          },
+          "type": "object"
+        },
+        "completion": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Completion"
+          },
+          "type": "object"
+        },
+        "defaults": {
+          "$ref": "#/$defs/AuthoringDefaults"
+        },
+        "flow": {
+          "items": {
+            "$ref": "#/$defs/FlowStep"
+          },
+          "type": "array"
+        },
+        "humanGates": {
+          "items": {
+            "$ref": "#/$defs/HumanGate"
+          },
+          "type": "array"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/LifecyclePolicy"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Parameter"
+          },
+          "type": "object"
+        },
+        "paths": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "phaseDefaults": {
+          "$ref": "#/$defs/PhaseDefaults"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/Phase"
+          },
+          "type": "array"
+        },
+        "preconditions": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "type": "array"
+        },
+        "progress": {
+          "$ref": "#/$defs/ProgressSpec"
+        },
+        "recovery": {
+          "$ref": "#/$defs/Recovery"
+        },
+        "state": {
+          "$ref": "#/$defs/StateSpec"
+        },
+        "temp": {
+          "$ref": "#/$defs/TempSpec"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Tool"
+          },
+          "type": "object"
+        },
+        "validation": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Validation"
+          },
+          "type": "object"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceSpec"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "executable"
+    },
+    "StateInitialize": {
+      "additionalProperties": false,
+      "properties": {
+        "capture": true,
+        "require_clean_implementation_workspace": {
+          "type": "boolean"
+        },
+        "require_clean_workspace": {
+          "type": "boolean"
+        },
+        "require_named_branch": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "StateLineage": {
+      "additionalProperties": false,
+      "properties": {
+        "require_base_commit_exists": {
+          "type": "boolean"
+        },
+        "require_base_is_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "require_same_named_branch": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "StateRecords": {
+      "additionalProperties": false,
+      "properties": {
+        "active_phase": {
+          "type": "string"
+        },
+        "base_commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "completed_phase_pattern": {
+          "type": "string"
+        },
+        "completed_phases": {
+          "type": "string"
+        },
+        "human_verification": {
+          "type": "string"
+        },
+        "integrity": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "manual_confirmation": {
+          "type": "string"
+        },
+        "workflow_complete": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "StateReset": {
+      "additionalProperties": false,
+      "properties": {
+        "delete_state_directory": {
+          "type": "boolean"
+        },
+        "require_clean_implementation_workspace": {
+          "type": "boolean"
+        },
+        "require_clean_workspace": {
+          "type": "boolean"
+        },
+        "when": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "StateResume": {
+      "additionalProperties": false,
+      "properties": {
+        "active_phase": {
+          "$ref": "#/$defs/ActivePhasePolicy"
+        },
+        "completed_phase_marker": {
+          "$ref": "#/$defs/MarkerPolicy"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "require_base_is_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "require_same_branch": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "StateSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "initialize": {
+          "$ref": "#/$defs/StateInitialize"
+        },
+        "lineage": {
+          "$ref": "#/$defs/StateLineage"
+        },
+        "records": {
+          "$ref": "#/$defs/StateRecords"
+        },
+        "reset": {
+          "$ref": "#/$defs/StateReset"
+        },
+        "resume": {
+          "$ref": "#/$defs/StateResume"
+        }
+      },
+      "type": "object"
+    },
+    "Summary": {
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TempSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "cleanup": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "capture": {
+          "$ref": "#/$defs/Capture"
+        },
+        "command": {
+          "type": "string"
+        },
+        "commit_if_dirty": {
+          "type": "boolean"
+        },
+        "mutates_workspace": {
+          "type": "boolean"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "require_clean_after": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolArguments": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "regex": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolUse": {
+      "additionalProperties": false,
+      "properties": {
+        "if": {
+          "type": "string"
+        },
+        "uses": {
+          "type": "string"
+        },
+        "with": {
+          "$ref": "#/$defs/ToolArguments"
+        }
+      },
+      "type": "object"
+    },
+    "Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "failure": {
+          "type": "string"
+        },
+        "onFailure": {
+          "$ref": "#/$defs/FailurePolicy"
+        },
+        "repair": {
+          "type": "string"
+        },
+        "run": {
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/ToolUse"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WorkspaceSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_commits": {
+          "$ref": "#/$defs/AgentCommits"
+        },
+        "allowWrites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "checkpointing": {
+          "$ref": "#/$defs/CheckpointSpec"
+        },
+        "cleanliness": {
+          "$ref": "#/$defs/Cleanliness"
+        },
+        "localControlFiles": {
+          "$ref": "#/$defs/LocalControl"
+        },
+        "mutationPolicy": {
+          "$ref": "#/$defs/MutationPolicy"
+        },
+        "root": {
+          "type": "string"
+        },
+        "vcs": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://agentflow.dev/schema/v1alpha1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from the strict Go decoder. Run agentflow validate for source-aware semantic and runtime-support diagnostics.",
+  "properties": {
+    "apiVersion": {
+      "const": "agentflow.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "AgentWorkflow"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/Spec"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "AgentFlow v1alpha1 executable authoring contract",
+  "type": "object",
+  "x-agentflow-validation": {
+    "semantic-validator": "workflow.Validate",
+    "strict-decoder": "workflow.Decode",
+    "unknown-fields": "rejected",
+    "unsupported-construct": "reported before execution"
+  }
+}

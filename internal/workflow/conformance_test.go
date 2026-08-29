@@ -18,6 +18,8 @@ func TestConformanceCorpus(t *testing.T) {
 		{name: "valid/concise-defaults.yaml", status: Executable},
 		{name: "valid/v1alpha2-concise.yaml", status: Executable},
 		{name: "unsupported/runtime-surface.yaml", status: Unsupported},
+		{name: "unsupported/allowed-semantic-changes.yaml", status: Unsupported},
+		{name: "unsupported/v1alpha2-approval-policy.yaml", status: Unsupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,6 +124,7 @@ func TestConformanceInvalidDiagnostics(t *testing.T) {
 		{name: "invalid-expression.yaml", path: "spec.workspace.root", status: Invalid, contains: "unknown parameter reference"},
 		{name: "malformed-expression.yaml", path: "spec.state.reset.when", status: Invalid, contains: "missing closing delimiter"},
 		{name: "v1alpha1-rejects-v1alpha2-dependency.yaml", status: Invalid, contains: "field dependsOn not found"},
+		{name: "v1alpha2-unknown-field.yaml", status: Invalid, contains: "field unknown not found"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,6 +163,7 @@ func TestConformanceDiagnosticOrderIsStable(t *testing.T) {
 func TestConformanceShippedDefinitions(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"),
+		filepath.Join("..", "..", "examples", "art-portfolio.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "feature.agent-workflow.yaml"),
 	}
 	for _, path := range paths {

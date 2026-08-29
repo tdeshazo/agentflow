@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "V1Alpha2Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "may_commit": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "output_last_message": {
+          "type": "boolean"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Completion": {
+      "additionalProperties": false,
+      "properties": {
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "descriptive"
+    },
+    "V1Alpha2Phase": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/V1Alpha2Agent"
+            }
+          ]
+        },
+        "dependsOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2RepairPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "once": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha2Agent"
+          },
+          "type": "object"
+        },
+        "completion": {
+          "$ref": "#/$defs/V1Alpha2Completion"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/V1Alpha2Phase"
+          },
+          "type": "array"
+        },
+        "validation": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha2Validation"
+          },
+          "type": "object"
+        },
+        "workspace": {
+          "$ref": "#/$defs/V1Alpha2Workspace"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "executable"
+    },
+    "V1Alpha2Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "repair": {
+          "$ref": "#/$defs/V1Alpha2RepairPolicy"
+        },
+        "run": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Workspace": {
+      "additionalProperties": false,
+      "properties": {
+        "allowWrites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://agentflow.dev/schema/v1alpha2.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from the strict Go decoder. Run agentflow validate for source-aware semantic and runtime-support diagnostics.",
+  "properties": {
+    "apiVersion": {
+      "const": "agentflow.dev/v1alpha2"
+    },
+    "kind": {
+      "const": "AgentWorkflow"
+    },
+    "metadata": {
+      "$ref": "#/$defs/V1Alpha2Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/V1Alpha2Spec"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "AgentFlow v1alpha2 executable authoring contract",
+  "type": "object",
+  "x-agentflow-validation": {
+    "semantic-validator": "workflow.Validate",
+    "strict-decoder": "workflow.Decode",
+    "unknown-fields": "rejected",
+    "unsupported-construct": "reported before execution"
+  }
+}
