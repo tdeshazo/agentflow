@@ -126,6 +126,7 @@ func TestConformanceInvalidDiagnostics(t *testing.T) {
 		{name: "malformed-expression.yaml", path: "spec.state.reset.when", status: Invalid, contains: "missing closing delimiter"},
 		{name: "v1alpha1-rejects-v1alpha2-dependency.yaml", status: Invalid, contains: "field dependsOn not found"},
 		{name: "v1alpha2-unknown-field.yaml", status: Invalid, contains: "field unknown not found"},
+		{name: "unsafe-identifiers.yaml", path: "spec.agents", status: Invalid, contains: "agent name must not be empty"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -141,6 +142,58 @@ func TestConformanceInvalidDiagnostics(t *testing.T) {
 			}
 			t.Fatalf("no diagnostic with path %q and message containing %q: %#v", tc.path, tc.contains, result.Diagnostics)
 		})
+	}
+}
+
+func TestConformanceUnknownReferencesCoverEveryAuthorityDomain(t *testing.T) {
+	result := ValidateFile(filepath.Join("testdata", "conformance", "invalid", "unknown-references.yaml"))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	want := []struct {
+		path    string
+		message string
+	}{
+		{path: "spec.validation.phase-gate.steps[0].uses", message: "unknown tool"},
+		{path: "spec.phases[0].actor", message: "unknown agent"},
+		{path: "spec.phases[0].criterionID", message: "unknown criterion id"},
+		{path: "spec.humanGates[0].requires[0]", message: "unknown phase"},
+		{path: "spec.flow[0].phase", message: "unknown phase"},
+		{path: "spec.flow[0].validate", message: "unknown validation"},
+		{path: "spec.flow[1].human", message: "unknown human gate"},
+		{path: "spec.flow[2].complete", message: "unknown completion"},
+	}
+	for _, expected := range want {
+		if !diagnosticsContain(result.Diagnostics, expected.path, expected.message) {
+			t.Errorf("missing %s diagnostic containing %q: %#v", expected.path, expected.message, result.Diagnostics)
+		}
+	}
+}
+
+func TestConformanceUnsafeIdentifiersCoverDurableNames(t *testing.T) {
+	result := ValidateFile(filepath.Join("testdata", "conformance", "invalid", "unsafe-identifiers.yaml"))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	want := []struct {
+		path    string
+		message string
+	}{
+		{path: "spec.parameters", message: "parameter name must not be empty"},
+		{path: "spec.paths", message: "path name must not be empty"},
+		{path: "spec.agents", message: "agent name must not be empty"},
+		{path: "spec.tools", message: "tool name must not be empty"},
+		{path: "spec.validation", message: "validation name must not be empty"},
+		{path: "spec.completion", message: "completion name must not be empty"},
+		{path: "spec.state.records.integrity", message: "integrity record name must not be empty"},
+		{path: "spec.phases[0].id", message: "must match"},
+		{path: "spec.humanGates[0].id", message: "must match"},
+		{path: "spec.flow[0].id", message: "must match"},
+	}
+	for _, expected := range want {
+		if !diagnosticsContain(result.Diagnostics, expected.path, expected.message) {
+			t.Errorf("missing %s diagnostic containing %q: %#v", expected.path, expected.message, result.Diagnostics)
+		}
 	}
 }
 
@@ -169,8 +222,8 @@ func TestConformanceShippedDefinitions(t *testing.T) {
 	}
 	for _, path := range paths {
 		result := ValidateFile(path)
-		if result.Status == Invalid {
-			t.Fatalf("%s invalid: %#v", path, result.Diagnostics)
+		if result.Status != Executable {
+			t.Fatalf("%s status = %s, want executable: %#v", path, result.Status, result.Diagnostics)
 		}
 	}
 }

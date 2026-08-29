@@ -273,6 +273,12 @@ missing actor or missing validation also fails closed before execution.
 An unresolved `completion.validation` reference is likewise a structural error
 and fails closed before the completion transition.
 
+Agent names, validation names, and phase IDs use
+`^[A-Za-z0-9_][A-Za-z0-9._-]*$`. This grammar is enforced by both the generated
+schema and source-aware semantic validation so normalized durable names cannot
+contain unsafe separators or whitespace. The `__inline_actor__` prefix remains
+runtime-owned even though underscores are otherwise valid identifiers.
+
 ### `spec.completion.validation`
 
 `completion.validation` names the deterministic final validation gate. It is

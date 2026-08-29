@@ -163,6 +163,43 @@ func TestValidateReportsCrossReferenceAtYAMLPath(t *testing.T) {
 	}
 }
 
+func TestValidateReportsDecoderErrorsAtYAMLPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		replace string
+		with    string
+		path    string
+		message string
+	}{
+		{
+			name:    "unknown field",
+			replace: "label: build",
+			with:    "label: build\n      unknowable: true",
+			path:    "spec.phases[0].unknowable",
+			message: "field unknowable not found",
+		},
+		{
+			name:    "malformed type",
+			replace: "prompt: make the bounded change",
+			with:    "requiresChange: definitely\n      prompt: make the bounded change",
+			path:    "spec.phases[0].requiresChange",
+			message: "cannot unmarshal",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ValidateFile(writeWorkflow(t, strings.Replace(executableFixture, tt.replace, tt.with, 1)))
+			if result.Status != Invalid || len(result.Diagnostics) != 1 {
+				t.Fatalf("result = %#v", result)
+			}
+			diagnostic := result.Diagnostics[0]
+			if diagnostic.Path != tt.path || diagnostic.Position.Line == 0 || diagnostic.Position.Column == 0 || !strings.Contains(diagnostic.Message, tt.message) {
+				t.Fatalf("diagnostic = %#v, want path %q, source position, and %q", diagnostic, tt.path, tt.message)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsUnknownExecutableField(t *testing.T) {
 	body := strings.Replace(executableFixture, "label: build", "label: build\n      unknowable: true", 1)
 	r := ValidateFile(writeWorkflow(t, body))
@@ -171,6 +208,42 @@ func TestValidateRejectsUnknownExecutableField(t *testing.T) {
 	}
 	if !strings.Contains(r.Diagnostics[0].Message, "field unknowable not found") {
 		t.Fatalf("diagnostic = %#v", r.Diagnostics)
+	}
+}
+
+func TestValidateRejectsHumanAndCompletionFailuresBeforeRuntime(t *testing.T) {
+	body := strings.Replace(executableFixture, "  flow:", `  humanGates:
+    - id: approval
+      requires: [build]
+      acknowledgement: {type: free-form, value: ''}
+      checklist: [{id: review, text: ''}, {id: review, text: repeated}]
+      evidence: {record: approved, value: actor_controlled}
+  completion:
+    done:
+      writeMarker: {record: complete, value: actor_controlled}
+      summary:
+        include: [mystery, final_gate_green, mystery]
+  flow:`, 1)
+	body = strings.Replace(body, "    - phase: build", "    - phase: build\n    - human: approval\n    - complete: done", 1)
+	result := ValidateFile(writeWorkflow(t, body))
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	want := []struct{ path, message string }{
+		{"spec.humanGates[0].acknowledgement.type", "must be exact-text"},
+		{"spec.humanGates[0].acknowledgement.value", "is required"},
+		{"spec.humanGates[0].checklist[0].text", "is required"},
+		{"spec.humanGates[0].checklist[1].id", "duplicate checklist item id"},
+		{"spec.humanGates[0].evidence.value", "only head_commit is executable"},
+		{"spec.completion.done.writeMarker.value", "only head_commit is executable"},
+		{"spec.completion.done.summary.include[0]", "unsupported completion summary field"},
+		{"spec.completion.done.summary.include[1]", "requires finalValidation"},
+		{"spec.completion.done.summary.include[2]", "duplicate completion summary field"},
+	}
+	for _, expected := range want {
+		if !diagnosticsContain(result.Diagnostics, expected.path, expected.message) {
+			t.Errorf("missing diagnostic at %s containing %q: %#v", expected.path, expected.message, result.Diagnostics)
+		}
 	}
 }
 
@@ -336,8 +409,8 @@ func TestReferenceDocumentsAreSpecValid(t *testing.T) {
 		filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"),
 	} {
 		r := ValidateFile(path)
-		if r.Status == Invalid {
-			t.Fatalf("%s invalid: %#v", path, r.Diagnostics)
+		if r.Status != Executable {
+			t.Fatalf("%s status = %s, want executable: %#v", path, r.Status, r.Diagnostics)
 		}
 	}
 }

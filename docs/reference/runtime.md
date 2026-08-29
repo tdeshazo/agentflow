@@ -242,8 +242,8 @@ validation, or another completion using the same name. In v1alpha2 the
 concise `completion.validation` field uses the normalized default completion
 name.
 
-For either API version, a completion final gate with one repair attempt, repair-budget consumption
-is written before the repair provider starts. The deterministic final gate is
+For either API version, when a completion final gate has one repair attempt,
+repair-budget consumption is written before the repair provider starts. The deterministic final gate is
 run again after repair, but the repair actor's result or commit never supplies
 completion evidence. If that rerun passes, the consumed budget remains until
 the completion marker is durable; only then is the transient budget eligible
@@ -559,6 +559,14 @@ The current runtime supports the following executable core:
 - flow assertions for clean workspace and empty progress; and
 - completion assertions, final validation, checkpoint, configured completion
   marker, and deterministic summary fields.
+
+Executable v1alpha1 marker values are either omitted or `head_commit`.
+Completion summaries accept only `branch`, `base_commit`, `head_commit`,
+`state_directory`, `workspace_clean`, `canonical_gate_green`,
+`final_gate_green`, `commits_since_base`, and `changed_files_since_base`;
+gate-green fields require a configured final validation. Human gates require
+declared prerequisite phases and an exact-text acknowledgement with a non-empty
+value. These contracts are validated before a repository is mutated.
 
 The expression evaluator is deliberately small and parsed before execution. It
 supports typed literals, a finite list of workflow/state/progress references,

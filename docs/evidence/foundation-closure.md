@@ -1,7 +1,12 @@
 # Execution stage 1 foundation closure
 
-Date: 2026-08-29  
-Evidence baseline: repository `HEAD` `0c475fc847edc9083822736782becdb340a5a458`
+Date: 2026-08-29
+
+Revision binding: this record deliberately embeds no repository `HEAD`. Its
+claims are bound to the checkout containing this file by deterministic tests
+and the aggregate `GOCACHE=/tmp/agentflow-foundation-gocache ./scripts/check.sh`
+replay, with Go tests run using `-count=1`. This avoids a hash claim becoming
+stale in the same change that updates its evidence.
 
 This is the durable closeout record for execution stage 1 in
 [`ROADMAP.md`](../../ROADMAP.md). It uses only checked-in repository sources,
@@ -41,11 +46,11 @@ Status: **proven**.
   validates before engine construction; the invalid reference fixture is
   [`unknown-references.yaml`](../../internal/workflow/testdata/conformance/invalid/unknown-references.yaml).
 - **Conformance:**
-  [`TestValidateCLIRejectsInvalidReferencesBeforeRepositoryAccess`](../../internal/agentflowcli/main_test.go)
-  invokes validation with a non-existent repository and still receives the
-  source-aware reference diagnostic.
+  [`TestRunCLIRejectsInvalidReferencesBeforeRepositoryAccess`](../../internal/agentflowcli/main_test.go)
+  invokes `run` with an existing invalid source and a non-existent repository
+  and still receives the source-aware reference diagnostic.
 - **Command:**
-  `GOCACHE=/tmp/agentflow-foundation-gocache go test ./internal/agentflowcli -run '^TestValidateCLIRejectsInvalidReferencesBeforeRepositoryAccess$' -count=1`
+  `GOCACHE=/tmp/agentflow-foundation-gocache go test ./internal/agentflowcli -run '^TestRunCLIRejectsInvalidReferencesBeforeRepositoryAccess$' -count=1`
 - **Recovery:** Not applicable to an invalid document. The test's failure
   before repository access is the relevant safety evidence: no engine or
   workspace mutation is possible.
@@ -156,7 +161,8 @@ Status: **proven**.
   [`TestReferenceV1Alpha1WorkflowCompletesWithRuntimeOwnedLifecycle`](../../internal/engine/reference_workflow_test.go)
   runs the exact checked-in workflow with a deterministic provider and verifies
   actor phases, quality gate, progress, bookkeeping, conditional human-gate
-  path, checkpoint/completion state, clean workspace, and a successful restart.
+  path, checkpoint/completion state and summary, clean workspace, and a
+  successful restart.
   The fixture disables the optional human acknowledgement so the run remains
   deterministic; interactive human-gate behavior is covered by the runtime
   human-gate tests in the 1B-E3 recovery/runtime evidence.
@@ -468,14 +474,17 @@ this closeout from claiming them as complete.
 
 ## Reproduction record
 
-The required repository quality gate passed on this evidence baseline:
+The required repository quality gate deterministically replays this checkout:
 
 ```text
 GOCACHE=/tmp/agentflow-foundation-gocache ./scripts/check.sh
 ```
 
-The gate covers formatting, diff hygiene, ordinary tests, vet, race-enabled
+The gate covers formatting, diff hygiene, uncached ordinary tests, vet, race-enabled
 tests, CLI build, and validation of every checked-in executable definition in
 `spec/` and `examples/`. The focused commands listed above provide the
-criterion-level checks; the gate is the final aggregate check. No external
+criterion-level checks; the gate is the final aggregate hard check. The
+`TestFoundationClosureEvidenceCoversEveryRoadmapCriterion` test binds this
+record and the detailed audit to every Stage 1A, 1B, and 1C scope/exit ID in
+`ROADMAP.md`. No external
 product documentation or network source is part of this record.

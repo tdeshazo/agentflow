@@ -144,6 +144,14 @@ func (g *schemaGenerator) field(owner reflect.Type, field reflect.StructField) a
 		return map[string]any{"oneOf": []any{map[string]any{"type": "string"}, g.schema(reflect.TypeFor[V1Alpha2Agent]())}}
 	}
 	schema := g.schema(field.Type)
+	if field.Name == "ID" {
+		return map[string]any{"type": "string", "pattern": identifierPatternSource}
+	}
+	if namedMapField(owner.Name(), field.Name) {
+		objectSchema := schema.(map[string]any)
+		objectSchema["propertyNames"] = map[string]any{"pattern": identifierPatternSource}
+		return objectSchema
+	}
 	if owner.Name() == "Recovery" && field.Name == "ActivePhase" {
 		return map[string]any{
 			"allOf":                      []any{schema},
@@ -156,6 +164,21 @@ func (g *schemaGenerator) field(owner reflect.Type, field reflect.StructField) a
 		return annotated
 	}
 	return schema
+}
+
+func namedMapField(owner, field string) bool {
+	switch owner {
+	case "Spec":
+		switch field {
+		case "Parameters", "Paths", "Agents", "Tools", "Validation", "Completion":
+			return true
+		}
+	case "V1Alpha2Spec":
+		return field == "Agents" || field == "Validation"
+	case "StateRecords":
+		return field == "Integrity"
+	}
+	return false
 }
 
 const allowedSemanticChangesUnsupportedReason = "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution"

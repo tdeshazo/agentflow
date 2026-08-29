@@ -5,9 +5,12 @@ package workflow
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,6 +19,17 @@ import (
 // sequence indexes, for example spec.phases[0].actor.
 type Position struct{ Line, Column int }
 type Locations map[string]Position
+
+type sourceDiagnosticError struct {
+	path     string
+	position Position
+	err      error
+}
+
+func (e *sourceDiagnosticError) Error() string { return e.err.Error() }
+func (e *sourceDiagnosticError) Unwrap() error { return e.err }
+
+var yamlErrorLine = regexp.MustCompile(`\bline ([0-9]+):`)
 
 // Document pairs the executable model with its source locations. It is the
 // single input to semantic validation; the validator never re-decodes YAML.
@@ -86,7 +100,7 @@ func Decode(path string) (*Document, error) {
 	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(b, &root); err != nil {
-		return nil, fmt.Errorf("parse workflow YAML: %w", err)
+		return nil, fmt.Errorf("parse workflow YAML: %w", sourceAwareYAMLError(err, &root))
 	}
 
 	apiVersion, err := documentAPIVersion(&root)
@@ -100,23 +114,23 @@ func Decode(path string) (*Document, error) {
 	case "agentflow.dev/v1alpha1":
 		decodeBytes := b
 		if rewritten, changed, err := rewriteConciseAuthoring(&root); err != nil {
-			return nil, fmt.Errorf("decode workflow: %w", err)
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
 		} else if changed {
 			decodeBytes = rewritten
 		}
 		var w Workflow
 		if err := decodeKnownBytes(decodeBytes, &w); err != nil {
-			return nil, fmt.Errorf("decode workflow: %w", err)
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
 		}
 		w.File = file
 		return &Document{Workflow: &w, Locations: locations}, nil
 	case "agentflow.dev/v1alpha2":
 		if err := rejectV1Alpha2MergeKeys(&root); err != nil {
-			return nil, fmt.Errorf("decode workflow: %w", err)
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
 		}
 		var authored V1Alpha2Workflow
 		if err := decodeKnownBytes(b, &authored); err != nil {
-			return nil, fmt.Errorf("decode workflow: %w", err)
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
 		}
 		authored.File = file
 		normalized, err := normalizeV1Alpha2(&authored, locations)
@@ -175,9 +189,87 @@ func Load(path string) (*Workflow, error) {
 func ValidateFile(path string) Result {
 	d, err := Decode(path)
 	if err != nil {
-		return Result{Status: Invalid, Diagnostics: []Diagnostic{{Status: Invalid, Message: err.Error()}}}
+		diagnostic := Diagnostic{Status: Invalid, Message: err.Error()}
+		var sourceErr *sourceDiagnosticError
+		if errors.As(err, &sourceErr) {
+			diagnostic.Path = sourceErr.path
+			diagnostic.Position = sourceErr.position
+		}
+		return Result{Status: Invalid, Diagnostics: []Diagnostic{diagnostic}}
 	}
 	return Validate(d)
+}
+
+func sourceAwareYAMLError(err error, root *yaml.Node) error {
+	if err == nil {
+		return nil
+	}
+	matches := yamlErrorLine.FindAllStringSubmatch(err.Error(), -1)
+	if len(matches) == 0 {
+		return err
+	}
+	outer, parseErr := strconv.Atoi(matches[0][1])
+	if parseErr != nil {
+		return err
+	}
+	line := outer
+	if len(matches) > 1 {
+		inner, innerErr := strconv.Atoi(matches[len(matches)-1][1])
+		if innerErr == nil {
+			// Custom strict decoders marshal one YAML subtree before decoding it.
+			// yaml.v3 reports the subtree-relative line after the original node line.
+			line = outer + inner - 1
+		}
+	}
+	path, position := yamlPathAtLine(root, line)
+	if position.Line == 0 {
+		position.Line = line
+	}
+	return &sourceDiagnosticError{path: path, position: position, err: err}
+}
+
+func yamlPathAtLine(root *yaml.Node, line int) (string, Position) {
+	var walk func(*yaml.Node, string) (string, Position, bool)
+	walk = func(node *yaml.Node, path string) (string, Position, bool) {
+		if node == nil {
+			return "", Position{}, false
+		}
+		switch node.Kind {
+		case yaml.DocumentNode:
+			for _, child := range node.Content {
+				if foundPath, position, ok := walk(child, path); ok {
+					return foundPath, position, true
+				}
+			}
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				childPath := key.Value
+				if path != "" {
+					childPath = path + "." + key.Value
+				}
+				if key.Line == line {
+					return childPath, Position{Line: key.Line, Column: key.Column}, true
+				}
+				if foundPath, position, ok := walk(value, childPath); ok {
+					return foundPath, position, true
+				}
+			}
+		case yaml.SequenceNode:
+			for i, child := range node.Content {
+				if foundPath, position, ok := walk(child, fmt.Sprintf("%s[%d]", path, i)); ok {
+					return foundPath, position, true
+				}
+			}
+		default:
+			if node.Line == line {
+				return path, Position{Line: node.Line, Column: node.Column}, true
+			}
+		}
+		return "", Position{}, false
+	}
+	path, position, _ := walk(root, "")
+	return path, position
 }
 
 func indexLocations(root *yaml.Node) Locations {

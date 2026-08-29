@@ -252,13 +252,28 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 
 	workflowFile := *file
+	repositoryScoped := cmd == "run" || cmd == "status" || cmd == "reset"
+	var result workflow.Result
+	workflowValidated := false
 	if workflowFile != "" {
 		workflowFile, err = filepath.Abs(workflowFile)
 		if err != nil {
 			return fmt.Errorf("resolve workflow file: %w", err)
 		}
+		if _, statErr := os.Stat(workflowFile); repositoryScoped && statErr == nil {
+			// An explicit source file can be validated without repository state.
+			// Give invalid/unsupported source diagnostics precedence so no workspace
+			// lookup or mutation can obscure a pre-execution contract failure.
+			result = workflow.ValidateFile(workflowFile)
+			workflowValidated = true
+			if result.Status == workflow.Invalid {
+				return diagnosticsError(result)
+			}
+			if result.Status == workflow.Unsupported {
+				return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
+			}
+		}
 	}
-	repositoryScoped := cmd == "run" || cmd == "status" || cmd == "reset"
 	repoRoot := *repo
 	if repositoryScoped {
 		repository, err := targetRepo(*repo)
@@ -348,7 +363,9 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("-f workflow YAML is required")
 		}
 	}
-	result := workflow.ValidateFile(workflowFile)
+	if !workflowValidated {
+		result = workflow.ValidateFile(workflowFile)
+	}
 	if cmd == "validate" {
 		return writeValidationResult(clioutput.NewPresenter(out), result)
 	}

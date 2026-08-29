@@ -30,6 +30,15 @@ func TestValidateCLIRejectsInvalidReferencesBeforeRepositoryAccess(t *testing.T)
 	}
 }
 
+func TestRunCLIRejectsInvalidReferencesBeforeRepositoryAccess(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "invalid", "unknown-references.yaml")
+	missingRepository := filepath.Join(t.TempDir(), "not-a-repository")
+	err := runArgsWithIO([]string{"run", "-C", missingRepository, "-f", workflowFile}, strings.NewReader(""), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "spec.phases[0].actor") || !strings.Contains(err.Error(), "unknown agent") {
+		t.Fatalf("run error = %v, want source-aware validation failure before repository access", err)
+	}
+}
+
 func TestValidateCLIRejectsNonExecutableRecoveryBeforeRepositoryAccess(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "unsupported", "active-phase-recovery.yaml")
 	missingRepository := filepath.Join(t.TempDir(), "not-a-repository")

@@ -222,6 +222,14 @@ invocation stays structurally stable as `uses`, optional typed `with`, and
 optional boolean `if`; this convenience does not merge actor, mutation, and
 validation authority.
 
+Names used as executable map keys (`parameters`, `paths`, `agents`, `tools`,
+`validation`, `completion`, and `state.records.integrity`) and authored list IDs use
+`^[A-Za-z0-9_][A-Za-z0-9._-]*$`. This keeps durable record and Git-ref-derived
+names safe. The generated schema enforces the same rule where JSON Schema can
+express it, and semantic validation covers all list IDs and cross-references.
+Legacy free-text `dispatchByCriterion` keys remain accepted only when they
+normalize unambiguously to a declared stable criterion ID.
+
 ## `spec.tools`
 
 Named deterministic or orchestration-native operations.
@@ -422,6 +430,13 @@ Important fields:
 condition. A false gate does not prompt; it records the declared durable gate
 evidence at the current commit.
 
+Every `requires` entry must name a declared phase. A prompted gate requires
+`acknowledgement.type: exact-text` and a non-empty acknowledgement value;
+checklist text must be non-empty and optional checklist IDs must be unique.
+Configured evidence markers record the current commit. If a marker `value` is
+written, the only executable spelling is `head_commit`; other values are
+rejected before prompting or runtime mutation.
+
 ## `spec.recovery`
 
 Normal recovery is runtime-derived from the durable active-phase record and
@@ -493,6 +508,15 @@ A robust completion contract commonly requires:
 - summary of branch/base/head/commits/changed files/gate status.
 
 The complete marker should be written last, after every required assertion and checkpoint.
+Its optional `value` follows the marker rule above: only `head_commit` is an
+executable explicit value.
+
+`summary.include` accepts only `branch`, `base_commit`, `head_commit`,
+`state_directory`, `workspace_clean`, `canonical_gate_green`,
+`final_gate_green`, `commits_since_base`, and `changed_files_since_base`.
+Gate-green summary fields require `finalValidation`; unknown or duplicate
+summary fields are invalid. The shipped reference uses `final_gate_green`,
+which is rendered as the final gate status.
 
 An assertion using `uses:` resolves the named tool definition. Assertion
 context accepts only read-only `workspace-policy`, `file-regex`, and

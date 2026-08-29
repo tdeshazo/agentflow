@@ -73,6 +73,20 @@ func TestGeneratedSchemaDeclaresAuthorityAndRuntimeBoundary(t *testing.T) {
 	if _, ok := phase["actor"].(map[string]any)["oneOf"]; !ok {
 		t.Fatal("v1alpha1 schema omitted mapping-valued phase.actor")
 	}
+	if got := phase["id"].(map[string]any)["pattern"]; got != identifierPatternSource {
+		t.Fatalf("phase identifier pattern = %#v", got)
+	}
+	specProperties := definitions["Spec"].(map[string]any)["properties"].(map[string]any)
+	for _, name := range []string{"parameters", "paths", "agents", "tools", "validation", "completion"} {
+		named := specProperties[name].(map[string]any)
+		if got := named["propertyNames"].(map[string]any)["pattern"]; got != identifierPatternSource {
+			t.Fatalf("named %s pattern = %#v", name, got)
+		}
+	}
+	loop := definitions["Loop"].(map[string]any)["properties"].(map[string]any)["dispatchByCriterion"].(map[string]any)
+	if _, restricted := loop["propertyNames"]; restricted {
+		t.Fatal("legacy display-text dispatch keys must remain schema-compatible")
+	}
 }
 
 func TestReferenceDocumentsPointToGeneratedSchemas(t *testing.T) {

@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+const identifierPatternSource = `^[A-Za-z0-9_][A-Za-z0-9._-]*$`
+
+var identifierPattern = regexp.MustCompile(identifierPatternSource)
 
 // Validate performs document-only checks. It intentionally does not expand
 // templates, resolve a repository, create Git state, or construct an engine.
@@ -112,9 +117,7 @@ func (v validator) roots() {
 	}
 	for _, n := range sortedKeys(v.w.Spec.Parameters) {
 		p := v.w.Spec.Parameters[n]
-		if n == "" {
-			v.add(Invalid, "spec.parameters", "parameter name must not be empty")
-		}
+		v.namedIdentifier("spec.parameters", "parameter", n)
 		switch p.Type {
 		case "string", "path", "boolean", "integer":
 		default:
@@ -125,15 +128,56 @@ func (v validator) roots() {
 			v.add(Invalid, "spec.parameters."+n+".env", "invalid environment variable name %q", p.Env)
 		}
 	}
+	for _, name := range sortedKeys(v.w.Spec.Paths) {
+		v.namedIdentifier("spec.paths", "path", name)
+	}
+	for _, name := range sortedKeys(v.w.Spec.Agents) {
+		v.namedIdentifier("spec.agents", "agent", name)
+	}
+	for _, name := range sortedKeys(v.w.Spec.Tools) {
+		v.namedIdentifier("spec.tools", "tool", name)
+	}
+	for _, name := range sortedKeys(v.w.Spec.Validation) {
+		v.namedIdentifier("spec.validation", "validation", name)
+	}
+	for _, name := range sortedKeys(v.w.Spec.Completion) {
+		v.namedIdentifier("spec.completion", "completion", name)
+	}
+	for _, name := range sortedKeys(v.w.Spec.State.Records.Integrity) {
+		v.namedIdentifier("spec.state.records.integrity", "integrity record", name)
+	}
 	v.uniqueChecks()
 	v.uniquePhases()
 	v.uniqueCriteria()
 	v.uniqueGates()
 	v.uniqueIntegrity()
+	v.uniqueFlowSteps()
 	v.authoringDefaults()
 	if strategy := v.w.Spec.Progress.Selection.Strategy; strategy != "" && strategy != "first-unchecked" {
 		v.add(Invalid, "spec.progress.selection.strategy", "unsupported progress selection strategy %q", strategy)
 	}
+}
+
+func (v validator) namedIdentifier(path, kind, id string) {
+	if id == "" {
+		v.add(Invalid, path, "%s name must not be empty", kind)
+		return
+	}
+	if !identifierPattern.MatchString(id) {
+		v.add(Invalid, path+"."+id, "%s name %q must match %s", kind, id, identifierPattern.String())
+	}
+}
+
+func (v validator) listIdentifier(path, kind, id string) bool {
+	if id == "" {
+		v.add(Invalid, path, "is required")
+		return false
+	}
+	if !identifierPattern.MatchString(id) {
+		v.add(Invalid, path, "%s id %q must match %s", kind, id, identifierPattern.String())
+		return false
+	}
+	return true
 }
 
 func (v validator) authoringDefaults() {
@@ -191,9 +235,7 @@ func (v validator) uniqueChecks() {
 	seen := map[string]bool{}
 	for i, c := range v.w.Spec.Preconditions {
 		p := fmt.Sprintf("spec.preconditions[%d].id", i)
-		if c.ID == "" {
-			v.add(Invalid, p, "is required")
-		} else if seen[c.ID] {
+		if v.listIdentifier(p, "check", c.ID) && seen[c.ID] {
 			v.add(Invalid, p, "duplicate check id %q", c.ID)
 		}
 		seen[c.ID] = true
@@ -203,9 +245,7 @@ func (v validator) uniquePhases() {
 	seen := map[string]bool{}
 	for i, p := range v.w.Spec.Phases {
 		path := fmt.Sprintf("spec.phases[%d].id", i)
-		if p.ID == "" {
-			v.add(Invalid, path, "is required")
-		} else if seen[p.ID] {
+		if v.listIdentifier(path, "phase", p.ID) && seen[p.ID] {
 			v.add(Invalid, path, "duplicate phase id %q", p.ID)
 		}
 		seen[p.ID] = true
@@ -227,9 +267,7 @@ func (v validator) uniqueCriteria() {
 	texts := map[string]bool{}
 	for i, c := range v.w.Spec.Progress.Criteria {
 		path := fmt.Sprintf("spec.progress.criteria[%d].id", i)
-		if c.ID == "" {
-			v.add(Invalid, path, "is required")
-		} else if seen[c.ID] {
+		if v.listIdentifier(path, "criterion", c.ID) && seen[c.ID] {
 			v.add(Invalid, path, "duplicate criterion id %q", c.ID)
 		}
 		seen[c.ID] = true
@@ -245,21 +283,34 @@ func (v validator) uniqueGates() {
 	seen := map[string]bool{}
 	for i, g := range v.w.Spec.HumanGates {
 		p := fmt.Sprintf("spec.humanGates[%d].id", i)
-		if g.ID == "" {
-			v.add(Invalid, p, "is required")
-		} else if seen[g.ID] {
+		if v.listIdentifier(p, "human gate", g.ID) && seen[g.ID] {
 			v.add(Invalid, p, "duplicate human gate id %q", g.ID)
 		}
 		seen[g.ID] = true
+	}
+}
+
+func (v validator) uniqueFlowSteps() {
+	seen := map[string]bool{}
+	for i, step := range v.w.Spec.Flow {
+		if step.ID == "" {
+			continue
+		}
+		path := fmt.Sprintf("spec.flow[%d].id", i)
+		if !v.listIdentifier(path, "flow step", step.ID) {
+			continue
+		}
+		if seen[step.ID] {
+			v.add(Invalid, path, "duplicate flow step id %q", step.ID)
+		}
+		seen[step.ID] = true
 	}
 }
 func (v validator) uniqueIntegrity() {
 	seen := map[string]bool{}
 	for i, r := range v.w.Spec.Workspace.MutationPolicy.Integrity {
 		p := fmt.Sprintf("spec.workspace.mutationPolicy.integrity[%d].id", i)
-		if r.ID == "" {
-			v.add(Invalid, p, "is required")
-		} else if seen[r.ID] {
+		if v.listIdentifier(p, "integrity rule", r.ID) && seen[r.ID] {
 			v.add(Invalid, p, "duplicate integrity rule id %q", r.ID)
 		}
 		seen[r.ID] = true
@@ -374,11 +425,16 @@ func (v validator) references() {
 	v.actions("spec.phaseDefaults.before", v.w.Spec.PhaseDefaults.Before)
 	v.actions("spec.phaseDefaults.after", v.w.Spec.PhaseDefaults.After)
 	for i, g := range v.w.Spec.HumanGates {
+		path := fmt.Sprintf("spec.humanGates[%d]", i)
 		v.condition(fmt.Sprintf("spec.humanGates[%d].when", i), g.When)
 		v.condition(fmt.Sprintf("spec.humanGates[%d].if", i), g.If)
 		if g.When != "" && g.If != "" {
 			v.add(Invalid, fmt.Sprintf("spec.humanGates[%d]", i), "must not declare both when and if")
 		}
+		for j, phase := range g.Requires {
+			v.phase(fmt.Sprintf("%s.requires[%d]", path, j), phase)
+		}
+		v.humanGate(path, g)
 		for j, a := range g.After {
 			p := fmt.Sprintf("spec.humanGates[%d].after[%d]", i, j)
 			if a.Phase != "" {
@@ -442,6 +498,53 @@ func (v validator) references() {
 		}
 		v.assertions(p+".assertions", c.Assertions)
 		v.assertions(p+".afterCheckpointAssertions", c.AfterCheckpointAssertions)
+		v.marker(p+".writeMarker", c.WriteMarker)
+		seenSummary := map[string]bool{}
+		for i, item := range c.Summary.Include {
+			itemPath := fmt.Sprintf("%s.summary.include[%d]", p, i)
+			switch item {
+			case "branch", "base_commit", "head_commit", "state_directory", "workspace_clean", "canonical_gate_green", "final_gate_green", "commits_since_base", "changed_files_since_base":
+			default:
+				v.add(Invalid, itemPath, "unsupported completion summary field %q", item)
+			}
+			if (item == "canonical_gate_green" || item == "final_gate_green") && c.FinalValidation == "" {
+				v.add(Invalid, itemPath, "%s requires finalValidation", item)
+			}
+			if seenSummary[item] {
+				v.add(Invalid, itemPath, "duplicate completion summary field %q", item)
+			}
+			seenSummary[item] = true
+		}
+	}
+}
+
+func (v validator) humanGate(path string, gate HumanGate) {
+	if gate.Acknowledgement.Type != "exact-text" {
+		v.add(Invalid, path+".acknowledgement.type", "must be exact-text")
+	}
+	if gate.Acknowledgement.Value == "" {
+		v.add(Invalid, path+".acknowledgement.value", "is required")
+	}
+	seenChecklist := map[string]bool{}
+	for i, item := range gate.Checklist {
+		itemPath := fmt.Sprintf("%s.checklist[%d]", path, i)
+		if strings.TrimSpace(item.Text) == "" {
+			v.add(Invalid, itemPath+".text", "is required")
+		}
+		if item.ID != "" {
+			if v.listIdentifier(itemPath+".id", "checklist item", item.ID) && seenChecklist[item.ID] {
+				v.add(Invalid, itemPath+".id", "duplicate checklist item id %q", item.ID)
+			}
+			seenChecklist[item.ID] = true
+		}
+	}
+	v.marker(path+".evidence", gate.Evidence)
+	v.marker(path+".skip.evidence", gate.Skip.Evidence)
+}
+
+func (v validator) marker(path string, marker Marker) {
+	if marker.Value != "" && marker.Value != "head_commit" {
+		v.add(Invalid, path+".value", "unsupported marker value %q; only head_commit is executable", marker.Value)
 	}
 }
 
@@ -567,6 +670,9 @@ func (v validator) actions(path string, actions []PhaseAction) {
 		}
 		if a.Checkpoint != "" {
 			v.tool(p+".checkpoint", a.Checkpoint)
+		}
+		if a.MarkPhaseComplete != nil {
+			v.marker(p+".markPhaseComplete", *a.MarkPhaseComplete)
 		}
 		v.condition(p+".if", a.If)
 		if a.AssertProgress != nil && a.AssertProgress.Criterion != "" && !strings.Contains(a.AssertProgress.Criterion, "{{") && !v.criterion(a.AssertProgress.Criterion) {

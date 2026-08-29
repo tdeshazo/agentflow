@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -56,9 +57,13 @@ func TestReferenceV1Alpha1WorkflowCompletesWithRuntimeOwnedLifecycle(t *testing.
 		t.Fatal(err)
 	}
 	e.In = strings.NewReader("")
-	e.Out = io.Discard
+	var output bytes.Buffer
+	e.Out = &output
 	if err := e.Run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Final gate") || !strings.Contains(output.String(), "green") {
+		t.Fatalf("completion summary did not report the authored final gate: %q", output.String())
 	}
 	if p.calls["01"] != 1 || p.calls["02"] != 1 || p.calls["07"] != 1 || p.calls["08"] != 1 {
 		t.Fatalf("provider calls = %#v, want one call for every actor-owned phase", p.calls)

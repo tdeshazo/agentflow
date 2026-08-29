@@ -66,6 +66,7 @@
           "type": "array"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "prompt": {
@@ -93,6 +94,9 @@
           "additionalProperties": {
             "$ref": "#/$defs/V1Alpha2Agent"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
           "type": "object"
         },
         "completion": {
@@ -107,6 +111,9 @@
         "validation": {
           "additionalProperties": {
             "$ref": "#/$defs/V1Alpha2Validation"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
           },
           "type": "object"
         },

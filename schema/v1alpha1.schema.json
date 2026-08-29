@@ -169,6 +169,7 @@
           "type": "string"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "object": {
@@ -211,6 +212,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "text": {
@@ -323,6 +325,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "text": {
@@ -395,6 +398,7 @@
           "type": "string"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "if": {
@@ -465,6 +469,7 @@
           "$ref": "#/$defs/Marker"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "idempotent_record": {
@@ -540,6 +545,7 @@
           "type": "array"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "mode": {
@@ -789,6 +795,7 @@
           "type": "string"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
           "type": "string"
         },
         "if": {
@@ -1133,11 +1140,17 @@
           "additionalProperties": {
             "$ref": "#/$defs/Agent"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
           "type": "object"
         },
         "completion": {
           "additionalProperties": {
             "$ref": "#/$defs/Completion"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
           },
           "type": "object"
         },
@@ -1163,11 +1176,17 @@
           "additionalProperties": {
             "$ref": "#/$defs/Parameter"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
           "type": "object"
         },
         "paths": {
           "additionalProperties": {
             "type": "string"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
           },
           "type": "object"
         },
@@ -1202,11 +1221,17 @@
           "additionalProperties": {
             "$ref": "#/$defs/Tool"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
           "type": "object"
         },
         "validation": {
           "additionalProperties": {
             "$ref": "#/$defs/Validation"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
           },
           "type": "object"
         },
@@ -1272,6 +1297,9 @@
         "integrity": {
           "additionalProperties": {
             "type": "string"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
           },
           "type": "object"
         },

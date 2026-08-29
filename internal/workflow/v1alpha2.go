@@ -278,7 +278,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 	if authored == nil {
 		return nil, fmt.Errorf("empty v1alpha2 workflow")
 	}
-	if err := rejectV1Alpha2ReservedActorNamespace(authored); err != nil {
+	if err := rejectV1Alpha2ReservedActorNamespace(authored, locations); err != nil {
 		return nil, err
 	}
 	w := &Workflow{
@@ -312,7 +312,8 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		v := Validation{Steps: []ToolUse{{Uses: toolName}}}
 		if validation.repairDeclared() {
 			if !validation.Repair.onceDeclared() || strings.TrimSpace(validation.Repair.Once) == "" {
-				return nil, fmt.Errorf("validation %q repair.once is required", name)
+				path := "spec.validation." + name + ".repair.once"
+				return nil, v1Alpha2SourceError(locations, path, fmt.Errorf("validation %q repair.once is required", name))
 			}
 			v.OnFailure = FailurePolicy{
 				Strategy:          "repair-once",
@@ -335,7 +336,8 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			}
 			actorName = inlineActorPrefix + phaseKey
 			if _, exists := w.Spec.Agents[actorName]; exists {
-				return nil, fmt.Errorf("inline actor for phase %q conflicts with generated agent name %q", phaseKey, actorName)
+				path := fmt.Sprintf("spec.phases[%d].actor", i)
+				return nil, v1Alpha2SourceError(locations, path, fmt.Errorf("inline actor for phase %q conflicts with generated agent name %q", phaseKey, actorName))
 			}
 			w.Spec.Agents[actorName] = normalizeV1Alpha2Agent(*phase.Actor.Inline)
 		}
@@ -365,24 +367,44 @@ func normalizeV1Alpha2Agent(agent V1Alpha2Agent) Agent {
 	}
 }
 
-func rejectV1Alpha2ReservedActorNamespace(authored *V1Alpha2Workflow) error {
+func rejectV1Alpha2ReservedActorNamespace(authored *V1Alpha2Workflow, locations Locations) error {
 	for _, name := range sortedKeys(authored.Spec.Agents) {
 		if strings.HasPrefix(name, inlineActorPrefix) {
-			return fmt.Errorf("agent name %q uses reserved prefix %q", name, inlineActorPrefix)
+			path := "spec.agents." + name
+			return v1Alpha2SourceError(locations, path, fmt.Errorf("agent name %q uses reserved prefix %q", name, inlineActorPrefix))
 		}
 	}
 	for _, name := range sortedKeys(authored.Spec.Validation) {
 		repair := authored.Spec.Validation[name].Repair
 		if strings.HasPrefix(repair.Once, inlineActorPrefix) {
-			return fmt.Errorf("validation.%s.repair.once references reserved inline actor name %q", name, repair.Once)
+			path := "spec.validation." + name + ".repair.once"
+			return v1Alpha2SourceError(locations, path, fmt.Errorf("validation.%s.repair.once references reserved inline actor name %q", name, repair.Once))
 		}
 	}
 	for i, phase := range authored.Spec.Phases {
 		if phase.Actor.Inline == nil && strings.HasPrefix(phase.Actor.Name, inlineActorPrefix) {
-			return fmt.Errorf("phases[%d].actor references reserved inline actor name %q", i, phase.Actor.Name)
+			path := fmt.Sprintf("spec.phases[%d].actor", i)
+			return v1Alpha2SourceError(locations, path, fmt.Errorf("phases[%d].actor references reserved inline actor name %q", i, phase.Actor.Name))
 		}
 	}
 	return nil
+}
+
+func v1Alpha2SourceError(locations Locations, path string, err error) error {
+	position := locations[path]
+	if position.Line == 0 {
+		for parent := path; parent != ""; {
+			i := strings.LastIndexAny(parent, ".[")
+			if i < 0 {
+				break
+			}
+			parent = parent[:i]
+			if position = locations[parent]; position.Line != 0 {
+				break
+			}
+		}
+	}
+	return &sourceDiagnosticError{path: path, position: position, err: err}
 }
 
 func v1Alpha2ValidationToolName(name string) string {
@@ -532,9 +554,7 @@ func (v v1alpha2Validator) roots() {
 	}
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
 		a := v.w.Spec.Agents[name]
-		if name == "" {
-			v.add("spec.agents", "agent name must not be empty")
-		}
+		v.identifier("spec.agents", "agent", name)
 		if a.Runner == "" {
 			v.add("spec.agents."+name+".runner", "is required")
 		}
@@ -544,9 +564,7 @@ func (v v1alpha2Validator) roots() {
 	}
 	for _, name := range sortedKeys(v.w.Spec.Validation) {
 		validation := v.w.Spec.Validation[name]
-		if name == "" {
-			v.add("spec.validation", "validation name must not be empty")
-		}
+		v.identifier("spec.validation", "validation", name)
 		if strings.TrimSpace(validation.Run) == "" {
 			v.add("spec.validation."+name+".run", "is required")
 		}
@@ -568,6 +586,8 @@ func (v v1alpha2Validator) references() {
 		path := fmt.Sprintf("spec.phases[%d]", i)
 		if phase.ID == "" {
 			v.add(path+".id", "is required")
+		} else if !identifierPattern.MatchString(phase.ID) {
+			v.add(path+".id", "phase id %q must match %s", phase.ID, identifierPattern.String())
 		} else if phaseIndex[phase.ID] != i {
 			v.add(path+".id", "duplicate phase id %q", phase.ID)
 		}
@@ -614,6 +634,18 @@ func (v v1alpha2Validator) references() {
 		v.validation("spec.completion.validation", v.w.Spec.Completion.Validation)
 	}
 	v.dependencyCycles(graph, phaseIndex)
+}
+
+func (v v1alpha2Validator) identifier(path, kind, id string) bool {
+	if id == "" {
+		v.add(path, "%s name must not be empty", kind)
+		return false
+	}
+	if !identifierPattern.MatchString(id) {
+		v.add(path+"."+id, "%s name %q must match %s", kind, id, identifierPattern.String())
+		return false
+	}
+	return true
 }
 
 func (v v1alpha2Validator) agent(path, name string) {

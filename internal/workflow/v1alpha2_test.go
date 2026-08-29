@@ -673,6 +673,13 @@ func TestV1Alpha2ReferencesFailClosed(t *testing.T) {
 			path:     "spec.phases[0].dependsOn",
 			contains: "dependency cycle",
 		},
+		{
+			name:     "unsafe agent identifier",
+			replace:  "coder: {runner: codex, model: gpt-5.6-terra}",
+			with:     "'unsafe name': {runner: codex, model: gpt-5.6-terra}",
+			path:     "spec.agents.unsafe name",
+			contains: "must match",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -737,6 +744,9 @@ func TestV1Alpha2RepairPolicyFailsClosed(t *testing.T) {
 			}
 			for _, diagnostic := range result.Diagnostics {
 				if strings.Contains(diagnostic.Message, tc.want) {
+					if (tc.name == "missing actor" || tc.name == "empty actor") && (diagnostic.Path != "spec.validation.tests.repair.once" || diagnostic.Position.Line == 0) {
+						t.Fatalf("repair diagnostic is not source-aware: %#v", diagnostic)
+					}
 					return
 				}
 			}

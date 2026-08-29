@@ -13,10 +13,23 @@ spec:
     phase-gate:
       steps:
         - uses: missing-tool
+  progress:
+    criteria:
+      - id: known-criterion
+        text: Known criterion
   phases:
     - id: build
-      kind: implementation
+      kind: criterion
       actor: missing-agent
+      criterionID: missing-criterion
+  humanGates:
+    - id: approval
+      requires: [missing-prerequisite]
+      acknowledgement:
+        type: exact-text
+        value: yes
   flow:
     - phase: missing-phase
       validate: missing-validation
+    - human: missing-human-gate
+    - complete: missing-completion

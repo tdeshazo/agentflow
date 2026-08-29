@@ -384,6 +384,8 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 			presenter.MetadataStyled("Workspace clean", value, role)
 		case "canonical_gate_green":
 			presenter.MetadataStyled("Canonical gate", "green", clioutput.RoleSuccess)
+		case "final_gate_green":
+			presenter.MetadataStyled("Final gate", "green", clioutput.RoleSuccess)
 		case "commits_since_base", "changed_files_since_base":
 			// The detailed values are already emitted above; keep this summary
 			// vocabulary deterministic without inventing a second data model.

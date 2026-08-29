@@ -1,0 +1,47 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: conformance-unsafe-identifiers
+spec:
+  state:
+    records:
+      integrity:
+        "": integrity/baseline
+  parameters:
+    "":
+      type: string
+  paths:
+    "": scripts/check.sh
+  agents:
+    "":
+      runner: codex
+    worker:
+      runner: codex
+  tools:
+    "":
+      type: shell
+    gate:
+      type: shell
+      command: "true"
+  validation:
+    "":
+      steps:
+        - uses: gate
+    phase-gate:
+      steps:
+        - uses: gate
+  phases:
+    - id: unsafe phase
+      kind: implementation
+      actor: worker
+      validation: phase-gate
+  humanGates:
+    - id: unsafe gate
+      acknowledgement:
+        type: exact-text
+        value: yes
+  completion:
+    "": {}
+  flow:
+    - id: unsafe flow
+      phase: unsafe phase
