@@ -105,3 +105,29 @@ func TestV1Alpha4RejectsUnboundedOrAmbiguousWorkItemAdvancement(t *testing.T) {
 		})
 	}
 }
+
+func TestV1Alpha4RejectsUnknownAuthoredDependency(t *testing.T) {
+	workflow := strings.Replace(
+		v1alpha4Fixture,
+		"validation: quality\n      advanceWorkItem",
+		"validation: quality\n      dependsOn: [missing]\n      advanceWorkItem",
+		1,
+	)
+	document, err := Decode(writeWorkflow(t, workflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Validate(document)
+	if result.Status != Invalid {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Path == "spec.phases[0].dependsOn[0]" && strings.Contains(diagnostic.Message, `unknown phase dependency "missing"`) {
+			if _, err := BuildExpandedPlan(document); err == nil {
+				t.Fatal("BuildExpandedPlan accepted a workflow with an unknown dependency")
+			}
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v", result.Diagnostics)
+}

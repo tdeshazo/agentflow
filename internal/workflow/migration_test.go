@@ -176,8 +176,44 @@ func TestPhaseThreeMigrationsPreservePortableAuthority(t *testing.T) {
 		if got, want := strings.Join(successor.WorkspaceMutationAllowlist, ","), strings.Join(legacy.WorkspaceMutationAllowlist, ","); got != want {
 			t.Fatalf("self-hosting mutation authority = %q, want %q", got, want)
 		}
-		if !reflect.DeepEqual(successorSpec.Workspace.MutationPolicy.Integrity, legacySpec.Workspace.MutationPolicy.Integrity) {
-			t.Fatalf("self-hosting integrity authority changed:\nlegacy %#v\nsuccessor %#v", legacySpec.Workspace.MutationPolicy.Integrity, successorSpec.Workspace.MutationPolicy.Integrity)
+		wantIntegrity := map[string][]string{
+			"repository-instructions":      {"CONTRIBUTING.md", "GO_STYLE_GUIDE.md", "CODE_REVIEW.md"},
+			"self-hosting-workflow":        {"examples/representative/agentflow-self-hosting.agent-workflow.yaml"},
+			"agentflow-authoring-contract": {"skills/agentflow-spec/SKILL.md"},
+			"canonical-quality-gate":       {"scripts/check.sh", ".github/workflows/quality.yml"},
+			"canonical-roadmap":            {"ROADMAP.md"},
+			"planning-guidance":            {"docs/planning/README.md"},
+		}
+		gotIntegrity := make(map[string][]string, len(successorSpec.Workspace.MutationPolicy.Integrity))
+		root := filepath.Join("..", "..")
+		for _, rule := range successorSpec.Workspace.MutationPolicy.Integrity {
+			if rule.Mode != "exact-hash" {
+				t.Errorf("self-hosting integrity rule %q mode = %q, want exact-hash", rule.ID, rule.Mode)
+			}
+			gotIntegrity[rule.ID] = rule.Paths
+			for _, path := range rule.Paths {
+				if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+					t.Errorf("self-hosting integrity rule %q references unusable path %q: %v", rule.ID, path, err)
+				}
+			}
+		}
+		if !reflect.DeepEqual(gotIntegrity, wantIntegrity) {
+			t.Errorf("self-hosting integrity authority = %#v, want %#v", gotIntegrity, wantIntegrity)
+		}
+		for _, precondition := range successorSpec.Preconditions {
+			if precondition.Type != "files-exist" {
+				continue
+			}
+			for _, path := range precondition.Paths {
+				if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+					t.Errorf("self-hosting required file %q is unusable: %v", path, err)
+				}
+			}
+		}
+		for _, phase := range successorSpec.Phases {
+			if phase.Reasoning != "high" {
+				t.Errorf("self-hosting phase %q reasoning = %q, want supported Codex effort high", phase.ID, phase.Reasoning)
+			}
 		}
 		if got := successorSpec.Validation["phase-quality"].OnFailure; got.Strategy != "repair-once" || got.MaxRepairAttempts != 1 || got.Repair.Actor != "implementer" {
 			t.Fatalf("self-hosting repair authority = %#v", got)

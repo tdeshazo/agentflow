@@ -385,7 +385,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if marshalErr != nil {
 			return marshalErr
 		}
-		return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(encoded)
+		return clioutput.NewPresenterWithPresentation(out, clioutput.PresentationRaw).RawBytes(encoded)
 	}
 	if result.Status == workflow.Invalid {
 		return diagnosticsError(result)
@@ -400,11 +400,11 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		out, err := yaml.Marshal(plan)
+		encoded, err := yaml.Marshal(plan)
 		if err != nil {
 			return err
 		}
-		return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(out)
+		return clioutput.NewPresenterWithPresentation(out, clioutput.PresentationRaw).RawBytes(encoded)
 	}
 	if result.Status == workflow.Unsupported {
 		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))

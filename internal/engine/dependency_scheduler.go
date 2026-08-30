@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workspacepath"
 )
 
 // PhaseAcceptance reports whether a phase has the durable accepted-phase
@@ -147,6 +148,33 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("v1alpha2 workspace allowWrites[%d] must not be empty", i)
 		}
+		if _, ok := workspacepath.Clean(path); !ok {
+			return fmt.Errorf("v1alpha2 workspace allowWrites[%d] must be workspace-relative", i)
+		}
+	}
+	for _, rule := range w.Spec.Workspace.MutationPolicy.Integrity {
+		for i, path := range rule.Paths {
+			if _, ok := workspacepath.Clean(path); !ok {
+				return fmt.Errorf("integrity rule %q path %d must be workspace-relative", rule.ID, i)
+			}
+		}
+		for i, path := range rule.Exclude {
+			if _, ok := workspacepath.Clean(path); !ok {
+				return fmt.Errorf("integrity rule %q exclusion %d must be workspace-relative", rule.ID, i)
+			}
+		}
+	}
+	for name, artifact := range w.Spec.Contracts.Artifacts {
+		for i, path := range artifact.Paths {
+			if _, ok := workspacepath.Clean(path); !ok {
+				return fmt.Errorf("artifact %q path %d must be workspace-relative", name, i)
+			}
+		}
+	}
+	if adapter := w.Spec.Criteria.MarkdownAdapter; adapter != nil {
+		if _, ok := workspacepath.Clean(adapter.Path); !ok {
+			return fmt.Errorf("Markdown checklist adapter path must be workspace-relative")
+		}
 	}
 
 	phaseIndexes := make(map[string]int, len(w.Spec.Phases))
@@ -262,6 +290,11 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 		validation := w.Spec.Validation[name]
 		if len(validation.Steps) == 0 {
 			return fmt.Errorf("validation %q has no deterministic steps", name)
+		}
+		for i, dependency := range validation.Dependencies {
+			if _, ok := workspacepath.Clean(dependency); !ok {
+				return fmt.Errorf("validation %q dependency %d must be workspace-relative", name, i)
+			}
 		}
 		steps := append(append([]workflow.ToolUse{}, validation.Steps...), validation.OnFailure.Then...)
 		for _, step := range steps {

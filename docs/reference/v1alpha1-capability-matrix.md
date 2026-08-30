@@ -11,7 +11,7 @@ of four deterministic dispositions:
 - `direct-successor-capability`: v1alpha2 already expresses the authority.
 - `runtime-owned-equivalent`: successor runtime behavior preserves it without
   procedural YAML.
-- `generalized-replacement`: a future successor capability must model the
+- `generalized-replacement`: a successor capability must model the
   authority without a mechanical field copy.
 - `compatibility-only`: retain the v1alpha1 document until a successor
   replacement is explicitly specified.
@@ -32,14 +32,17 @@ The five representative workflows establish the Phase 1 baseline:
 | --- | --- | --- |
 | [Simple implementation](../../examples/representative/simple-implementation.agent-workflow.yaml) | v1alpha2 | Successor core |
 | [Implementation plus independent audit](../../examples/representative/implementation-independent-audit.agent-workflow.yaml) | v1alpha2 | Successor core |
-| [AgentFlow self-hosting](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | v1alpha2 | Phase 3 portable successor; canonical criterion source remains v1alpha1 until Phase 5 |
+| [AgentFlow self-hosting](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | v1alpha3 | Phase 3 portable safety/control successor, extended with Phase 4 typed handoffs; the v1alpha1 compatibility source is retained |
 | [Human-gated release](../../examples/representative/human-gated-release.agent-workflow.yaml) | v1alpha2 | Phase 3 default successor; [v1alpha1 compatibility copy](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) retained |
-| [Criterion-driven multi-item workflow](../../examples/representative/criterion-driven-multi-item.agent-workflow.yaml) | v1alpha1 | Compatibility until typed engine-owned work items land |
+| [Criterion-driven multi-item workflow](../../examples/representative/criterion-driven-multi-item.agent-workflow.yaml) | v1alpha4 | Phase 5 typed work-item successor with Markdown retained only as a presentation adapter |
 
 These are migration representatives. The self-hosting workflow demonstrates
-Phase 3 portable safety/control without lifecycle, recovery, state-record, or
-explicit-flow plumbing. The shipped art-portfolio workflow also defaults to
-v1alpha2, with its [v1alpha1 compatibility copy](../../examples/art-portfolio-v1alpha1.agent-workflow.yaml)
+Phase 3 portable safety/control and Phase 4 typed handoffs without lifecycle,
+recovery, state-record, or explicit-flow plumbing. The criterion-driven
+workflow demonstrates the Phase 5 generalized replacement: typed engine-owned
+work items with Markdown as an optional presentation adapter. The shipped
+art-portfolio workflow also defaults to v1alpha2, with its
+[v1alpha1 compatibility copy](../../examples/art-portfolio-v1alpha1.agent-workflow.yaml)
 retained. Follow the
 [convergence plan](../planning/v1alpha1-to-v1alpha2-plan.md) and
 [migration guide](../guides/migrating-v1alpha1-to-v1alpha2.md) for

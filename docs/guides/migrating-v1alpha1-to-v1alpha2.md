@@ -104,11 +104,12 @@ superficial YAML similarity as proof of equivalence.
 | [`examples/representative/human-gated-release.agent-workflow.yaml`](../../examples/representative/human-gated-release.agent-workflow.yaml) | [`examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml`](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) | The same release phase, deterministic gate, checklist, exact acknowledgement, and durable human evidence; v1alpha2 adds final completion validation and initialization policy. |
 | [`examples/representative/agentflow-self-hosting.agent-workflow.yaml`](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | [`spec/agent-workflow-v1alpha1.yaml`](../../spec/agent-workflow-v1alpha1.yaml) | Mutation/integrity policy, deterministic gate and bounded repair, safe resume, human evidence, and final completion are equal or stronger without lifecycle, recovery, state-record, or flow plumbing. |
 
-The canonical self-hosting v1alpha1 source remains executable during
-compatibility because its criterion progress and Markdown bookkeeping are
-explicit Phase 5 generalized-replacement work. The v1alpha2 self-hosting
-workflow intentionally does not claim to migrate those fields. The
-criterion-driven representative remains v1alpha1 for the same reason.
+The canonical self-hosting v1alpha1 source remains executable as a
+compatibility source. Its portable successor now uses v1alpha3 typed handoffs
+and does not mechanically copy criterion progress or Markdown bookkeeping.
+Phase 5 provides their generalized replacement in v1alpha4: the
+criterion-driven representative uses typed engine-owned work items and keeps
+Markdown only as an optional presentation adapter.
 
 ## What does not migrate automatically
 

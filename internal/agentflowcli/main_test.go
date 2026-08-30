@@ -54,26 +54,20 @@ func TestValidateCLIRejectsNonExecutableRecoveryBeforeRepositoryAccess(t *testin
 
 func TestPlanExpandedCLI(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
-	read, write, err := os.Pipe()
-	if err != nil {
+	var output bytes.Buffer
+	if err := runArgsWithIO(
+		[]string{"plan", "--expanded", "-f", workflowFile},
+		strings.NewReader(""),
+		&output,
+	); err != nil {
 		t.Fatal(err)
 	}
-	original := os.Stdout
-	os.Stdout = write
-	runErr := runArgs([]string{"plan", "--expanded", "-f", workflowFile})
-	_ = write.Close()
-	os.Stdout = original
-	output, _ := io.ReadAll(read)
-	_ = read.Close()
-	if runErr != nil {
-		t.Fatal(runErr)
-	}
-	if strings.Contains(string(output), "\x1b[") {
-		t.Fatalf("plan YAML contains ANSI escapes: %q", output)
+	if strings.Contains(output.String(), "\x1b[") {
+		t.Fatalf("plan YAML contains ANSI escapes: %q", output.String())
 	}
 	for _, want := range []string{"resolvedLifecycle:", "safetyEnforcementPoints:", "recoveryBehavior:", "completionContract:"} {
-		if !strings.Contains(string(output), want) {
-			t.Fatalf("plan output missing %q:\n%s", want, output)
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("plan output missing %q:\n%s", want, output.String())
 		}
 	}
 }
@@ -99,9 +93,14 @@ spec:
 		t.Fatal(err)
 	}
 
-	output := captureCLIStdout(t, func() error {
-		return runArgs([]string{"plan", "--expanded", "-f", workflowFile})
-	})
+	var output bytes.Buffer
+	if err := runArgsWithIO(
+		[]string{"plan", "--expanded", "-f", workflowFile},
+		strings.NewReader(""),
+		&output,
+	); err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		"dependencyGraph:",
 		"authoredOrder: 0",
@@ -109,25 +108,30 @@ spec:
 		"dependsOn: implement",
 		"satisfiedWhen: deterministically accepted",
 	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("plan output missing %q:\n%s", want, output)
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("plan output missing %q:\n%s", want, output.String())
 		}
 	}
 }
 
 func TestMigrateCheckCLIReportsClassificationsWithoutRepositoryAccess(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
-	output := captureCLIStdout(t, func() error {
-		return runArgs([]string{"migrate", "--check", "-f", workflowFile})
-	})
+	var output bytes.Buffer
+	if err := runArgsWithIO(
+		[]string{"migrate", "--check", "-f", workflowFile},
+		strings.NewReader(""),
+		&output,
+	); err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		"status: supported-maintenance-frozen",
 		"path: spec.agents.worker.runner",
 		"classification: direct-successor-capability",
 		"classification: generalized-replacement",
 	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("migration output missing %q:\n%s", want, output)
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("migration output missing %q:\n%s", want, output.String())
 		}
 	}
 }

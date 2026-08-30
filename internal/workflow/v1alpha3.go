@@ -2,8 +2,8 @@ package workflow
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
+
+	"github.com/tdeshazo/agentflow/internal/workspacepath"
 )
 
 const v1alpha3APIVersion = "agentflow.dev/v1alpha3"
@@ -317,8 +317,8 @@ func (v v1alpha3Validator) contracts() {
 }
 
 func workspaceRelative(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && !filepath.IsAbs(value) && !strings.HasPrefix(value, "../") && !strings.HasPrefix(value, `..\\`) && value != ".."
+	_, ok := workspacepath.Clean(value)
+	return ok
 }
 
 func stringSet(values []string) map[string]bool {

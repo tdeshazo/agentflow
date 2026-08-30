@@ -253,9 +253,6 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 		if !active.ValidationPassed {
 			return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
 		}
-		if err := e.persistPhaseContractOutputs(p); err != nil {
-			return err
-		}
 		return e.requirePhaseCompletion(p)
 	}
 	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
@@ -281,9 +278,6 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 	}
 	if !active.ValidationPassed {
 		return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
-	}
-	if err := e.persistPhaseContractOutputs(p); err != nil {
-		return err
 	}
 	return e.requirePhaseCompletion(p)
 }

@@ -139,6 +139,20 @@ func TestV1Alpha2ActorCreatedCommitDoesNotSatisfyValidationOrDependency(t *testi
 	assertSchedulingCalls(t, p, "root:worker")
 }
 
+func TestV1Alpha2WorkspacePolicyValidationRuns(t *testing.T) {
+	repo := newDurableRepo(t)
+	p := &schedulingProvider{}
+	w := schedulingWorkflow(repo, "workspace-policy-validation", []string{"root"}, nil, "true")
+	w.Spec.Tools["gate"] = workflow.Tool{Type: "workspace-policy"}
+	e := newSchedulingEngine(t, w, p)
+
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertSchedulingCalls(t, p, "root:worker")
+	assertSchedulingCompletion(t, e)
+}
+
 func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
 	t.Run("invalid references fail before any actor runs", func(t *testing.T) {
 		repo := newDurableRepo(t)
@@ -157,11 +171,6 @@ func TestV1Alpha2SchedulerFailureStopsDependents(t *testing.T) {
 		tool    workflow.Tool
 		wantErr string
 	}{
-		{
-			name:    "non-shell validation tool fails before any actor runs",
-			tool:    workflow.Tool{Type: "workspace-policy", Command: "true"},
-			wantErr: `validation "gate" references non-shell tool "gate"`,
-		},
 		{
 			name:    "empty validation command fails before any actor runs",
 			tool:    workflow.Tool{Type: "shell", Command: " \t\n"},
@@ -443,6 +452,9 @@ func TestV1Alpha2ConformanceExampleExecutesAuthorityBoundaries(t *testing.T) {
 		t.Fatalf("status = %s, normalized = %#v, diagnostics = %#v", result.Status, result.Normalized, result.Diagnostics)
 	}
 	w := result.Normalized.Workflow
+	if got := w.Spec.Phases[1]; got.Kind != "audit" || got.RequiresChange {
+		t.Fatalf("review phase = kind %q, requiresChange %t; want audit with no required change", got.Kind, got.RequiresChange)
+	}
 	toolName := w.Spec.Validation["tests"].Steps[0].Uses
 	tool := w.Spec.Tools[toolName]
 	validationCount := filepath.Join(t.TempDir(), "validation-count")

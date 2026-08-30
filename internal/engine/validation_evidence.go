@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
+	"github.com/tdeshazo/agentflow/internal/workspacepath"
 )
 
 const (
@@ -287,7 +288,7 @@ func (e *Engine) validationWorkspaceIdentity(v workflow.Validation, p *workflow.
 }
 
 func workspaceRelativePattern(root, value string) (string, error) {
-	value = filepath.ToSlash(strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", fmt.Errorf("validation dependency must not be empty")
 	}
@@ -296,13 +297,13 @@ func workspaceRelativePattern(root, value string) (string, error) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("validation dependency must be workspace-relative")
 		}
-		value = filepath.ToSlash(rel)
+		value = rel
 	}
-	value = strings.TrimPrefix(value, "./")
-	if value == "" {
-		value = "**"
+	cleaned, ok := workspacepath.Clean(value)
+	if !ok {
+		return "", fmt.Errorf("validation dependency must be workspace-relative")
 	}
-	return value, nil
+	return cleaned, nil
 }
 
 func dependencyMatches(pattern, file string) bool {

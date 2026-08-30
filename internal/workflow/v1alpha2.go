@@ -2,9 +2,9 @@ package workflow
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
+	"github.com/tdeshazo/agentflow/internal/workspacepath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -663,8 +663,7 @@ func (v v1alpha2Validator) roots() {
 	for i, path := range v.w.Spec.Workspace.AllowWrites {
 		if strings.TrimSpace(path) == "" {
 			v.add(fmt.Sprintf("spec.workspace.allowWrites[%d]", i), "must not be empty")
-		}
-		if filepath.IsAbs(path) || strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "../") || strings.HasPrefix(path, `..\\`) || path == ".." {
+		} else if _, ok := workspacepath.Clean(path); !ok {
 			v.add(fmt.Sprintf("spec.workspace.allowWrites[%d]", i), "must be workspace-relative")
 		}
 	}
@@ -714,7 +713,7 @@ func (v v1alpha2Validator) roots() {
 			path := fmt.Sprintf("spec.validation.%s.dependencies[%d]", name, i)
 			if strings.TrimSpace(dependency) == "" {
 				v.add(path, "must not be empty")
-			} else if filepath.IsAbs(dependency) || strings.HasPrefix(dependency, "../") || dependency == ".." {
+			} else if _, ok := workspacepath.Clean(dependency); !ok {
 				v.add(path, "must be workspace-relative")
 			}
 		}
@@ -919,6 +918,16 @@ func (v v1alpha2Validator) integrity() {
 		seen[rule.ID] = true
 		if len(rule.Paths) == 0 {
 			v.add(path+".paths", "must protect at least one path")
+		}
+		for pathIndex, value := range rule.Paths {
+			if _, ok := workspacepath.Clean(value); !ok {
+				v.add(fmt.Sprintf("%s.paths[%d]", path, pathIndex), "must be workspace-relative")
+			}
+		}
+		for excludeIndex, value := range rule.Exclude {
+			if _, ok := workspacepath.Clean(value); !ok {
+				v.add(fmt.Sprintf("%s.exclude[%d]", path, excludeIndex), "must be workspace-relative")
+			}
 		}
 		if len(rule.AllowedSemanticChanges) != 0 {
 			v.addUnsupported(path+".allowed_semantic_changes", allowedSemanticChangesUnsupportedReason)

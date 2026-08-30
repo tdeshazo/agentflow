@@ -100,14 +100,64 @@ func (e *Engine) advanceWorkItem(phase *workflow.Phase, active *ActivePhase) err
 		if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 			return err
 		}
+	}
+	if err := e.syncWorkItemMarkdownAdapter(phase, active); err != nil {
+		return err
+	}
+	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+		return err
+	}
+	state, completed, err := e.workItemState(phase.WorkItemID)
+	if err != nil {
+		return err
+	}
+	if !completed {
+		return e.assertWorkItemAdapterMatchesPreparedState(phase.WorkItemID)
+	}
+	if state.Phase != phase.ID {
+		return fmt.Errorf("phase %s target work item %q is already completed by phase %s", phase.ID, phase.WorkItemID, state.Phase)
+	}
+	// Recovery may observe the completion record after it was published but
+	// before the active record was updated or the phase marker was written.
+	// Reconcile that idempotent boundary without replaying actor work.
+	active.WorkItemAdvancePending = false
+	active.WorkItemAdvanced = true
+	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+		return err
+	}
+	return e.assertWorkItemAccepted(phase)
+}
+
+// completeWorkItem publishes the authoritative completion record only after
+// validation, net-change assertions, checkpointing, and contract capture have
+// succeeded. The active record remains until after the phase marker, so a
+// process interruption between these two state writes is safely reconcilable.
+func (e *Engine) completeWorkItem(phase *workflow.Phase, active *ActivePhase) error {
+	if phase == nil || !phase.AdvanceWorkItem {
+		return nil
+	}
+	if active == nil || active.TargetWorkItemID != phase.WorkItemID {
+		return fmt.Errorf("phase %s work item completion has no matching durable target", phase.ID)
+	}
+	if active.WorkItemAdvanced {
+		return e.assertWorkItemAccepted(phase)
+	}
+	if !active.WorkItemAdvancePending {
+		return fmt.Errorf("phase %s work item %q was not prepared before completion", phase.ID, phase.WorkItemID)
+	}
+	if err := e.assertWorkItemAdapterMatchesPreparedState(phase.WorkItemID); err != nil {
+		return err
+	}
+	if state, completed, err := e.workItemState(phase.WorkItemID); err != nil {
+		return err
+	} else if completed && state.Phase != phase.ID {
+		return fmt.Errorf("phase %s target work item %q is already completed by phase %s", phase.ID, phase.WorkItemID, state.Phase)
+	} else if !completed {
 		if err := e.Store.SetJSON(e.workItemRecord(phase.WorkItemID), WorkItemState{
 			Version: workItemRecordVersion, ID: phase.WorkItemID, Phase: phase.ID, Status: "completed",
 		}); err != nil {
 			return fmt.Errorf("persist work item %q completion: %w", phase.WorkItemID, err)
 		}
-	}
-	if err := e.syncWorkItemMarkdownAdapter(phase, active); err != nil {
-		return err
 	}
 	active.WorkItemAdvancePending = false
 	active.WorkItemAdvanced = true
@@ -150,10 +200,10 @@ func (e *Engine) syncWorkItemMarkdownAdapter(phase *workflow.Phase, active *Acti
 		if current != active.WorkItemAdapterAfter {
 			return fmt.Errorf("Markdown work-item adapter changed outside the declared transition")
 		}
-		return nil
+		return e.assertWorkItemAdapterMatchesPreparedState(phase.WorkItemID)
 	}
 	if current != active.WorkItemAdapterBefore {
-		if err := e.assertWorkItemAdapterMatchesState(); err != nil {
+		if err := e.assertWorkItemAdapterMatchesPreparedState(phase.WorkItemID); err != nil {
 			return err
 		}
 	} else if _, err := e.transitionMarkdownChecklist(adapter.Path, label, "checked"); err != nil {
@@ -164,10 +214,17 @@ func (e *Engine) syncWorkItemMarkdownAdapter(phase *workflow.Phase, active *Acti
 		return err
 	}
 	active.WorkItemAdapterAfter = after
-	return e.assertWorkItemAdapterMatchesState()
+	return e.assertWorkItemAdapterMatchesPreparedState(phase.WorkItemID)
 }
 
 func (e *Engine) assertWorkItemAdapterMatchesState() error {
+	return e.assertWorkItemAdapterMatchesPreparedState("")
+}
+
+// assertWorkItemAdapterMatchesPreparedState validates the optional adapter
+// against durable state plus at most one engine-owned transition that is
+// prepared for checkpointing but not yet authoritatively completed.
+func (e *Engine) assertWorkItemAdapterMatchesPreparedState(preparedID string) error {
 	adapter := e.Workflow.Spec.Criteria.MarkdownAdapter
 	if adapter == nil {
 		return nil
@@ -180,6 +237,7 @@ func (e *Engine) assertWorkItemAdapterMatchesState() error {
 	if err != nil {
 		return err
 	}
+	preparedFound := preparedID == ""
 	for _, item := range e.Workflow.Spec.Criteria.Items {
 		state, completed, err := e.workItemState(item.ID)
 		if err != nil {
@@ -192,9 +250,16 @@ func (e *Engine) assertWorkItemAdapterMatchesState() error {
 		if err != nil {
 			return fmt.Errorf("Markdown work-item adapter: %w", err)
 		}
+		if item.ID == preparedID {
+			preparedFound = true
+			completed = true
+		}
 		if checked != completed {
 			return fmt.Errorf("Markdown work-item adapter does not match durable state for %q", item.ID)
 		}
+	}
+	if !preparedFound {
+		return fmt.Errorf("prepared work item %q is not declared", preparedID)
 	}
 	return nil
 }

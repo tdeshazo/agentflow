@@ -19,24 +19,22 @@ spec:
     integrity:
       - id: repository-instructions
         mode: exact-hash
-        paths: [AGENTS.md]
+        paths: [CONTRIBUTING.md, GO_STYLE_GUIDE.md, CODE_REVIEW.md]
+      - id: self-hosting-workflow
+        mode: exact-hash
+        paths: [examples/representative/agentflow-self-hosting.agent-workflow.yaml]
+      - id: agentflow-authoring-contract
+        mode: exact-hash
+        paths: [skills/agentflow-spec/SKILL.md]
       - id: canonical-quality-gate
         mode: exact-hash
         paths: [scripts/check.sh, .github/workflows/quality.yml]
-      - id: roadmap-structure
-        mode: normalized-hash
-        paths: [docs/planning/roadmap-current.md]
-        normalize:
-          command: >-
-            sed -E
-            -e 's/^Status:.*/Status: __STATUS__/'
-            -e 's/^- \[[ xX]\] /- [*] /'
-      - id: roadmap-index-structure
-        mode: normalized-hash
+      - id: canonical-roadmap
+        mode: exact-hash
+        paths: [ROADMAP.md]
+      - id: planning-guidance
+        mode: exact-hash
         paths: [docs/planning/README.md]
-        normalize:
-          command: >-
-            sed -E 's/^5\. \[[ xX]\] /5. [*] /'
     initialization:
       requireCleanWorkspace: true
       requireNamedBranch: true
@@ -58,7 +56,16 @@ spec:
       commands: [git, codex, sh]
     - id: required-files
       type: files-exist
-      paths: [AGENTS.md, scripts/check.sh, .github/workflows/quality.yml]
+      paths:
+        - CONTRIBUTING.md
+        - GO_STYLE_GUIDE.md
+        - CODE_REVIEW.md
+        - examples/representative/agentflow-self-hosting.agent-workflow.yaml
+        - skills/agentflow-spec/SKILL.md
+        - ROADMAP.md
+        - docs/planning/README.md
+        - scripts/check.sh
+        - .github/workflows/quality.yml
     - id: quality-workflow-delegates-to-canonical-gate
       type: file-contains
       path: .github/workflows/quality.yml
@@ -104,7 +111,7 @@ spec:
       kind: implementation
       actor: implementer
       prompt: Implement one bounded AgentFlow specification or interpreter change with focused tests and documentation.
-      reasoning: Work from the requested authority boundary and keep the migration contract deterministic.
+      reasoning: high
       requiresChange: true
       validation: phase-quality
       outputs: [implementation-surface]
@@ -116,7 +123,7 @@ spec:
       ifEvidence: implementation-accepted
       readOnly: true
       prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
-      reasoning: Review the integrated change independently; do not add features or alter completion bookkeeping.
+      reasoning: high
       requiresChange: false
       validation: final-quality
     - id: final-implementation-audit
@@ -127,7 +134,7 @@ spec:
       ifEvidence: audit-accepted
       readOnly: true
       prompt: Perform a final cross-cutting audit of implementation and tests; report only verified defects without editing the workspace.
-      reasoning: Verify the bounded change independently from its deterministic validation evidence.
+      reasoning: high
       requiresChange: false
       validation: final-quality
   humanGates:

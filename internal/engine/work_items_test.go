@@ -66,6 +66,118 @@ func TestV1Alpha4RejectsActorEditedMarkdownAdapterBeforeAdvancement(t *testing.T
 	}
 }
 
+func TestV1Alpha4RequiresChangeFailureDoesNotPublishWorkItemCompletion(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "baseline.txt"), []byte("baseline\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "progress.md"), []byte("- [ ] Add API\n- [ ] Add tests\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "src/baseline.txt", "progress.md")
+	gitIn(t, repo, "commit", "-qm", "add work-item baseline")
+
+	providerImpl := &schedulingProvider{skipPhaseFile: true}
+	engine := newWorkItemEngine(t, repo, providerImpl)
+	err := engine.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "produced no net repository change") {
+		t.Fatalf("run error = %v", err)
+	}
+	if _, ok, stateErr := engine.workItemState("add-api"); stateErr != nil || ok {
+		t.Fatalf("requiresChange failure published work-item completion: ok=%t err=%v", ok, stateErr)
+	}
+	contents, err := os.ReadFile(filepath.Join(repo, "progress.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(contents), "- [ ] Add API\n- [ ] Add tests\n"; got != want {
+		t.Fatalf("Markdown adapter changed before requiresChange acceptance: got %q want %q", got, want)
+	}
+
+	// Recovery repeats deterministic acceptance but never reruns the actor or
+	// turns its unchanged result into an authoritative work-item completion.
+	err = newWorkItemEngine(t, repo, providerImpl).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "produced no net repository change") {
+		t.Fatalf("recovery error = %v", err)
+	}
+	assertSchedulingCalls(t, providerImpl, "implement-items--add-api:worker")
+	if _, ok, stateErr := engine.workItemState("add-api"); stateErr != nil || ok {
+		t.Fatalf("recovery published work-item completion: ok=%t err=%v", ok, stateErr)
+	}
+}
+
+func TestV1Alpha4RecoversCompletionPublishedBeforePhaseMarker(t *testing.T) {
+	repo := newDurableRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, "progress.md"), []byte("- [ ] Add API\n- [ ] Add tests\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", "progress.md")
+	gitIn(t, repo, "commit", "-qm", "add progress adapter")
+
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		path := filepath.Join(request.Workspace, "src", request.Metadata["phase"]+".txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(request.Metadata["phase"]+"\n"), 0o644)
+	}}
+	interrupted := newWorkItemEngine(t, repo, providerImpl)
+	if err := interrupted.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase := &interrupted.Workflow.Spec.Phases[0]
+	active, err := interrupted.newActivePhaseFor(phase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ActorCompleted = true
+	if err := os.MkdirAll(filepath.Join(repo, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "api.txt"), []byte("api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.Store.SetJSON(interrupted.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.advanceWorkItem(phase, &active); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := interrupted.workItemState("add-api"); err != nil || ok {
+		t.Fatalf("prepared work item was published before checkpoint: ok=%t err=%v", ok, err)
+	}
+	if err := interrupted.checkpoint(phase.Label, phase); err != nil {
+		t.Fatal(err)
+	}
+	active.CheckpointCommit, err = interrupted.Repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.Store.SetJSON(interrupted.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.completeWorkItem(phase, &active); err != nil {
+		t.Fatal(err)
+	}
+	if marked, _, err := interrupted.validCommitMarker(interrupted.phaseMarkerName(phase)); err != nil || marked {
+		t.Fatalf("simulated interruption already has phase marker: marked=%t err=%v", marked, err)
+	}
+
+	resumed := newWorkItemEngine(t, repo, providerImpl)
+	if err := resumed.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertSchedulingCalls(t, providerImpl, "implement-items--add-tests:worker")
+	state, ok, err := resumed.workItemState("add-api")
+	if err != nil || !ok || state.Phase != phase.ID {
+		t.Fatalf("recovered work-item state = %#v, ok=%t err=%v", state, ok, err)
+	}
+	assertSchedulingCompletion(t, resumed)
+}
+
 func newWorkItemEngine(t *testing.T, repo string, providerImpl *schedulingProvider) *Engine {
 	t.Helper()
 	phases := []workflow.Phase{

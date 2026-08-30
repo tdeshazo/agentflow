@@ -81,9 +81,6 @@ func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction,
 		actions = append(actions, workflow.PhaseAction{AssertProgressUnchanged: true})
 	}
 	actions = append(actions, workflow.PhaseAction{Validate: validation})
-	if p.AdvanceWorkItem {
-		actions = append(actions, workflow.PhaseAction{AdvanceWorkItem: true})
-	}
 	if p.Kind == "criterion" {
 		if p.AdvanceProgress {
 			actions = append(actions, workflow.PhaseAction{AdvanceProgress: true})
@@ -96,6 +93,13 @@ func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction,
 	}
 	if p.RequiresChange {
 		actions = append(actions, workflow.PhaseAction{AssertNetRepositoryChangeSincePhaseStart: true})
+	}
+	if p.AdvanceWorkItem {
+		// Preparing the engine-owned adapter is intentionally after every
+		// acceptance assertion but before checkpointing. The checkpoint captures
+		// the adapter transition, while the authoritative completed record is not
+		// published until markPhaseComplete reaches the final acceptance barrier.
+		actions = append(actions, workflow.PhaseAction{AdvanceWorkItem: true})
 	}
 	if checkpoint := e.phaseCheckpoint(p); checkpoint != "" {
 		actions = append(actions, workflow.PhaseAction{Checkpoint: checkpoint})
@@ -367,9 +371,32 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 }
 
 func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
+	// Contract outputs are part of acceptance evidence, so persist them before
+	// publishing the phase marker. If capture or state persistence fails, the
+	// durable active record remains available and recovery can retry acceptance;
+	// consumers can never observe an accepted producer without its handoff.
+	// Requiring a clean boundary also ties captured workspace content to the
+	// commit the marker will publish, including after an interrupted acceptance.
+	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(phase)); err != nil {
+		return err
+	}
+	if err := e.persistPhaseContractOutputs(phase); err != nil {
+		return err
+	}
 	head, err := e.Repo.Head()
 	if err != nil {
 		return err
+	}
+	if phase.AdvanceWorkItem {
+		var active ActivePhase
+		if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil {
+			return err
+		} else if !ok {
+			return fmt.Errorf("phase %s is missing active work-item acceptance state", phase.ID)
+		}
+		if err := e.completeWorkItem(phase, &active); err != nil {
+			return err
+		}
 	}
 	return e.Store.SetCommit(e.phaseMarkerName(phase), head)
 }

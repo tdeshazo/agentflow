@@ -945,17 +945,28 @@ func TestV1Alpha2CapabilitiesPreserveDurableRuntimeAuthority(t *testing.T) {
 	t.Run("identity rejects changed commit authority", func(t *testing.T) {
 		repo := newDurableRepo(t)
 		document := decodeV1Alpha2CapabilityDocument(t, "runner: test, model: capability-model, may_commit: false", "true")
-		first := newCapabilityEngine(t, document.Workflow, repo, &capabilityActionProvider{})
+		firstProvider := &capabilityActionProvider{action: func(_ context.Context, request provider.Request) error {
+			return os.WriteFile(filepath.Join(request.Workspace, "identity.txt"), []byte("accepted\n"), 0o644)
+		}}
+		first := newCapabilityEngine(t, document.Workflow, repo, firstProvider)
 		if err := first.Run(context.Background()); err != nil {
 			t.Fatal(err)
 		}
+		if firstProvider.calls != 1 {
+			t.Fatalf("initial actor calls = %d, want 1", firstProvider.calls)
+		}
+		assertSchedulingCompletion(t, first)
 
 		agent := document.Workflow.Spec.Agents["worker"]
 		agent.MayCommit = true
 		document.Workflow.Spec.Agents["worker"] = agent
-		err := newCapabilityEngine(t, document.Workflow, repo, &capabilityActionProvider{}).Run(context.Background())
+		changedProvider := &capabilityActionProvider{}
+		err := newCapabilityEngine(t, document.Workflow, repo, changedProvider).Run(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "executable workflow definition changed") {
 			t.Fatalf("changed commit authority error = %v", err)
+		}
+		if changedProvider.calls != 0 {
+			t.Fatalf("changed workflow invoked actor before identity rejection: calls=%d", changedProvider.calls)
 		}
 	})
 

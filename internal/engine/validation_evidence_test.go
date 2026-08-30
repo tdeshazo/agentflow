@@ -207,3 +207,32 @@ func validationInvocationCount(t *testing.T, path string) int {
 	}
 	return len(b)
 }
+
+func TestWorkspaceRelativePatternRejectsTraversalAfterExpansion(t *testing.T) {
+	root := t.TempDir()
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{name: "relative glob", value: "src/**", want: "src/**"},
+		{name: "safe parent segment", value: "src/../tests/**", want: "tests/**"},
+		{name: "absolute inside workspace", value: filepath.Join(root, "src", "**"), want: "src/**"},
+		{name: "forward slash traversal", value: "src/../../outside", wantErr: true},
+		{name: "backslash traversal", value: `src\..\..\outside`, wantErr: true},
+		{name: "absolute outside workspace", value: filepath.Join(root, "..", "outside"), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := workspaceRelativePattern(root, test.value)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("workspaceRelativePattern(%q) error = %v, wantErr %t", test.value, err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("workspaceRelativePattern(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+}

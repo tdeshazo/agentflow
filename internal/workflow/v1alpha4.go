@@ -188,6 +188,7 @@ func validateV1Alpha4(d *Document) Result {
 	base := validateV1Alpha3(&Document{Workflow: projectedDocument.Workflow, V1Alpha3: projected, Locations: d.Locations})
 	result := Result{Status: base.Status, Document: d, Normalized: d, Diagnostics: append([]Diagnostic(nil), base.Diagnostics...)}
 	validator := v1alpha4Validator{result: &result, locations: d.Locations, authored: d.V1Alpha4}
+	validator.dependencies()
 	validator.criteria()
 	for _, diagnostic := range result.Diagnostics {
 		if diagnostic.Status == Invalid {
@@ -208,6 +209,24 @@ func (v v1alpha4Validator) add(path, format string, args ...any) {
 	v.result.Diagnostics = append(v.result.Diagnostics, Diagnostic{
 		Status: Invalid, Path: path, Position: v.locations[path], Message: fmt.Sprintf(format, args...),
 	})
+}
+
+func (v v1alpha4Validator) dependencies() {
+	phaseIDs := make(map[string]bool, len(v.authored.Spec.Phases))
+	for _, phase := range v.authored.Spec.Phases {
+		phaseIDs[phase.ID] = true
+	}
+	for phaseIndex, phase := range v.authored.Spec.Phases {
+		for dependencyIndex, dependency := range phase.DependsOn {
+			if !phaseIDs[dependency] {
+				v.add(
+					fmt.Sprintf("spec.phases[%d].dependsOn[%d]", phaseIndex, dependencyIndex),
+					"unknown phase dependency %q",
+					dependency,
+				)
+			}
+		}
+	}
 }
 
 func (v v1alpha4Validator) criteria() {

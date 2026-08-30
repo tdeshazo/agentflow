@@ -40,6 +40,114 @@ func TestV1Alpha3TypedContractsAuthorizeOnlyVerifiedHandoffs(t *testing.T) {
 	}
 }
 
+func TestV1Alpha3ArtifactCaptureFailureDoesNotAcceptProducer(t *testing.T) {
+	repo := newDurableRepo(t)
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["phase"] != "implement" {
+			return nil
+		}
+		path := filepath.Join(request.Workspace, "src", "other.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("unrelated\n"), 0o644)
+	}}
+	engine := newTypedContractEngine(t, repo, providerImpl)
+	engine.Workflow.Spec.Tools["gate"] = workflow.Tool{Type: "shell", Command: "true"}
+
+	err := engine.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `artifact "result" producer phase implement did not produce declared path "src/result.txt"`) {
+		t.Fatalf("run error = %v", err)
+	}
+	phase, err := engine.phaseByID("implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := engine.validCommitMarker(engine.phaseMarkerName(phase)); err != nil || ok {
+		t.Fatalf("artifact capture failure accepted producer: ok=%t err=%v", ok, err)
+	}
+	var active ActivePhase
+	if ok, err := engine.Store.GetJSON(engine.activeRecord(), &active); err != nil || !ok || !active.ActorCompleted {
+		t.Fatalf("active phase = %#v, ok=%t, err=%v", active, ok, err)
+	}
+	var artifact ContractArtifact
+	if ok, err := engine.Store.GetJSON(engine.contractArtifactRecord("implement", "result"), &artifact); err != nil || ok {
+		t.Fatalf("artifact record = %#v, ok=%t, err=%v", artifact, ok, err)
+	}
+
+	restarted := newTypedContractEngine(t, repo, providerImpl)
+	restarted.Workflow.Spec.Tools["gate"] = workflow.Tool{Type: "shell", Command: "true"}
+	err = restarted.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `artifact "result" producer phase implement did not produce declared path "src/result.txt"`) {
+		t.Fatalf("restart error = %v", err)
+	}
+	if got := strings.Join(providerImpl.calls, ","); got != "implement:worker" {
+		t.Fatalf("actor calls after restart = %q", got)
+	}
+	if ok, _, err := restarted.validCommitMarker(restarted.phaseMarkerName(phase)); err != nil || ok {
+		t.Fatalf("restart accepted producer without artifact: ok=%t err=%v", ok, err)
+	}
+}
+
+func TestV1Alpha3RestartFinishesArtifactPersistenceInterruptedBeforeMarker(t *testing.T) {
+	repo := newDurableRepo(t)
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["phase"] != "implement" {
+			return nil
+		}
+		path := filepath.Join(request.Workspace, "src", "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("accepted\n"), 0o644)
+	}}
+	interrupted := newTypedContractEngine(t, repo, providerImpl)
+	if err := interrupted.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := interrupted.phaseByID("implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := interrupted.newActivePhaseFor(phase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.Store.SetJSON(interrupted.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.runPhaseActor(context.Background(), phase, phase.Prompt, &active); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.checkpoint(phase.Label, phase); err != nil {
+		t.Fatal(err)
+	}
+	active.CheckpointCommit, err = interrupted.Repo.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.Store.SetJSON(interrupted.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	if err := interrupted.persistPhaseContractOutputs(phase); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := interrupted.validCommitMarker(interrupted.phaseMarkerName(phase)); err != nil || ok {
+		t.Fatalf("interrupted producer marker: ok=%t err=%v", ok, err)
+	}
+
+	restarted := newTypedContractEngine(t, repo, providerImpl)
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(providerImpl.calls, ","); got != "implement:worker,audit:auditor" {
+		t.Fatalf("actor calls after restart = %q", got)
+	}
+	if ok, _, err := restarted.validCommitMarker(restarted.phaseMarkerName(phase)); err != nil || !ok {
+		t.Fatalf("restarted producer marker: ok=%t err=%v", ok, err)
+	}
+}
+
 func TestV1Alpha3ReadOnlyAuditRejectsWorkspaceMutation(t *testing.T) {
 	repo := newDurableRepo(t)
 	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
