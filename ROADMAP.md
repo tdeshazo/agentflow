@@ -187,6 +187,7 @@ feature work.
 | 3 | Run identity, supervised sessions, and trace foundation | Establish stable run/node identities, explainable state transitions, exclusive attach/detach handoff, and lossless operational output. |
 | 4 | v1alpha1 maintenance and successor migration | Freeze v1alpha1 authoring, migrate the canonical self-hosting path and guidance, and provide deterministic migration diagnostics before deprecation. |
 | 5 | Typed contracts, artifacts, and evidence | Make phase handoffs and acceptance evidence machine-checkable before introducing parallel execution. |
+| 5.5 | Invocation context compilation | Compile bounded, inspectable per-node execution context from typed dependencies, authority, workspace state, and budgets before bounded parallel execution. |
 | 6 | Parallel dependency scheduling | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
 | 7 | Executor and tool extensibility | Add providers and tools only through the established capability, identity, and typed-contract boundaries. |
 | 8 | Reusable workflows and composition | Add pinned, trust-aware composition without creating an alternate authority path. |
@@ -565,6 +566,40 @@ Typed handoffs precede parallel scheduling so fan-out/fan-in and downstream read
 - Completion can cite structured evidence produced by validation.
 - Missing or incompatible artifacts fail before dependent execution.
 - The self-hosting workflow uses at least one typed contract/evidence path where it removes a prompt-level convention.
+
+---
+
+## Execution stage 5.5 — Invocation context compilation
+
+**Goal:** Compile the smallest sufficient, inspectable execution context for each actor from authoritative workflow and workspace state before bounded parallel scheduling multiplies context cost.
+
+This stage follows typed contracts because the compiler consumes machine-checkable dependency outputs and evidence. It precedes parallelism because concurrent branches must not each reconstruct broad repository or run-history context independently.
+
+### Scope
+
+- Define a provider-neutral invocation-context representation distinct from durable workflow authority and provider-specific prompt text.
+- Derive context from the workflow and phase objectives, accepted dependency identities, typed artifacts/outputs, relevant evidence, authorized workspace/resource scope, bounded validation failures, executor capabilities, and declared budgets.
+- Make compilation deterministic for unchanged authoritative state except for explicitly declared dynamic retrieval inputs.
+- Keep context a derived view: Git/workspace state, the workflow definition, typed artifacts/evidence, and durable run state remain authoritative.
+- Enforce per-invocation context/token budgets from stage 2, reserving capacity for reasoning and output rather than filling the provider window opportunistically.
+- Include dependency artifacts by identity/reference and selected content instead of indiscriminate transcript or actor-output copying.
+- Bound repair context to relevant deterministic failure evidence and authorized workspace state.
+- Let provider adapters render compiled context without independently reconstructing workflow semantics.
+- Extend `agentflow plan --expanded` or equivalent diagnostics to show the compiled context manifest and why each component is included, without exposing secrets.
+- Establish explicit file/resource-scope metadata that stage 6 conflict analysis can reuse when deciding whether ready nodes may execute concurrently.
+- Defer semantic indexing, embeddings, learned ranking, and autonomous retrieval until the deterministic compiler seam is proven.
+
+### Exit criteria
+
+- Every actor invocation receives a runtime-generated, inspectable context manifest.
+- The same unchanged authoritative state compiles to equivalent context.
+- Context compilation respects token/resource budgets and fails deterministically when required context cannot fit.
+- Dependent nodes receive declared typed outputs/evidence without scraping prior actor prose or replaying full transcripts.
+- Repair actors receive bounded relevant failure context rather than unbounded run history.
+- Provider adapters consume normalized compiled context rather than re-deriving workflow authority.
+- `agentflow plan` can explain why context elements are included or excluded without revealing secrets.
+- Stage 6 can use the same normalized resource-scope metadata to distinguish safe disjoint concurrency from conflicts.
+- A self-hosting workflow demonstrates materially smaller phase-specific context than passing broad repository/run history while preserving deterministic acceptance.
 
 ---
 
