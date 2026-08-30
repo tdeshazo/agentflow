@@ -424,6 +424,21 @@ validation:
 `repair: once` requires a repair actor either locally or through
 `spec.defaults.repair`.
 
+Validation steps may stop at the first failure. Treat that first diagnostic as
+evidence of at least one violation, not proof that it is the only violation.
+For a multi-step gate with one-shot repair, ensure the repair actor can inspect
+the complete relevant contract and check every step in one invocation. Either
+include the contract in the repair prompt or run a deterministic preflight that
+reports all mismatches together; do not design repair around repeated
+fail-fix-rerun discovery.
+
+Keep acceptance authority in deterministic validation, while exposing required
+construction details to the actor. If validation requires exact filenames,
+headings, symbols, labels, or other fixed strings, enumerate those literals in
+the implementation prompt or point to an actor-readable contract containing
+them. A phrase such as "use the gate-required headings" is insufficient when
+the prompt does not state the headings.
+
 Equivalent explicit one-shot policy:
 
 ```yaml
@@ -1129,6 +1144,12 @@ Avoid these:
 - using `criterion` display text when stable `criterionID` is available;
 - declaring both `when` and `if` on one human gate;
 - using `repair: once` without a resolvable repair actor;
+- hiding exact filenames, headings, symbols, labels, or strings behind a gate
+  while asking the responsible actor only to satisfy unspecified
+  "gate-required" values;
+- making one-shot repair depend on successive first-failure diagnostics instead
+  of giving the repair actor the complete gate contract or an aggregate
+  mismatch report;
 - assigning maximal reasoning to every phase without explaining why its
   irreducible judgment exceeds what deterministic gates and later review cover;
 - reusing a claimed independent reviewer as an implementation-gate repair

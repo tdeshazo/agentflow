@@ -37,7 +37,7 @@ Choose the requested mode:
 4. Separate authority: agents attempt work; workspace policy controls mutations; deterministic validations accept phases; humans provide only necessary human evidence; completion owns terminal state.
    Require a concrete actor or engine-owned transition for every allowlisted
    path; remove copied template paths that no phase needs.
-5. Bound each prompt to its outcome, scope, local checks, exclusions, and whether a diff is required. Keep acceptance logic outside the prompt.
+5. Bound each prompt to its outcome, scope, local checks, exclusions, and whether a diff is required. Keep acceptance authority outside the prompt, but make every actor-produced exact literal enforced by validation actor-visible: enumerate required filenames, headings, symbols, labels, or other fixed strings in the prompt (or point to an actor-readable contract that contains them). Do not use opaque directions such as "use the gate-required headings" when the prompt does not state those headings.
 6. Allocate model capability and reasoning effort by irreducible task risk,
    ambiguity, and breadth—not phase importance labels. Reserve the strongest
    model/highest effort for genuinely difficult judgment or adversarial review;
@@ -49,7 +49,11 @@ Choose the requested mode:
    every validation at least one deterministic step. Use no repair for hard
    gates or a bounded `repair: once`; rerun the gate after repair. A post-review
    repair must be followed by another independent review; otherwise make the
-   review/final gate hard.
+   review/final gate hard. Design one-shot repair for the validation runner's
+   first reported failure: the repair invocation must be able to discover and
+   fix every violation in the full gate, rather than depend on successive
+   fail-fix-rerun cycles. Put the complete relevant contract in the repair
+   prompt or provide one deterministic preflight that reports all mismatches.
 8. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
 9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
 10. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
@@ -216,6 +220,10 @@ Check for:
   executable in assertion context;
 - agent-controlled success without deterministic validation;
 - mutable phases without a resolved validation gate;
+- exact filenames, headings, symbols, labels, or strings enforced by a gate but
+  omitted from the responsible actor's prompt and actor-readable inputs;
+- one-shot repair for a multi-step gate that can reveal only the first mismatch
+  and gives the repair actor no way to inspect the complete validation contract;
 - validation commands that are vacuous at their execution point, such as a
   worktree-only diff check after the lifecycle has checkpointed a clean tree;
 - repair policies that accidentally apply to hard/safety gates;
