@@ -529,6 +529,29 @@ func TestV1Alpha2ScheduleRecordsHumanGateBeforeCompletion(t *testing.T) {
 	assertSchedulingCompletion(t, e)
 }
 
+func TestV1Alpha2ScheduleRecordsConditionallySkippedPhaseAsAccepted(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "conditional-skip", []string{"implement", "audit", "follow-up"}, map[string][]string{
+		"audit":     {"implement"},
+		"follow-up": {"audit"},
+	}, "true")
+	w.Spec.Parameters = map[string]workflow.Parameter{"run_audit": {Type: "boolean", Default: false}}
+	w.Spec.Phases[1].Kind = "audit"
+	w.Spec.Phases[1].RequiresChange = false
+	w.Spec.Phases[1].If = "{{ parameters.run_audit }}"
+
+	p := &schedulingProvider{}
+	e := newSchedulingEngineAt(t, w, p, repo)
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertSchedulingCalls(t, p, "implement:worker", "follow-up:worker")
+	if ok, _, err := e.validCommitMarker(e.phaseMarkerName(&w.Spec.Phases[1])); err != nil || !ok {
+		t.Fatalf("conditional phase marker = %t, %v", ok, err)
+	}
+	assertSchedulingCompletion(t, e)
+}
+
 func schedulingWorkflow(repo, name string, ids []string, dependencies map[string][]string, gateCommand string) *workflow.Workflow {
 	graph := workflow.PhaseDependencyGraph{}
 	phases := make([]workflow.Phase, 0, len(ids))

@@ -120,8 +120,10 @@ non-interactive Codex CLI execution.
 
 See the [runtime reference](docs/reference/runtime.md) for CLI usage, state
 layout, supported constructs, provider behavior, and current limits. The
-[art portfolio workflow](examples/art-portfolio.agent-workflow.yaml) creates
-a FastAPI backend, React frontend, and containerized deployment. The concise
+[art portfolio workflow](examples/art-portfolio.agent-workflow.yaml) is the
+v1alpha2 default that creates a FastAPI backend, React frontend, and
+containerized deployment; its [v1alpha1 compatibility copy](examples/art-portfolio-v1alpha1.agent-workflow.yaml)
+remains validated. The concise
 [feature workflow](examples/feature.agent-workflow.yaml) is the checked-in
 v1alpha2 conformance example. It shows the shared agent capability fields
 (`sandbox`, `approval`, `ephemeral`, `may_commit`, and `output_last_message`)

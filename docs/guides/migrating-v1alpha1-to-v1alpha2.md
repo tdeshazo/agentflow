@@ -92,6 +92,24 @@ implemented.
    recovery boundary, and completion condition. Keep the v1alpha1 document
    until the v1alpha2 definition has passed the same deterministic checks.
 
+## Phase 3 migration set
+
+The checked-in migration set compares expanded normalized plans in
+`TestPhaseThreeMigrationsPreservePortableAuthority`; it does not treat
+superficial YAML similarity as proof of equivalence.
+
+| Default successor | Compatibility copy | Preserved authority |
+| --- | --- | --- |
+| [`examples/art-portfolio.agent-workflow.yaml`](../../examples/art-portfolio.agent-workflow.yaml) | [`examples/art-portfolio-v1alpha1.agent-workflow.yaml`](../../examples/art-portfolio-v1alpha1.agent-workflow.yaml) | Identical mutation scope, resolved agent capabilities, phase acceptance gates, bounded repair, and final validation; v1alpha2 adds explicit initialization, lineage, reset, and clean-completion policy. |
+| [`examples/representative/human-gated-release.agent-workflow.yaml`](../../examples/representative/human-gated-release.agent-workflow.yaml) | [`examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml`](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) | The same release phase, deterministic gate, checklist, exact acknowledgement, and durable human evidence; v1alpha2 adds final completion validation and initialization policy. |
+| [`examples/representative/agentflow-self-hosting.agent-workflow.yaml`](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | [`spec/agent-workflow-v1alpha1.yaml`](../../spec/agent-workflow-v1alpha1.yaml) | Mutation/integrity policy, deterministic gate and bounded repair, safe resume, human evidence, and final completion are equal or stronger without lifecycle, recovery, state-record, or flow plumbing. |
+
+The canonical self-hosting v1alpha1 source remains executable during
+compatibility because its criterion progress and Markdown bookkeeping are
+explicit Phase 5 generalized-replacement work. The v1alpha2 self-hosting
+workflow intentionally does not claim to migrate those fields. The
+criterion-driven representative remains v1alpha1 for the same reason.
+
 ## What does not migrate automatically
 
 v1alpha2 deliberately does not reinterpret v1alpha1-only fields. A document

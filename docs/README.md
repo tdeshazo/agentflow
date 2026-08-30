@@ -20,12 +20,12 @@ the section that matches the question you are trying to answer:
 
 - To understand who may act and who may accept work, read
   [Execution authority](architecture/execution-authority.md).
-- To author or audit a workflow, read the
-  [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and the
-  [concise authoring guide](guides/concise-authoring.md). The
+- To author or audit a workflow, start with the
   [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)
-  describes the executable concise evolution and its dependency/acceptance
-  boundaries.
+  and its dependency/acceptance boundaries. The
+  [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and
+  [concise authoring guide](guides/concise-authoring.md) remain the
+  compatibility references.
 - To assess a legacy workflow before migration, read the
   [v1alpha1 capability matrix](reference/v1alpha1-capability-matrix.md) and
   run `agentflow migrate --check -f workflow.yaml`.

@@ -218,11 +218,13 @@ func TestConformanceShippedDefinitions(t *testing.T) {
 	paths := []string{
 		filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"),
 		filepath.Join("..", "..", "examples", "art-portfolio.agent-workflow.yaml"),
+		filepath.Join("..", "..", "examples", "art-portfolio-v1alpha1.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "feature.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "representative", "simple-implementation.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "representative", "implementation-independent-audit.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "representative", "agentflow-self-hosting.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "representative", "human-gated-release.agent-workflow.yaml"),
+		filepath.Join("..", "..", "examples", "representative", "human-gated-release-v1alpha1.agent-workflow.yaml"),
 		filepath.Join("..", "..", "examples", "representative", "criterion-driven-multi-item.agent-workflow.yaml"),
 	}
 	for _, path := range paths {

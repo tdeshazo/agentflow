@@ -5,15 +5,38 @@ metadata:
 
 spec:
   parameters:
-    run_audit:
+    require_human_verification:
       type: boolean
       default: true
+    terra_model:
+      type: string
+      default: "{{ env.TERRA_MODEL | default('gpt-5.6-terra') }}"
+    luna_model:
+      type: string
+      default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
   workspace:
-    allowWrites: [internal/**, provider/**, docs/**, schema/**, examples/**, README.md, CHANGELOG.md]
+    allowWrites: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
     integrity:
-      - id: module-definition
-        mode: group-exact-hash
-        paths: [go.mod, go.sum]
+      - id: repository-instructions
+        mode: exact-hash
+        paths: [AGENTS.md]
+      - id: canonical-quality-gate
+        mode: exact-hash
+        paths: [scripts/check.sh, .github/workflows/quality.yml]
+      - id: roadmap-structure
+        mode: normalized-hash
+        paths: [docs/planning/roadmap-current.md]
+        normalize:
+          command: >-
+            sed -E
+            -e 's/^Status:.*/Status: __STATUS__/'
+            -e 's/^- \[[ xX]\] /- [*] /'
+      - id: roadmap-index-structure
+        mode: normalized-hash
+        paths: [docs/planning/README.md]
+        normalize:
+          command: >-
+            sed -E 's/^5\. \[[ xX]\] /5. [*] /'
     initialization:
       requireCleanWorkspace: true
       requireNamedBranch: true
@@ -25,18 +48,25 @@ spec:
       policy: spec.workspace.mutationPolicy
     test:
       type: shell
-      command: go test ./...
+      command: sh scripts/check.sh
   preconditions:
     - id: git-repository
       type: git-repository
       scope: initialization
-    - id: go-command
+    - id: required-commands
       type: commands-exist
-      commands: [go]
+      commands: [git, codex, sh]
+    - id: required-files
+      type: files-exist
+      paths: [AGENTS.md, scripts/check.sh, .github/workflows/quality.yml]
+    - id: quality-workflow-delegates-to-canonical-gate
+      type: file-contains
+      path: .github/workflows/quality.yml
+      text: scripts/check.sh
   agents:
     implementer:
       runner: codex
-      model: gpt-5.6-terra
+      model: "{{ parameters.terra_model }}"
       sandbox: workspace-write
       approval: never
       ephemeral: true
@@ -44,16 +74,20 @@ spec:
       output_last_message: true
     reviewer:
       runner: codex
-      model: gpt-5.6-luna
+      model: "{{ parameters.luna_model }}"
       sandbox: workspace-write
       approval: never
       ephemeral: true
       may_commit: false
       output_last_message: true
   validation:
-    quality:
+    phase-quality:
       steps: [{uses: scope}, {uses: test}]
-      dependencies: [go.mod, go.sum]
+      dependencies: ["**"]
+      repair: {once: implementer}
+    final-quality:
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: ["**"]
       hard: true
   phases:
     - id: implement-agentflow-change
@@ -62,19 +96,43 @@ spec:
       prompt: Implement one bounded AgentFlow specification or interpreter change with focused tests and documentation.
       reasoning: Work from the requested authority boundary and keep the migration contract deterministic.
       requiresChange: true
-      validation: quality
-    - id: independently-audit-agentflow-change
+      validation: phase-quality
+    - id: integrated-regression-audit
       kind: audit
       actor: reviewer
       dependsOn: [implement-agentflow-change]
       prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
-      reasoning: Review independently; do not make product changes while auditing.
+      reasoning: Review the integrated change independently; do not add features or alter completion bookkeeping.
       requiresChange: false
-      if: "{{ parameters.run_audit }}"
-      validation: quality
+      validation: phase-quality
+    - id: final-implementation-audit
+      kind: audit
+      actor: implementer
+      dependsOn: [integrated-regression-audit]
+      prompt: Perform a final cross-cutting audit of implementation and tests; repair only genuine defects.
+      reasoning: Verify the bounded change independently from its deterministic validation evidence.
+      requiresChange: false
+      validation: final-quality
+  humanGates:
+    - id: terminal-confirmation
+      requires: [final-implementation-audit]
+      if: "{{ parameters.require_human_verification }}"
+      instructions: Run the repository's isolated local procedure and verify behavior in the real target terminal or environment.
+      checklist:
+        - Verify the primary interaction is usable end-to-end.
+        - Verify denied and authorization paths are actually denied.
+        - Verify compact, standard, and wide layouts remain reachable.
+        - Verify repeated submission does not duplicate a pending mutation.
+        - Verify backing out before submission causes no mutation.
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      evidence:
+        record: human-verification
+        value: head_commit
   completion:
-    validation: quality
-    assertions: [{type: workspace-integrity}]
+    validation: final-quality
+    assertions: [{type: workspace-integrity}, {type: implementation-workspace-clean}]
   reset:
     allow: true
     requireCleanWorkspace: true

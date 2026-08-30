@@ -82,6 +82,13 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 		}
 		if !ok {
 			e.presenter().PhaseSkip(id, "condition is false")
+			head, err := e.Repo.Head()
+			if err != nil {
+				return err
+			}
+			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
+				return fmt.Errorf("record skipped phase %s: %w", id, err)
+			}
 			return nil
 		}
 	}

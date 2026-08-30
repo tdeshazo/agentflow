@@ -14,6 +14,12 @@
 
 ### Added
 
+- Completed Phase 3 successor migration: the art-portfolio and human-gated
+  release workflows now default to v1alpha2 with validated v1alpha1
+  compatibility copies. Expanded-plan comparison coverage verifies portable
+  mutation, integrity, validation, repair, resume, human-evidence, and
+  completion authority; the criterion/bookkeeping self-hosting source remains
+  an explicit Phase 5 exception.
 - Added Phase 2 portable v1alpha2 authority: typed parameters and bounded
   conditions; integrity, initialization, and lineage policy; deterministic
   preconditions; reusable multi-step tools and hard validations; phase intent,

@@ -16,9 +16,8 @@ Produce executable specifications from the public AgentFlow contract. Keep agent
 
 Read resources progressively:
 
-- Read [the authoring guide](references/authoring-agentflow-v1alpha1.md) before authoring or modifying a workflow. It contains supported values, patterns, templates, and the validation loop.
-- Read [the field guide](references/agentflow-v1alpha1.md) only for a field’s semantics, an expanded-plan interpretation, or a review question that needs detail.
-- For a v1alpha2 workflow, read the checked-in [v1alpha2 authoring contract](../../docs/reference/agentflow-v1alpha2.md) before authoring or modifying it. Do not infer v1alpha1-only authority from the concise form.
+- For new or migrated workflows, read the checked-in [v1alpha2 authoring contract](../../docs/reference/agentflow-v1alpha2.md) before authoring or modifying it.
+- Read [the authoring guide](references/authoring-agentflow-v1alpha1.md) and [field guide](references/agentflow-v1alpha1.md) only when maintaining, comparing, or diagnosing a v1alpha1 compatibility workflow.
 
 ## Modes
 
@@ -32,8 +31,8 @@ Choose the requested mode:
 ## Author or modify a workflow
 
 1. Define the bounded outcome, workspace/repository, allowed and protected paths, acceptance command, human evidence (if any), and durable completion condition. Parameterize unavailable repository facts instead of inventing them.
-2. Select the simplest fit: a single implementation phase; implementation plus audit; a criterion workflow; a human-gated workflow; bookkeeping/completion; or, only when required, a dynamic criterion loop. For a new workflow that fits the concise core, prefer `agentflow.dev/v1alpha2`; its safe resume, checkpointing, phase evidence, and completion ordering are runtime-owned. v1alpha1 is grammar-frozen maintenance compatibility: do not add new v1alpha1 fields. Do not remove v1alpha1-only integrity, lineage, progress, human-gate, bookkeeping, or completion authority merely to migrate; first run `agentflow migrate --check` and follow `docs/guides/migrating-v1alpha1-to-v1alpha2.md`.
-3. Declare sections in dependency order: metadata; parameters/paths; workspace/state; defaults/agents; tools; preconditions; validation; progress; phases; human gates; completion; flow. Use stable IDs.
+2. Default new authoring to `agentflow.dev/v1alpha2`. It directly supports portable parameters/conditions, integrity and initialization policy, deterministic preconditions, reusable tools and multi-step validation, phase controls, human gates, completion assertions, and reset policy; safe resume, checkpointing, phase evidence, and completion ordering are runtime-owned. v1alpha1 is grammar-frozen compatibility: do not add new v1alpha1 syntax. Keep a v1alpha1 copy when the workflow requires criterion progress, Markdown bookkeeping, dynamic loops, custom state layout, or another capability the matrix classifies as an exception. Before migrating, run `agentflow migrate --check`, compare `plan --expanded` output, and follow `docs/guides/migrating-v1alpha1-to-v1alpha2.md`.
+3. For v1alpha2, declare sections in dependency order: metadata; parameters; workspace; agents; tools; preconditions; validation; phases; human gates; completion; reset. Use stable IDs. Use the legacy section order only for v1alpha1 compatibility documents.
 4. Separate authority: agents attempt work; workspace policy controls mutations; deterministic validations accept phases; humans provide only necessary human evidence; completion owns terminal state.
    Require a concrete actor or engine-owned transition for every allowlisted
    path; remove copied template paths that no phase needs.
@@ -54,7 +53,7 @@ Choose the requested mode:
    fix every violation in the full gate, rather than depend on successive
    fail-fix-rerun cycles. Put the complete relevant contract in the repair
    prompt or provide one deterministic preflight that reports all mismatches.
-8. Add checklist progress only for real criteria. Use stable criterion IDs and engine-owned `advanceProgress: true`; do not ask actors to edit engine-owned progress.
+8. Keep checklist progress, Markdown bookkeeping, and dynamic criterion loops in v1alpha1 compatibility workflows until a typed engine-owned successor is available. Do not simulate them with actor prompts or arbitrary file edits in v1alpha2.
 9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
 10. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
 11. Design the same document for fresh initialization, active-phase recovery,
@@ -68,11 +67,10 @@ Choose the requested mode:
     preconditions.
 12. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
 
-For protected content, declare `spec.workspace.mutationPolicy.integrity` as a
-list of named rules. Each rule has `id`, `mode`, and non-empty `paths`; the
-allowlist and integrity rules are separate boundaries. Use
-`spec.workspace.mutationPolicy.integrity` as the assertion policy when the
-whole protected rule set must be checked.
+For protected content, declare `spec.workspace.integrity` in v1alpha2 (or
+`spec.workspace.mutationPolicy.integrity` in v1alpha1) as a list of named
+rules. Each rule has `id`, `mode`, and non-empty `paths`; the allowlist and
+integrity rules are separate boundaries.
 
 ## Store and select workflows
 
@@ -135,7 +133,7 @@ Do not run a workflow merely to learn whether its YAML is valid.
 When asked to create a workflow:
 
 - Return or write one complete AgentWorkflow YAML document unless the user asks for fragments. For named discovery, `workflow-name.yaml` or `workflow-name.yml` is sufficient.
-- Use either supported `agentflow.dev/v1alpha1` or `agentflow.dev/v1alpha2` identifier with `kind: AgentWorkflow`; prefer v1alpha2 only when its concise contract can express every required authority.
+- Use `agentflow.dev/v1alpha2` with `kind: AgentWorkflow` by default. Use v1alpha1 only for an explicit compatibility copy or a documented successor exception.
 - Prefer concise defaults and runtime-owned safe resume.
 - Include comments only where they explain a non-obvious safety or authority decision.
 - Keep prompts shorter than orchestration logic.

@@ -1,37 +1,73 @@
-apiVersion: agentflow.dev/v1alpha2
+apiVersion: agentflow.dev/v1alpha1
 kind: AgentWorkflow
 metadata:
   name: art-portfolio
+  description: >-
+    Build a containerized art portfolio with a FastAPI backend and React
+    frontend through separate implementation stages, integration, and an
+    independent review. The workflow creates a self-contained project in a
+    clean Git repository and verifies the required application and Docker
+    assets before completion.
 
 spec:
   parameters:
+    repo_root:
+      type: path
+      default: "."
     model:
       type: string
       default: "{{ env.PORTFOLIO_MODEL | default('gpt-5.6-terra') }}"
+
   workspace:
-    allowWrites: [backend/**, frontend/**, Dockerfile, docker-compose.yml, .dockerignore, .gitignore, README.md]
-    initialization:
-      requireCleanWorkspace: true
-      requireNamedBranch: true
-      requireBaseAncestor: true
-      requireSameBranch: true
+    root: "{{ parameters.repo_root }}"
+    vcs: git
+    cleanliness:
+      before_first_run: required
+      outside_recoverable_active_phase: required
+      after_checkpoint: required
+    mutationPolicy:
+      allowed:
+        - backend/**
+        - frontend/**
+        - Dockerfile
+        - docker-compose.yml
+        - .dockerignore
+        - .gitignore
+        - README.md
+
+  defaults:
+    agent:
+      runner: codex
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    lifecycle:
+      policy: safe-resume
+    phases:
+      implementation:
+        actor: builder
+        reasoning: high
+        requiresChange: true
+      audit:
+        actor: reviewer
+        reasoning: high
+        requiresChange: false
+    repair:
+      actor: builder
+      reasoning: high
+      prompt: |
+        The art portfolio validation failed. Inspect the current checkout and
+        repair only the missing or invalid portfolio asset. Keep the FastAPI,
+        React, and Docker deliverables within the declared mutation scope.
+
   agents:
     builder:
-      runner: codex
       model: "{{ parameters.model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      may_commit: true
-      output_last_message: true
     reviewer:
-      runner: codex
       model: "{{ parameters.model }}"
-      sandbox: workspace-write
-      approval: never
-      ephemeral: true
-      may_commit: true
-      output_last_message: true
+
   tools:
     backend-files:
       type: shell
@@ -53,32 +89,37 @@ spec:
         test -f Dockerfile &&
         test -f docker-compose.yml &&
         test -f README.md
+
   preconditions:
     - id: repository-root
       type: git-repository
-      scope: initialization
+      path: "{{ parameters.repo_root }}"
     - id: required-commands
       type: commands-exist
       commands: [git, codex, sh]
+
   validation:
     backend-files:
-      steps: [{uses: backend-files}]
-      repair: {once: builder}
+      repair: once
+      steps:
+        - uses: backend-files
     frontend-files:
-      steps: [{uses: frontend-files}]
-      repair: {once: builder}
+      repair: once
+      steps:
+        - uses: frontend-files
     portfolio-files:
-      steps: [{uses: portfolio-files}]
-      repair: {once: builder}
+      repair: once
+      steps:
+        - uses: portfolio-files
     final-portfolio-review:
-      steps: [{uses: portfolio-files}]
-      hard: true
+      repair: none
+      steps:
+        - uses: portfolio-files
+
   phases:
     - id: develop-backend
       kind: implementation
-      actor: builder
-      reasoning: high
-      requiresChange: true
+      label: develop-fastapi-backend
       validation: backend-files
       prompt: |
         Build the FastAPI backend for the art portfolio in `backend/`.
@@ -90,12 +131,10 @@ spec:
         Keep the API small, documented in code, and ready for a React client.
         Do not create frontend or container files in this stage. Work only
         within the declared mutation scope.
+
     - id: develop-frontend
       kind: implementation
-      actor: builder
-      reasoning: high
-      requiresChange: true
-      dependsOn: [develop-backend]
+      label: develop-react-frontend
       validation: frontend-files
       prompt: |
         Build the React frontend for the art portfolio in `frontend/` using
@@ -107,12 +146,10 @@ spec:
         Keep the frontend compatible with the existing FastAPI API. Do not
         alter backend behavior or create container files in this stage. Work
         only within the declared mutation scope.
+
     - id: integrate-containerized-application
       kind: implementation
-      actor: builder
-      reasoning: high
-      requiresChange: true
-      dependsOn: [develop-frontend]
+      label: integrate-and-containerize-portfolio
       validation: portfolio-files
       prompt: |
         Integrate the existing backend and frontend into a runnable portfolio
@@ -125,12 +162,10 @@ spec:
         routed to FastAPI. Make only the integration fixes needed for these
         assets; do not introduce unrelated tools or modify files outside the
         declared mutation scope.
+
     - id: review-art-portfolio
       kind: audit
-      actor: reviewer
-      reasoning: high
-      requiresChange: false
-      dependsOn: [integrate-containerized-application]
+      label: review-art-portfolio-deliverables
       validation: final-portfolio-review
       prompt: |
         Independently review the completed FastAPI backend, React frontend, and
@@ -139,9 +174,17 @@ spec:
         README gives usable local and container instructions. Repair a genuine
         in-scope defect if needed; otherwise leave the checkout unchanged.
         Do not treat an earlier agent's completion claim as evidence.
+
   completion:
-    validation: final-portfolio-review
-    assertions: [{type: implementation-workspace-clean}]
-  reset:
-    allow: true
-    requireCleanWorkspace: true
+    portfolio:
+      finalValidation: final-portfolio-review
+      summary:
+        title: "Art portfolio created."
+        include: [head_commit, changed_files_since_base, workspace_clean]
+
+  flow:
+    - phase: develop-backend
+    - phase: develop-frontend
+    - phase: integrate-containerized-application
+    - phase: review-art-portfolio
+    - complete: portfolio
