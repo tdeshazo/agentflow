@@ -34,7 +34,7 @@ using `--tail N` or `--follow`).
 
 `-C` selects the repository explicitly. For repository-scoped commands, its
 default is the current working directory, which must be a Git repository.
-Single-workflow `run`, `status`, `reset`, `validate`, and `plan` commands may
+Single-workflow `run`, `status`, `reset`, `validate`, `plan`, and `migrate --check` commands may
 also take one positional workflow name. `logs` accepts the same logical name
 through `--workflow`. Names are looked up as regular
 `.yaml`/`.yml` files in `<repository>/.agentflow/workflows/` and
@@ -44,6 +44,11 @@ When both selectors are omitted in an interactive terminal, AgentFlow presents
 a sorted numbered workflow picker and accepts one selection line; redirected
 or piped commands instead fail with the selector usage error and never read
 stdin.
+
+`migrate --check -f workflow.yaml` is source-only: it validates an
+`agentflow.dev/v1alpha1` document and reports its deterministic migration
+classification without opening a repository, invoking an actor, or changing
+the YAML. `migrate` has no automatic rewrite mode.
 
 `agentflow switch <workflow-name>` sets a repository/worktree-local active
 selector for later selector-less `run`, `status`, `reset`, `validate`, `plan`,

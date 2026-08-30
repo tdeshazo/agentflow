@@ -140,6 +140,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
 	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
 	expanded := fs.Bool("expanded", expandedDefault, "show resolved executable plan")
+	check := fs.Bool("check", false, "report v1alpha1 migration classifications without rewriting")
 	clearSelection := fs.Bool("clear", false, "clear the active workflow selection (switch only)")
 	overrides := configuredSets(config.Parameters)
 	fs.Var(&overrides, "set", "parameter override (key=value), repeatable")
@@ -176,7 +177,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("status --all does not accept a positional workflow selector")
 		}
 		switch cmd {
-		case "run", "status", "reset", "validate", "plan", "switch":
+		case "run", "status", "reset", "validate", "plan", "migrate", "switch":
 			if cmd == "switch" && positional[0] == "-" {
 				break
 			}
@@ -222,11 +223,17 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if *clearSelection && cmd != "switch" {
 		return fmt.Errorf("--clear is only supported with switch")
 	}
+	if *check && cmd != "migrate" {
+		return fmt.Errorf("--check is only supported with migrate")
+	}
+	if cmd == "migrate" && !*check {
+		return fmt.Errorf("migrate requires --check; automatic rewriting is not implemented")
+	}
 	if cmd == "status" && *all && *file != "" {
 		return fmt.Errorf("status selectors --all and -f are mutually exclusive")
 	}
 	if cmd == "switch" {
-		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "set"} {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "check", "set"} {
 			if explicit[name] {
 				return fmt.Errorf("--%s is not supported with switch", name)
 			}
@@ -237,7 +244,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		return runWorkflowSwitchWithIO(*repo, positional, *clearSelection, in, out)
 	}
 	if cmd == "current" || cmd == "workflows" {
-		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "clear", "set"} {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "check", "clear", "set"} {
 			if explicit[name] {
 				return fmt.Errorf("--%s is not supported with %s", name, cmd)
 			}
@@ -369,6 +376,17 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if cmd == "validate" {
 		return writeValidationResult(clioutput.NewPresenter(out), result)
 	}
+	if cmd == "migrate" {
+		report, checkErr := workflow.MigrationCheckFile(workflowFile)
+		if checkErr != nil {
+			return checkErr
+		}
+		encoded, marshalErr := yaml.Marshal(report)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		return clioutput.NewPresenterWithPresentation(os.Stdout, clioutput.PresentationRaw).RawBytes(encoded)
+	}
 	if result.Status == workflow.Invalid {
 		return diagnosticsError(result)
 	}
@@ -436,7 +454,7 @@ func appendRecoveryGuidance(err error, guidance string) error {
 
 func requiresWorkflowSelector(cmd string) bool {
 	switch cmd {
-	case "run", "status", "reset", "validate", "plan":
+	case "run", "status", "reset", "validate", "plan", "migrate":
 		return true
 	default:
 		return false
@@ -466,7 +484,7 @@ func usage() error {
 }
 
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
-	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
+	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset|migrate --check> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(out, "       agentflow switch [workflow-name|-] [-C repo] | agentflow switch --clear [-C repo]")
 	fmt.Fprintln(out, "       agentflow checkout ...  # compatibility alias for switch")

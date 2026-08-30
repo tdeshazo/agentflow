@@ -14,11 +14,24 @@ progress, bookkeeping, or completion requirement merely to make a document
 shorter. Keep that workflow on v1alpha1 until a later version explicitly
 supports the needed declaration.
 
+v1alpha1 is grammar-frozen but supported in maintenance mode. Start with the
+machine-readable [capability matrix](../reference/v1alpha1-capability-matrix.md):
+
+```sh
+agentflow migrate --check -f workflow-v1alpha1.yaml
+```
+
+The diagnostic is deterministic and read-only. It classifies every authored
+field before any manual or future automatic rewrite; automatic rewriting is not
+implemented.
+
 ## Procedure
 
-1. Validate the existing document and save its expanded plan.
+1. Check migration classifications, validate the existing document, and save
+   its expanded plan.
 
    ```sh
+   agentflow migrate --check -f workflow-v1alpha1.yaml
    agentflow validate -f workflow-v1alpha1.yaml
    agentflow plan --expanded -f workflow-v1alpha1.yaml > before.yaml
    ```

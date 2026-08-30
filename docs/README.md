@@ -26,6 +26,9 @@ the section that matches the question you are trying to answer:
   [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)
   describes the executable concise evolution and its dependency/acceptance
   boundaries.
+- To assess a legacy workflow before migration, read the
+  [v1alpha1 capability matrix](reference/v1alpha1-capability-matrix.md) and
+  run `agentflow migrate --check -f workflow.yaml`.
 - To understand the current interpreter, read the
   [Go runtime reference](reference/runtime.md).
 - To contribute a change, follow the

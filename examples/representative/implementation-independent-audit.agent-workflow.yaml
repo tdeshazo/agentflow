@@ -1,0 +1,40 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: representative-implementation-independent-audit
+
+spec:
+  workspace:
+    allowWrites: [src/**, tests/**]
+  agents:
+    implementer:
+      runner: codex
+      model: gpt-5.6-terra
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    auditor:
+      runner: codex
+      model: gpt-5.6-luna
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: false
+      output_last_message: true
+  validation:
+    tests:
+      run: make test
+  phases:
+    - id: implement
+      actor: implementer
+      prompt: Implement the bounded change and its focused tests.
+      validation: tests
+    - id: independent-audit
+      actor: auditor
+      dependsOn: [implement]
+      prompt: Independently audit the accepted change; report or repair only an in-scope defect.
+      validation: tests
+  completion:
+    validation: tests

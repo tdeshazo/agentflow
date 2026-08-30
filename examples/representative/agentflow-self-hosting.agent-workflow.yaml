@@ -1,0 +1,40 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: agentflow-self-hosting
+
+spec:
+  workspace:
+    allowWrites: [internal/**, provider/**, docs/**, schema/**, examples/**, README.md, CHANGELOG.md]
+  agents:
+    implementer:
+      runner: codex
+      model: gpt-5.6-terra
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    reviewer:
+      runner: codex
+      model: gpt-5.6-luna
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: false
+      output_last_message: true
+  validation:
+    quality:
+      run: go test ./...
+  phases:
+    - id: implement-agentflow-change
+      actor: implementer
+      prompt: Implement one bounded AgentFlow specification or interpreter change with focused tests and documentation.
+      validation: quality
+    - id: independently-audit-agentflow-change
+      actor: reviewer
+      dependsOn: [implement-agentflow-change]
+      prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
+      validation: quality
+  completion:
+    validation: quality

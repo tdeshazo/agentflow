@@ -115,6 +115,29 @@ spec:
 	}
 }
 
+func TestMigrateCheckCLIReportsClassificationsWithoutRepositoryAccess(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	output := captureCLIStdout(t, func() error {
+		return runArgs([]string{"migrate", "--check", "-f", workflowFile})
+	})
+	for _, want := range []string{
+		"status: supported-maintenance-frozen",
+		"path: spec.agents.worker.runner",
+		"classification: direct-successor-capability",
+		"classification: generalized-replacement",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("migration output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestMigrateRequiresCheck(t *testing.T) {
+	if err := runArgs([]string{"migrate", "-f", "workflow.yaml"}); err == nil || !strings.Contains(err.Error(), "requires --check") {
+		t.Fatalf("migrate error = %v", err)
+	}
+}
+
 func TestStatusJSONCLI(t *testing.T) {
 	repo := t.TempDir()
 	for _, args := range [][]string{

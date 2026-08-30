@@ -1,0 +1,47 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: representative-criterion-driven-multi-item
+  description: Compatibility representative until criteria become typed engine-owned successor state.
+
+spec:
+  agents:
+    implementer:
+      runner: codex
+      approval: never
+  tools:
+    scope:
+      type: workspace-policy
+  validation:
+    gate:
+      steps:
+        - uses: scope
+  lifecycle:
+    policy: safe-resume
+    validation: gate
+  progress:
+    criteria:
+      - id: add-api
+        text: Add the API capability.
+      - id: add-tests
+        text: Add the regression tests.
+  phases:
+    - id: implement-api
+      kind: criterion
+      label: implement-api
+      actor: implementer
+      criterionID: add-api
+      advanceProgress: true
+      prompt: Complete only the API criterion.
+      validation: gate
+    - id: implement-tests
+      kind: criterion
+      label: implement-tests
+      actor: implementer
+      criterionID: add-tests
+      advanceProgress: true
+      prompt: Complete only the regression-test criterion.
+      validation: gate
+  flow:
+    - phase: implement-api
+    - phase: implement-tests

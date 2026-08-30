@@ -1,0 +1,45 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: representative-human-gated-release
+  description: Compatibility representative until the successor has durable human gates.
+
+spec:
+  agents:
+    releaser:
+      runner: codex
+      approval: never
+  tools:
+    release-check:
+      type: shell
+      command: make release-check
+  validation:
+    release-check:
+      steps:
+        - uses: release-check
+  lifecycle:
+    policy: safe-resume
+    validation: release-check
+  phases:
+    - id: prepare-release
+      kind: implementation
+      label: prepare-release
+      actor: releaser
+      prompt: Prepare the bounded release candidate and do not publish it.
+      validation: release-check
+  humanGates:
+    - id: release-approval
+      requires: [prepare-release]
+      instructions: Verify the release candidate in the target environment before approval.
+      checklist:
+        - Verify the release notes and version.
+        - Verify the target environment behavior.
+      acknowledgement:
+        type: exact-text
+        value: approve-release
+      evidence:
+        record: release-approved
+        value: head_commit
+  flow:
+    - phase: prepare-release
+    - human: release-approval

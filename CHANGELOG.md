@@ -14,6 +14,10 @@
 
 ### Added
 
+- Put `agentflow.dev/v1alpha1` into grammar-frozen maintenance mode, with a
+  machine-readable capability matrix, five representative migration workflows,
+  and read-only `agentflow migrate --check` diagnostics that classify every
+  supported field deterministically before any rewrite.
 - Deterministic adversarial conformance coverage for pending actor attribution,
   bounded repair recovery, completion repair recovery, invocation-scoped
   commit authority, terminal safety, dependency/acceptance separation, and

@@ -31,6 +31,8 @@ organizes the documentation by purpose:
 - [AgentWorkflow v1alpha2 authoring contract](docs/reference/agentflow-v1alpha2.md)
   defines the concise AgentFlow evolution and its dependency/acceptance
   semantics.
+- [v1alpha1 capability matrix](docs/reference/v1alpha1-capability-matrix.md)
+  defines the frozen API's deterministic successor dispositions.
 - [Go runtime reference](docs/reference/runtime.md) documents the current
   interpreter and its limits.
 - [Planning](docs/planning/README.md) navigates the canonical root
@@ -162,7 +164,9 @@ apiVersion: agentflow.dev/v1alpha2
 kind: AgentWorkflow
 ```
 
-`v1alpha1` remains supported and experimental. `v1alpha2` is the concise
+`v1alpha1` is supported in grammar-frozen maintenance mode: decoding,
+validation, planning, execution compatibility, and correctness/security fixes
+continue, while new authoring syntax belongs to a successor API. `v1alpha2` is the concise
 AgentFlow evolution: its core form strictly decodes, validates against the
 current runtime surface, normalizes to the existing authority model, derives a
 deterministic serial schedule, and records durable phase/completion evidence.
@@ -177,8 +181,9 @@ For new workflows that fit its core contract, prefer v1alpha2: safe resume,
 checkpointing, durable phase evidence, and completion ordering are runtime
 owned rather than procedural authoring work. The
 [v1alpha1-to-v1alpha2 migration guide](docs/guides/migrating-v1alpha1-to-v1alpha2.md)
-defines the authority-preserving migration procedure and the cases that must
-remain on v1alpha1 until they are expressible.
+and `agentflow migrate --check -f workflow.yaml` define the
+authority-preserving migration procedure and the cases that must remain on
+v1alpha1 until they are expressible.
 
 ## Publishing
 

@@ -8,6 +8,20 @@ lowering model.
 `go test ./internal/workflow -run GeneratedSchema` fails when either checked-in
 schema artifact drifts from that model.
 
+## Maintenance status
+
+v1alpha1 is supported in **grammar-frozen maintenance mode**. Existing
+documents remain readable, validatable, plannable, and executable, and the
+runtime may receive correctness, safety, durability, and security fixes. New
+authoring fields and new portable semantics must use a successor API; they must
+not extend v1alpha1 convenience syntax.
+
+Before any source migration, run `agentflow migrate --check -f workflow.yaml`.
+It uses the machine-readable [v1alpha1 capability matrix](v1alpha1-capability-matrix.md)
+to classify every authored field without rewriting the document. A
+classification is migration guidance, not a deprecation warning or an
+execution change.
+
 The generated schema is structural: it rejects unknown fields and identifies
 `metadata`/`source` as descriptive and `spec` as executable. `agentflow
 validate` is the pre-execution authority for required fields, types,
