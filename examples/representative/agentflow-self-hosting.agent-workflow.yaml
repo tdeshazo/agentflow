@@ -1,4 +1,4 @@
-apiVersion: agentflow.dev/v1alpha2
+apiVersion: agentflow.dev/v1alpha3
 kind: AgentWorkflow
 metadata:
   name: agentflow-self-hosting
@@ -85,10 +85,20 @@ spec:
       steps: [{uses: scope}, {uses: test}]
       dependencies: ["**"]
       repair: {once: implementer}
+      produces: [implementation-accepted]
     final-quality:
       steps: [{uses: scope}, {uses: test}]
       dependencies: ["**"]
       hard: true
+      produces: [audit-accepted]
+  artifacts:
+    implementation-surface:
+      type: files
+      paths: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
+      persistence: workspace
+  evidence:
+    implementation-accepted: {type: validation}
+    audit-accepted: {type: validation}
   phases:
     - id: implement-agentflow-change
       kind: implementation
@@ -97,19 +107,26 @@ spec:
       reasoning: Work from the requested authority boundary and keep the migration contract deterministic.
       requiresChange: true
       validation: phase-quality
+      outputs: [implementation-surface]
     - id: integrated-regression-audit
       kind: audit
       actor: reviewer
       dependsOn: [implement-agentflow-change]
+      inputs: [{artifact: implementation-surface}, {evidence: implementation-accepted}]
+      ifEvidence: implementation-accepted
+      readOnly: true
       prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
       reasoning: Review the integrated change independently; do not add features or alter completion bookkeeping.
       requiresChange: false
-      validation: phase-quality
+      validation: final-quality
     - id: final-implementation-audit
       kind: audit
-      actor: implementer
+      actor: reviewer
       dependsOn: [integrated-regression-audit]
-      prompt: Perform a final cross-cutting audit of implementation and tests; repair only genuine defects.
+      inputs: [{evidence: audit-accepted}]
+      ifEvidence: audit-accepted
+      readOnly: true
+      prompt: Perform a final cross-cutting audit of implementation and tests; report only verified defects without editing the workspace.
       reasoning: Verify the bounded change independently from its deterministic validation evidence.
       requiresChange: false
       validation: final-quality
@@ -133,6 +150,7 @@ spec:
   completion:
     validation: final-quality
     assertions: [{type: workspace-integrity}, {type: implementation-workspace-clean}]
+    evidence: [audit-accepted]
   reset:
     allow: true
     requireCleanWorkspace: true

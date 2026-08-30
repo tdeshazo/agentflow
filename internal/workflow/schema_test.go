@@ -16,7 +16,7 @@ func TestGeneratedSchemaArtifactsAreCurrent(t *testing.T) {
 		t.Fatal("locate schema test source")
 	}
 	root := filepath.Join(filepath.Dir(source), "..", "..")
-	for _, version := range []string{v1alpha1APIVersion, v1alpha2APIVersion} {
+	for _, version := range []string{v1alpha1APIVersion, v1alpha2APIVersion, v1alpha3APIVersion} {
 		t.Run(version, func(t *testing.T) {
 			want, err := GeneratedSchema(version)
 			if err != nil {
@@ -93,6 +93,7 @@ func TestReferenceDocumentsPointToGeneratedSchemas(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "..", "docs", "reference", "agentflow-v1alpha1.md"),
 		filepath.Join("..", "..", "docs", "reference", "agentflow-v1alpha2.md"),
+		filepath.Join("..", "..", "docs", "reference", "agentflow-v1alpha3.md"),
 	} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			contents, err := os.ReadFile(path)
@@ -114,7 +115,7 @@ func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
 		{
 			path: filepath.Join("..", "..", "README.md"),
 			fragments: []string{
-				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2",
+				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3",
 				"every checked-in executable workflow definition under `spec/` and `examples/`",
 				"does not make live model calls",
 			},
@@ -129,8 +130,8 @@ func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
 		{
 			path: filepath.Join("..", "..", "skills", "agentflow-spec", "SKILL.md"),
 			fragments: []string{
-				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2",
-				"../../docs/reference/agentflow-v1alpha2.md", "normalizedExecution",
+				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3",
+				"../../docs/reference/agentflow-v1alpha3.md", "normalizedExecution",
 			},
 		},
 		{

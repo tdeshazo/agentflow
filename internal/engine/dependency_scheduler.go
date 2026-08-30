@@ -117,6 +117,9 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 					return err
 				}
 			}
+			if err := e.requireCompletionEvidence(); err != nil {
+				return err
+			}
 			return e.runCompletion(ctx, "default")
 		}
 		if err := e.runPhase(ctx, next.ID); err != nil {

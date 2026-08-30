@@ -29,6 +29,7 @@ organizes the documentation by purpose:
 - [AgentWorkflow v1alpha1 reference](docs/reference/agentflow-v1alpha1.md)
   documents field semantics.
 - [AgentWorkflow v1alpha2 authoring contract](docs/reference/agentflow-v1alpha2.md)
+- [AgentWorkflow v1alpha3 typed-contract authoring contract](docs/reference/agentflow-v1alpha3.md)
   defines the concise AgentFlow evolution and its dependency/acceptance
   semantics.
 - [v1alpha1 capability matrix](docs/reference/v1alpha1-capability-matrix.md)
@@ -164,6 +165,9 @@ kind: AgentWorkflow
 
 apiVersion: agentflow.dev/v1alpha2
 kind: AgentWorkflow
+
+apiVersion: agentflow.dev/v1alpha3
+kind: AgentWorkflow
 ```
 
 `v1alpha1` is supported in grammar-frozen maintenance mode: decoding,
@@ -179,7 +183,7 @@ conformance suite. The v1alpha2 contract shares the core agent capability
 fields, but intentionally does not claim the full v1alpha1 schema, including
 `spec.defaults.agent` inheritance.
 
-For new workflows that fit its core contract, prefer v1alpha2: portable typed
+For new sequential workflows that fit its core contract, prefer v1alpha2: portable typed
 parameters and conditions, integrity and initialization policy, deterministic
 preconditions, reusable multi-step validation, durable human gates, completion
 assertions, and reset policy sit alongside safe resume, checkpointing, durable
@@ -189,6 +193,12 @@ procedural authoring work. The
 and `agentflow migrate --check -f workflow.yaml` define the
 authority-preserving migration procedure and the cases that must remain on
 v1alpha1 until they are expressible.
+
+Prefer v1alpha3 when one phase must hand a verified artifact or deterministic
+validation evidence to another, when a condition must use typed evidence, or
+when an audit must be runtime-enforced read-only. v1alpha3 preserves v1alpha2
+semantics and introduces only the typed-contract grammar documented in its
+[authoring contract](docs/reference/agentflow-v1alpha3.md).
 
 ## Publishing
 

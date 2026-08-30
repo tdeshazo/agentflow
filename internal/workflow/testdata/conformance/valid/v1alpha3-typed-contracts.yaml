@@ -1,0 +1,43 @@
+apiVersion: agentflow.dev/v1alpha3
+kind: AgentWorkflow
+metadata: {name: typed-contracts-conformance}
+spec:
+  workspace:
+    allowWrites: [src/**]
+  agents:
+    implementer: {runner: codex, model: gpt-5.6-terra, may_commit: true}
+    auditor: {runner: codex, model: gpt-5.6-luna, may_commit: false}
+  validation:
+    implementation-quality:
+      run: test -f src/result.txt
+      produces: [implementation-accepted]
+    audit-quality:
+      run: test -f src/result.txt
+      hard: true
+      produces: [audit-accepted]
+  artifacts:
+    result:
+      type: files
+      paths: [src/result.txt]
+      persistence: workspace
+  evidence:
+    implementation-accepted: {type: validation}
+    audit-accepted: {type: validation}
+  phases:
+    - id: implement
+      actor: implementer
+      prompt: Implement the result.
+      validation: implementation-quality
+      outputs: [result]
+    - id: audit
+      kind: audit
+      actor: auditor
+      prompt: Independently audit the verified result without editing it.
+      validation: audit-quality
+      dependsOn: [implement]
+      readOnly: true
+      inputs: [{artifact: result}, {evidence: implementation-accepted}]
+      ifEvidence: implementation-accepted
+  completion:
+    validation: audit-quality
+    evidence: [audit-accepted]

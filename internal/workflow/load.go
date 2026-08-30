@@ -41,6 +41,9 @@ type Document struct {
 	// V1Alpha2 retains the authored form rather than pretending its concise
 	// contract is a v1alpha1 document.
 	V1Alpha2 *V1Alpha2Workflow
+	// V1Alpha3 retains the typed-contract authoring form. It is separate from
+	// v1alpha2 so adding contracts does not redefine a stable API version.
+	V1Alpha3 *V1Alpha3Workflow
 	// DependencyGraph is the normalized v1alpha2 dependency contract. It is
 	// outside Phase so v1alpha1 continues to reject the unknown dependsOn field.
 	DependencyGraph PhaseDependencyGraph
@@ -138,6 +141,20 @@ func Decode(path string) (*Document, error) {
 			return nil, fmt.Errorf("decode workflow: %w", err)
 		}
 		normalized.V1Alpha2 = &authored
+		return normalized, nil
+	case "agentflow.dev/v1alpha3":
+		if err := rejectV1Alpha2MergeKeys(&root); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
+		}
+		var authored V1Alpha3Workflow
+		if err := decodeKnownBytes(b, &authored); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
+		}
+		authored.File = file
+		normalized, err := normalizeV1Alpha3(&authored, locations)
+		if err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
 		return normalized, nil
 	default:
 		return nil, fmt.Errorf("decode workflow: unsupported apiVersion %q", apiVersion)

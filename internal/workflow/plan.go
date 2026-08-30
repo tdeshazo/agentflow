@@ -23,6 +23,7 @@ type ExpandedPlan struct {
 	SafetyEnforcementPoints    []string             `yaml:"safetyEnforcementPoints"`
 	RecoveryBehavior           []string             `yaml:"recoveryBehavior"`
 	Validations                []PlannedValidation  `yaml:"validations"`
+	TypedContracts             PlannedContracts     `yaml:"typedContracts,omitempty"`
 	DependencyGraph            PhaseDependencyGraph `yaml:"dependencyGraph"`
 	Phases                     []PlannedPhase       `yaml:"phases"`
 	ProgressTransitions        []string             `yaml:"progressTransitions"`
@@ -31,12 +32,34 @@ type ExpandedPlan struct {
 	CompletionContract         []string             `yaml:"completionContract"`
 }
 type PlannedValidation struct {
-	Name            string   `yaml:"name"`
-	Steps           []string `yaml:"steps"`
-	Repair          string   `yaml:"repair"`
-	RepairActor     string   `yaml:"repairActor,omitempty"`
-	RepairReasoning string   `yaml:"repairReasoning,omitempty"`
-	PostRepairSteps []string `yaml:"postRepairSteps,omitempty"`
+	Name             string   `yaml:"name"`
+	Steps            []string `yaml:"steps"`
+	Repair           string   `yaml:"repair"`
+	RepairActor      string   `yaml:"repairActor,omitempty"`
+	RepairReasoning  string   `yaml:"repairReasoning,omitempty"`
+	PostRepairSteps  []string `yaml:"postRepairSteps,omitempty"`
+	ProducesEvidence []string `yaml:"producesEvidence,omitempty"`
+}
+
+// PlannedContracts exposes the typed handoff authority separately from actor
+// prompts and runtime logs. It is empty for v1alpha1/v1alpha2 documents.
+type PlannedContracts struct {
+	Artifacts []PlannedArtifact `yaml:"artifacts,omitempty"`
+	Evidence  []PlannedEvidence `yaml:"evidence,omitempty"`
+}
+
+type PlannedArtifact struct {
+	Name        string   `yaml:"name"`
+	Type        string   `yaml:"type"`
+	Paths       []string `yaml:"paths"`
+	Persistence string   `yaml:"persistence"`
+	Producer    string   `yaml:"producer,omitempty"`
+}
+
+type PlannedEvidence struct {
+	Name       string `yaml:"name"`
+	Type       string `yaml:"type"`
+	Validation string `yaml:"validation,omitempty"`
 }
 
 // PlannedAgent is the resolved executor contract. It exposes inherited
@@ -63,6 +86,10 @@ type PlannedPhase struct {
 	AdvanceProgress bool                 `yaml:"advanceProgress"`
 	Validation      string               `yaml:"validation"`
 	Bookkeeping     []MarkdownTransition `yaml:"bookkeeping,omitempty"`
+	Inputs          []ContractInput      `yaml:"inputs,omitempty"`
+	Outputs         []string             `yaml:"outputs,omitempty"`
+	IfEvidence      string               `yaml:"ifEvidence,omitempty"`
+	ReadOnly        bool                 `yaml:"readOnly,omitempty"`
 	Acceptance      []string             `yaml:"acceptance"`
 }
 
@@ -130,9 +157,23 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		}
 		plan.Validations = append(plan.Validations, PlannedValidation{
 			Name: name, Steps: steps, Repair: repair,
-			RepairActor:     v.OnFailure.Repair.Actor,
-			RepairReasoning: v.OnFailure.Repair.Reasoning,
-			PostRepairSteps: postRepair,
+			RepairActor:      v.OnFailure.Repair.Actor,
+			RepairReasoning:  v.OnFailure.Repair.Reasoning,
+			PostRepairSteps:  postRepair,
+			ProducesEvidence: append([]string(nil), v.ProducesEvidence...),
+		})
+	}
+	for _, name := range sortedKeys(w.Spec.Contracts.Artifacts) {
+		artifact := w.Spec.Contracts.Artifacts[name]
+		plan.TypedContracts.Artifacts = append(plan.TypedContracts.Artifacts, PlannedArtifact{
+			Name: name, Type: artifact.Type, Paths: append([]string(nil), artifact.Paths...), Persistence: artifact.Persistence,
+			Producer: contractArtifactProducer(w.Spec.Phases, name),
+		})
+	}
+	for _, name := range sortedKeys(w.Spec.Contracts.Evidence) {
+		evidence := w.Spec.Contracts.Evidence[name]
+		plan.TypedContracts.Evidence = append(plan.TypedContracts.Evidence, PlannedEvidence{
+			Name: name, Type: evidence.Type, Validation: contractEvidenceProducer(w.Spec.Validation, name),
 		})
 	}
 	for phaseIndex, p := range w.Spec.Phases {
@@ -171,7 +212,9 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			DependsOn: n.DependencyGraph.dependenciesForPhase(phaseIndex), Reasoning: p.Reasoning,
 			RequiresChange: p.RequiresChange, CriterionID: criterionID,
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
-			Bookkeeping: p.Bookkeeping, Acceptance: acceptance,
+			Bookkeeping: p.Bookkeeping, Inputs: append([]ContractInput(nil), p.Inputs...),
+			Outputs: append([]string(nil), p.Outputs...), IfEvidence: p.IfEvidence,
+			ReadOnly: p.ReadOnly, Acceptance: acceptance,
 		})
 		if p.Kind == "criterion" && p.AdvanceProgress {
 			plan.ProgressTransitions = append(plan.ProgressTransitions, p.ID+": engine advances only criterionID after validation")
@@ -223,4 +266,26 @@ func toolUseText(u ToolUse) string {
 		return u.Uses
 	}
 	return u.Uses + " if " + u.If
+}
+
+func contractArtifactProducer(phases []Phase, name string) string {
+	for _, phase := range phases {
+		for _, output := range phase.Outputs {
+			if output == name {
+				return phase.ID
+			}
+		}
+	}
+	return ""
+}
+
+func contractEvidenceProducer(validations map[string]Validation, name string) string {
+	for _, validationName := range sortedKeys(validations) {
+		for _, produced := range validations[validationName].ProducesEvidence {
+			if produced == name {
+				return validationName
+			}
+		}
+	}
+	return ""
 }

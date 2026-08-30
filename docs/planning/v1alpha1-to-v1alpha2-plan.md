@@ -118,6 +118,9 @@ Exit condition: mutation, integrity, validation, repair, resume, human evidence,
 
 ### Phase 4: Add typed contracts
 
+Status: completed in `agentflow.dev/v1alpha3`. Typed contracts are versioned
+separately so the stable v1alpha2 grammar keeps its existing meaning.
+
 This is the largest missing capability that v1alpha1 itself does not solve:
 
 - typed phase inputs and outputs;

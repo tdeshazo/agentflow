@@ -75,6 +75,23 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 	}
 	e.phase = p
 	defer func() { e.phase = nil }()
+	if p.IfEvidence != "" {
+		available, err := e.contractEvidenceAvailable(p, p.IfEvidence)
+		if err != nil {
+			return fmt.Errorf("phase %s typed evidence condition: %w", id, err)
+		}
+		if !available {
+			e.presenter().PhaseSkip(id, "typed evidence condition is false")
+			head, err := e.Repo.Head()
+			if err != nil {
+				return err
+			}
+			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
+				return fmt.Errorf("record skipped phase %s: %w", id, err)
+			}
+			return nil
+		}
+	}
 	if p.If != "" {
 		ok, err := e.bool(p, p.If)
 		if err != nil {
@@ -100,7 +117,7 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("completed phase %s is no longer safe to skip: %w", id, err)
 		}
 		e.presenter().CompletedPhaseSkip(id, p.Label, sha)
-		return nil
+		return e.persistPhaseContractOutputs(p)
 	}
 	if p.Kind == "criterion" && (p.Criterion != "" || p.CriterionID != "") {
 		_, targetText, targetErr := e.phaseCriterion(p)
@@ -169,6 +186,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return fmt.Errorf("phase %s cannot start safely: %w", id, err)
 	}
+	if err := e.validateContractInputs(p); err != nil {
+		return fmt.Errorf("phase %s typed inputs: %w", id, err)
+	}
 	active, err := e.newActivePhase(p.ID)
 	if err != nil {
 		return err
@@ -230,6 +250,9 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 		if !active.ValidationPassed {
 			return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
 		}
+		if err := e.persistPhaseContractOutputs(p); err != nil {
+			return err
+		}
 		return e.requirePhaseCompletion(p)
 	}
 	actions := append([]workflow.PhaseAction{}, e.Workflow.Spec.PhaseDefaults.After...)
@@ -255,6 +278,9 @@ func (e *Engine) finishPhase(ctx context.Context, p *workflow.Phase, active Acti
 	}
 	if !active.ValidationPassed {
 		return fmt.Errorf("phase %s did not run a successful deterministic validation before acceptance", p.ID)
+	}
+	if err := e.persistPhaseContractOutputs(p); err != nil {
+		return err
 	}
 	return e.requirePhaseCompletion(p)
 }
@@ -356,6 +382,9 @@ func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt st
 			}
 			return policyErr
 		}
+		return err
+	}
+	if err := e.assertReadOnlyPhase(p, active.StartCommit); err != nil {
 		return err
 	}
 	// Reconciliation may have recorded the actor that moved HEAD while the
@@ -491,6 +520,21 @@ func (e *Engine) runtimeOwnedActorPrompt(x workflow.Context, agent workflow.Agen
 		return "", err
 	}
 	writePromptList(&contract, "runtime-owned progress files (do not edit)", progressFiles)
+	if p != nil {
+		inputs := make([]string, 0, len(p.Inputs))
+		for _, input := range p.Inputs {
+			if input.Artifact != "" {
+				inputs = append(inputs, "artifact:"+input.Artifact)
+			}
+			if input.Evidence != "" {
+				inputs = append(inputs, "evidence:"+input.Evidence)
+			}
+		}
+		writePromptList(&contract, "verified typed inputs", inputs)
+		if p.ReadOnly {
+			contract.WriteString("read-only audit: do not modify workspace files; the runtime rejects any workspace mutation\n")
+		}
+	}
 
 	if e.effectiveActorCommitPermission(agent) {
 		contract.WriteString("commit authority: allowed; commits created by this actor are permitted but do not establish acceptance\n")
@@ -832,7 +876,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 			if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 				return clearErr
 			}
-			return nil
+			return e.persistContractValidationEvidence(name, p)
 		}
 	}
 	err := e.runToolUses(ctx, v.Steps, p)
@@ -863,7 +907,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 			return clearErr
 		}
-		return nil
+		return e.persistContractValidationEvidence(name, p)
 	}
 	failure := err
 	if persistErr := e.persistValidationFailure(p, name, failure); persistErr != nil {
@@ -937,7 +981,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 		return clearErr
 	}
-	return nil
+	return e.persistContractValidationEvidence(name, p)
 }
 
 func (e *Engine) standaloneCommitSafety(name string) error {

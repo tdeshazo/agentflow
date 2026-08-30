@@ -143,6 +143,7 @@ type runWorkflowSpec struct {
 	Recovery      workflow.Recovery              `json:"Recovery"`
 	Flow          []workflow.FlowStep            `json:"Flow"`
 	Completion    map[string]workflow.Completion `json:"Completion"`
+	Contracts     workflow.ContractSpec          `json:"Contracts"`
 	Defaults      *workflow.AuthoringDefaults    `json:"Defaults,omitempty"`
 }
 
@@ -167,6 +168,7 @@ func runIdentitySpec(spec workflow.Spec) any {
 		Recovery:      spec.Recovery,
 		Flow:          spec.Flow,
 		Completion:    spec.Completion,
+		Contracts:     spec.Contracts,
 	}
 	if !reflect.DeepEqual(spec.Lifecycle, workflow.LifecyclePolicy{}) {
 		lifecycle := spec.Lifecycle
@@ -345,7 +347,7 @@ func (e *Engine) expectedRunIdentity() (RunIdentity, error) {
 		Kind:       identityWorkflow.Kind,
 		Spec:       runIdentitySpec(identityWorkflow.Spec),
 	}
-	if identityWorkflow.APIVersion == "agentflow.dev/v1alpha2" {
+	if usesDependencySchedule(identityWorkflow.APIVersion) {
 		graph := identityWorkflow.DependencyGraph
 		definition.DependencyGraph = &graph
 	}

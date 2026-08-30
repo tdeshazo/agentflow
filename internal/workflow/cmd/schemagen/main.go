@@ -15,7 +15,7 @@ func main() {
 	if err := os.MkdirAll(*out, 0o755); err != nil {
 		fatal(err)
 	}
-	for _, version := range []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2"} {
+	for _, version := range []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3"} {
 		contents, err := workflow.GeneratedSchema(version)
 		if err != nil {
 			fatal(err)

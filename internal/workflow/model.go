@@ -57,6 +57,10 @@ type Spec struct {
 	Recovery      Recovery              `yaml:"recovery"`
 	Flow          []FlowStep            `yaml:"flow"`
 	Completion    map[string]Completion `yaml:"completion"`
+	// Contracts is populated only by the v1alpha3 projection. Keeping it out
+	// of the shared YAML model preserves the grammar-frozen v1alpha1 and the
+	// stable v1alpha2 authoring contracts.
+	Contracts ContractSpec `yaml:"-"`
 	// Defaults is an authoring convenience. Normalize resolves it before an
 	// engine is constructed, so it never weakens the executable contract.
 	Defaults AuthoringDefaults `yaml:"defaults"`
@@ -308,11 +312,14 @@ type ProgressInvariant struct {
 }
 
 type Validation struct {
-	Repair       string        `yaml:"repair"`
-	Steps        []ToolUse     `yaml:"steps"`
-	Dependencies []string      `yaml:"dependencies"`
-	OnFailure    FailurePolicy `yaml:"onFailure"`
-	Failure      string        `yaml:"failure"`
+	Repair       string    `yaml:"repair"`
+	Steps        []ToolUse `yaml:"steps"`
+	Dependencies []string  `yaml:"dependencies"`
+	// ProducesEvidence is a v1alpha3-only typed result emitted after this
+	// validation succeeds. It is not a free-form tool or actor output.
+	ProducesEvidence []string      `yaml:"-"`
+	OnFailure        FailurePolicy `yaml:"onFailure"`
+	Failure          string        `yaml:"failure"`
 }
 type FailurePolicy struct {
 	Strategy          string    `yaml:"strategy"`
@@ -435,10 +442,16 @@ type Phase struct {
 	Bookkeeping    []MarkdownTransition `yaml:"bookkeeping"`
 	RequiresChange bool                 `yaml:"requiresChange"`
 	Validation     string               `yaml:"validation"`
-	If             string               `yaml:"if"`
-	Prompt         string               `yaml:"prompt"`
-	After          []PhaseAction        `yaml:"after"`
-	present        map[string]bool
+	// Inputs and Outputs are v1alpha3-only typed handoffs. They remain outside
+	// the shared YAML model so older API versions reject them strictly.
+	Inputs     []ContractInput `yaml:"-"`
+	Outputs    []string        `yaml:"-"`
+	IfEvidence string          `yaml:"-"`
+	ReadOnly   bool            `yaml:"-"`
+	If         string          `yaml:"if"`
+	Prompt     string          `yaml:"prompt"`
+	After      []PhaseAction   `yaml:"after"`
+	present    map[string]bool
 }
 
 func (p *Phase) UnmarshalYAML(n *yaml.Node) error {
@@ -556,6 +569,39 @@ type Completion struct {
 	AfterCheckpointAssertions []Assertion    `yaml:"afterCheckpointAssertions"`
 	WriteMarker               Marker         `yaml:"writeMarker"`
 	Summary                   Summary        `yaml:"summary"`
+	Evidence                  []string       `yaml:"-"`
+}
+
+// ContractSpec contains versioned, machine-checkable handoff declarations.
+// Artifacts identify workspace content produced by phases; evidence identifies
+// a successful deterministic validation. Neither stores actor prose or logs.
+type ContractSpec struct {
+	Artifacts map[string]Artifact `yaml:"-"`
+	Evidence  map[string]Evidence `yaml:"-"`
+}
+
+// Artifact is a typed, workspace-persisted handoff. The runtime captures the
+// declared paths' content identity after the producer's acceptance gate and
+// verifies that identity immediately before every consumer runs.
+type Artifact struct {
+	Type        string   `yaml:"-"`
+	Paths       []string `yaml:"-"`
+	Persistence string   `yaml:"-"`
+}
+
+// Evidence declares a typed deterministic result. Version v1alpha3 supports
+// validation evidence only; adding other evidence kinds requires a new
+// versioned authoring contract and runtime semantics.
+type Evidence struct {
+	Type string `yaml:"-"`
+}
+
+// ContractInput references exactly one declared artifact or evidence object.
+// It is intentionally not a generic value bag: consumers must state the
+// authority they need rather than derive it from an actor's final message.
+type ContractInput struct {
+	Artifact string `yaml:"-"`
+	Evidence string `yaml:"-"`
 }
 type CompletionStep struct {
 	Uses  string `yaml:"uses"`

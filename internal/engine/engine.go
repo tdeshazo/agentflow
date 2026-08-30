@@ -406,7 +406,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
-	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
+	if usesDependencySchedule(e.Workflow.APIVersion) {
 		// Decode intentionally does not perform semantic validation, and the Go
 		// API accepts normalized workflows directly. Establish the complete
 		// v1alpha2 authority contract before recovery can invoke an actor.
@@ -552,7 +552,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			return err
 		}
 	}
-	if e.Workflow.APIVersion == "agentflow.dev/v1alpha2" {
+	if usesDependencySchedule(e.Workflow.APIVersion) {
 		e.runStage = "schedule"
 		return e.runV1Alpha2Schedule(ctx)
 	}
@@ -566,6 +566,10 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		}
 	}
 	return nil
+}
+
+func usesDependencySchedule(apiVersion string) bool {
+	return apiVersion == "agentflow.dev/v1alpha2" || apiVersion == "agentflow.dev/v1alpha3"
 }
 
 func (e *Engine) startObservation() error {

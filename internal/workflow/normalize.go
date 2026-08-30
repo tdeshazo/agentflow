@@ -6,6 +6,9 @@ import "fmt"
 // executable concepts while preserving the separately modeled v1alpha2
 // dependency graph.
 func NormalizeWorkflow(d *Document) (*Document, error) {
+	if d != nil && d.V1Alpha3 != nil {
+		return normalizeV1Alpha3(d.V1Alpha3, d.Locations)
+	}
 	if d != nil && d.V1Alpha2 != nil {
 		return normalizeV1Alpha2(d.V1Alpha2, d.Locations)
 	}

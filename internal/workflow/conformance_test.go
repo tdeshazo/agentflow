@@ -17,6 +17,7 @@ func TestConformanceCorpus(t *testing.T) {
 		{name: "valid/minimal.yaml", status: Executable},
 		{name: "valid/concise-defaults.yaml", status: Executable},
 		{name: "valid/v1alpha2-concise.yaml", status: Executable},
+		{name: "valid/v1alpha3-typed-contracts.yaml", status: Executable},
 		{name: "unsupported/runtime-surface.yaml", status: Unsupported},
 		{name: "unsupported/allowed-semantic-changes.yaml", status: Unsupported},
 		{name: "unsupported/active-phase-recovery.yaml", status: Unsupported},
