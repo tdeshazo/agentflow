@@ -117,6 +117,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("completed phase %s is no longer safe to skip: %w", id, err)
 		}
 		e.presenter().CompletedPhaseSkip(id, p.Label, sha)
+		if err := e.assertWorkItemAccepted(p); err != nil {
+			return err
+		}
 		return e.persistPhaseContractOutputs(p)
 	}
 	if p.Kind == "criterion" && (p.Criterion != "" || p.CriterionID != "") {
@@ -555,6 +558,9 @@ func (e *Engine) engineOwnedProgressFiles(x workflow.Context, p *workflow.Phase)
 	configured := []string{}
 	if p.AdvanceProgress && e.Workflow.Spec.Progress.Source.Path != "" {
 		configured = append(configured, e.Workflow.Spec.Progress.Source.Path)
+	}
+	if adapter := e.Workflow.Spec.Criteria.MarkdownAdapter; adapter != nil {
+		configured = append(configured, adapter.Path)
 	}
 	for _, transition := range p.Bookkeeping {
 		if transition.Path != "" {

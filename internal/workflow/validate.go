@@ -16,6 +16,9 @@ var identifierPattern = regexp.MustCompile(identifierPatternSource)
 // Validate performs document-only checks. It intentionally does not expand
 // templates, resolve a repository, create Git state, or construct an engine.
 func Validate(d *Document) Result {
+	if d != nil && d.V1Alpha4 != nil {
+		return validateV1Alpha4(d)
+	}
 	if d != nil && d.V1Alpha3 != nil {
 		return validateV1Alpha3(d)
 	}

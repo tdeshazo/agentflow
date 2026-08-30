@@ -1,25 +1,17 @@
 apiVersion: agentflow.dev/v1alpha4
 kind: AgentWorkflow
-metadata:
-  name: representative-criterion-driven-multi-item
-
+metadata: {name: typed-work-items}
 spec:
-  agents:
-    implementer:
-      runner: codex
-      model: gpt-5.6-terra
-      approval: never
-  validation:
-    gate:
-      run: test -f README.md
   workspace:
-    allowWrites: [README.md, progress.md]
+    allowWrites: [src/**, progress.md]
+  agents:
+    implementer: {runner: codex, model: gpt-5.6-terra}
+  validation:
+    quality: {run: test -f src/result.txt}
   criteria:
     items:
-      - id: add-api
-        description: Add the API capability.
-      - id: add-tests
-        description: Add the regression tests.
+      - {id: add-api, description: Add the API capability.}
+      - {id: add-tests, description: Add the regression tests.}
     markdownChecklist:
       path: progress.md
       items:
@@ -30,10 +22,9 @@ spec:
       kind: implementation
       actor: implementer
       prompt: Complete only the assigned work item.
-      validation: gate
+      validation: quality
       advanceWorkItem: true
       forEach:
         workItems: [add-api, add-tests]
         maxItems: 2
-  completion:
-    validation: gate
+  completion: {validation: quality}

@@ -133,6 +133,10 @@ Exit condition: dependent phases never need to scrape final messages or infer st
 
 ### Phase 5: Generalize progress and iteration
 
+Status: completed in `agentflow.dev/v1alpha4`. Typed work items, deterministic
+exact-target advancement, bounded static collection expansion, and an optional
+Markdown presentation adapter are versioned separately from v1alpha3.
+
 Model work items or criteria as typed engine-owned state:
 
 - stable criterion IDs;

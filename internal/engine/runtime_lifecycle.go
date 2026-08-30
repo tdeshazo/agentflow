@@ -27,6 +27,11 @@ func (e *Engine) newActivePhaseFor(p *workflow.Phase) (ActivePhase, error) {
 		return ActivePhase{}, err
 	}
 	active := ActivePhase{PhaseID: p.ID, StartCommit: start, UncheckedBefore: progress.UncheckedCount, CheckedBefore: progress.CheckedTexts()}
+	if len(e.Workflow.Spec.Criteria.Items) != 0 {
+		if err := e.assertWorkItemAdapterMatchesState(); err != nil {
+			return ActivePhase{}, err
+		}
+	}
 	if p.Kind == "criterion" && p.AdvanceProgress {
 		id, _, err := e.phaseCriterion(p)
 		if err != nil {
@@ -42,6 +47,20 @@ func (e *Engine) newActivePhaseFor(p *workflow.Phase) (ActivePhase, error) {
 		active.TargetCriterionID = id
 		active.CriteriaBefore = before
 		active.ProgressItemsBefore = progress.ItemStates()
+	}
+	if p.AdvanceWorkItem {
+		if p.WorkItemID == "" {
+			return ActivePhase{}, fmt.Errorf("phase %s advances an empty work item", p.ID)
+		}
+		if err := e.assertWorkItemPending(p); err != nil {
+			return ActivePhase{}, err
+		}
+		active.TargetWorkItemID = p.WorkItemID
+		if digest, err := e.workItemAdapterDigest(); err != nil {
+			return ActivePhase{}, err
+		} else {
+			active.WorkItemAdapterBefore = digest
+		}
 	}
 	if len(p.Bookkeeping) > 0 {
 		active.BookkeepingStateDigests, err = e.bookkeepingStateDigests(p)
@@ -62,6 +81,9 @@ func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction,
 		actions = append(actions, workflow.PhaseAction{AssertProgressUnchanged: true})
 	}
 	actions = append(actions, workflow.PhaseAction{Validate: validation})
+	if p.AdvanceWorkItem {
+		actions = append(actions, workflow.PhaseAction{AdvanceWorkItem: true})
+	}
 	if p.Kind == "criterion" {
 		if p.AdvanceProgress {
 			actions = append(actions, workflow.PhaseAction{AdvanceProgress: true})
@@ -181,6 +203,11 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 		}
 		if action.AdvanceProgress {
 			if err := e.advanceProgress(phase, active); err != nil {
+				return err
+			}
+		}
+		if action.AdvanceWorkItem {
+			if err := e.advanceWorkItem(phase, active); err != nil {
 				return err
 			}
 		}

@@ -1,0 +1,779 @@
+{
+  "$defs": {
+    "Acknowledgement": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Assertion": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "type": "string"
+        },
+        "progress": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "uses": {
+          "type": "string"
+        },
+        "with": {
+          "$ref": "#/$defs/ToolArguments"
+        }
+      },
+      "type": "object"
+    },
+    "Capture": {
+      "additionalProperties": false,
+      "properties": {
+        "log": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Check": {
+      "additionalProperties": false,
+      "properties": {
+        "ancestor": {
+          "type": "string"
+        },
+        "base": {
+          "type": "string"
+        },
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "descendant": {
+          "type": "string"
+        },
+        "expected": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "require_ancestor_of_head": {
+          "type": "boolean"
+        },
+        "require_branch": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "when": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ChecklistItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanAfter": {
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanGate": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgement": {
+          "$ref": "#/$defs/Acknowledgement"
+        },
+        "after": {
+          "items": {
+            "$ref": "#/$defs/HumanAfter"
+          },
+          "type": "array"
+        },
+        "checklist": {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ChecklistItem"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "$ref": "#/$defs/Marker"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "idempotent_record": {
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "requires": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "$ref": "#/$defs/HumanSkip"
+        },
+        "when": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "HumanSkip": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_when": {
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/Marker"
+        },
+        "record": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "IntegrityRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_semantic_changes": {
+          "allOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution",
+          "x-agentflow-runtime-status": "unsupported"
+        },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "normalize": {
+          "$ref": "#/$defs/Normalize"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Marker": {
+      "additionalProperties": false,
+      "properties": {
+        "record": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Normalize": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "properties": {
+        "default": true,
+        "env": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "capture": {
+          "$ref": "#/$defs/Capture"
+        },
+        "command": {
+          "type": "string"
+        },
+        "commit_if_dirty": {
+          "type": "boolean"
+        },
+        "mutates_workspace": {
+          "type": "boolean"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "require_clean_after": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolArguments": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "regex": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ToolUse": {
+      "additionalProperties": false,
+      "properties": {
+        "if": {
+          "type": "string"
+        },
+        "uses": {
+          "type": "string"
+        },
+        "with": {
+          "$ref": "#/$defs/ToolArguments"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Agent": {
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "may_commit": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "output_last_message": {
+          "type": "boolean"
+        },
+        "runner": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Initialization": {
+      "additionalProperties": false,
+      "properties": {
+        "requireBaseAncestor": {
+          "type": "boolean"
+        },
+        "requireCleanWorkspace": {
+          "type": "boolean"
+        },
+        "requireNamedBranch": {
+          "type": "boolean"
+        },
+        "requireSameBranch": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "descriptive"
+    },
+    "V1Alpha2RepairPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "once": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Reset": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "boolean"
+        },
+        "requireCleanWorkspace": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Workspace": {
+      "additionalProperties": false,
+      "properties": {
+        "allowWrites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "initialization": {
+          "$ref": "#/$defs/V1Alpha2Initialization"
+        },
+        "integrity": {
+          "items": {
+            "$ref": "#/$defs/IntegrityRule"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha3Artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "persistence": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha3Completion": {
+      "additionalProperties": false,
+      "properties": {
+        "assertions": {
+          "items": {
+            "$ref": "#/$defs/Assertion"
+          },
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha3ContractInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha3Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha3Validation": {
+      "additionalProperties": false,
+      "properties": {
+        "dependencies": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "hard": {
+          "type": "boolean"
+        },
+        "produces": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "repair": {
+          "$ref": "#/$defs/V1Alpha2RepairPolicy"
+        },
+        "run": {
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/ToolUse"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha4Criteria": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/WorkItem"
+          },
+          "type": "array"
+        },
+        "markdownChecklist": {
+          "$ref": "#/$defs/V1Alpha4MarkdownChecklistAdapter"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha4ForEach": {
+      "additionalProperties": false,
+      "properties": {
+        "maxItems": {
+          "type": "integer"
+        },
+        "workItems": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha4MarkdownChecklistAdapter": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha4Phase": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/V1Alpha2Agent"
+            }
+          ]
+        },
+        "advanceWorkItem": {
+          "type": "boolean"
+        },
+        "dependsOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forEach": {
+          "$ref": "#/$defs/V1Alpha4ForEach"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "ifEvidence": {
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/V1Alpha3ContractInput"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "readOnly": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": "string"
+        },
+        "requiresChange": {
+          "type": "boolean"
+        },
+        "validation": {
+          "type": "string"
+        },
+        "workItem": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha4Spec": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha2Agent"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
+          "type": "object"
+        },
+        "artifacts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha3Artifact"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
+          "type": "object"
+        },
+        "completion": {
+          "$ref": "#/$defs/V1Alpha3Completion"
+        },
+        "criteria": {
+          "$ref": "#/$defs/V1Alpha4Criteria"
+        },
+        "evidence": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha3Evidence"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
+          "type": "object"
+        },
+        "humanGates": {
+          "items": {
+            "$ref": "#/$defs/HumanGate"
+          },
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Parameter"
+          },
+          "type": "object"
+        },
+        "phases": {
+          "items": {
+            "$ref": "#/$defs/V1Alpha4Phase"
+          },
+          "type": "array"
+        },
+        "preconditions": {
+          "items": {
+            "$ref": "#/$defs/Check"
+          },
+          "type": "array"
+        },
+        "reset": {
+          "$ref": "#/$defs/V1Alpha2Reset"
+        },
+        "tools": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Tool"
+          },
+          "type": "object"
+        },
+        "validation": {
+          "additionalProperties": {
+            "$ref": "#/$defs/V1Alpha3Validation"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$"
+          },
+          "type": "object"
+        },
+        "workspace": {
+          "$ref": "#/$defs/V1Alpha2Workspace"
+        }
+      },
+      "type": "object",
+      "x-agentflow-field-classification": "executable"
+    },
+    "WorkItem": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://agentflow.dev/schema/v1alpha4.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from the strict Go decoder. Run agentflow validate for source-aware semantic and runtime-support diagnostics.",
+  "properties": {
+    "apiVersion": {
+      "const": "agentflow.dev/v1alpha4"
+    },
+    "kind": {
+      "const": "AgentWorkflow"
+    },
+    "metadata": {
+      "$ref": "#/$defs/V1Alpha2Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/V1Alpha4Spec"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "AgentFlow v1alpha4 executable authoring contract",
+  "type": "object",
+  "x-agentflow-validation": {
+    "semantic-validator": "workflow.Validate",
+    "strict-decoder": "workflow.Decode",
+    "unknown-fields": "rejected",
+    "unsupported-construct": "reported before execution"
+  }
+}

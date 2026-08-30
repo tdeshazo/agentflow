@@ -1,7 +1,7 @@
 # Go interpreter
 
-AgentFlow includes an experimental Go interpreter for the executable cores of
-`agentflow.dev/v1alpha1` and the concise `agentflow.dev/v1alpha2` contract.
+AgentFlow includes an experimental Go interpreter for `agentflow.dev/v1alpha1`
+and the successor contracts through `agentflow.dev/v1alpha4`.
 
 The runtime is intentionally conservative: implemented constructs execute, while
 unknown preconditions, tools, assertions, or template expressions fail closed.
@@ -149,7 +149,7 @@ Runtime parameters can be overridden with repeated `--set key=value` flags.
 Environment-backed parameter defaults continue to work through the workflow.
 
 `plan --expanded` validates the authored document, normalizes concise defaults
-or the v1alpha2 form, and rejects invalid or unsupported runtime surfaces before
+or successor authoring forms, and rejects invalid or unsupported runtime surfaces before
 building the plan; it does not open a repository or invoke actors/tools. Its YAML output exposes
 the resolved lifecycle and executor defaults, recovery, safety boundaries
 (including per-invocation `may_commit` enforcement after provider errors),
@@ -543,6 +543,8 @@ The current runtime supports the following executable core:
 - Markdown checklist progress and one-criterion progress invariants;
 - engine-owned criterion advancement by stable `criterionID`, with durable
   before-state and exact-delta enforcement;
+- v1alpha4 typed work items with durable exact-target advancement, bounded
+  static collection expansion, and an optional Markdown checklist adapter;
 - actor-less, durable Markdown checklist/status/index bookkeeping transitions
   that preserve non-bookkeeping content byte-for-byte;
 - first-unchecked progress selection and bounded next-unchecked loops;

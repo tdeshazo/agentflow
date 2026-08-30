@@ -22,6 +22,8 @@ func GeneratedSchema(apiVersion string) ([]byte, error) {
 		root = reflect.TypeFor[V1Alpha2Workflow]()
 	case v1alpha3APIVersion:
 		root = reflect.TypeFor[V1Alpha3Workflow]()
+	case v1alpha4APIVersion:
+		root = reflect.TypeFor[V1Alpha4Workflow]()
 	default:
 		return nil, fmt.Errorf("unsupported workflow schema version %q", apiVersion)
 	}
@@ -120,7 +122,7 @@ func (g *schemaGenerator) object(t reflect.Type) map[string]any {
 	switch t.Name() {
 	case "Metadata", "V1Alpha2Metadata", "Source":
 		result["x-agentflow-field-classification"] = "descriptive"
-	case "Spec", "V1Alpha2Spec", "V1Alpha3Spec":
+	case "Spec", "V1Alpha2Spec", "V1Alpha3Spec", "V1Alpha4Spec":
 		result["x-agentflow-field-classification"] = "executable"
 	}
 	return result
@@ -178,6 +180,8 @@ func namedMapField(owner, field string) bool {
 	case "V1Alpha2Spec":
 		return field == "Agents" || field == "Validation"
 	case "V1Alpha3Spec":
+		return field == "Agents" || field == "Validation" || field == "Artifacts" || field == "Evidence"
+	case "V1Alpha4Spec":
 		return field == "Agents" || field == "Validation" || field == "Artifacts" || field == "Evidence"
 	case "StateRecords":
 		return field == "Integrity"

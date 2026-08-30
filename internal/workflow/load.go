@@ -44,6 +44,9 @@ type Document struct {
 	// V1Alpha3 retains the typed-contract authoring form. It is separate from
 	// v1alpha2 so adding contracts does not redefine a stable API version.
 	V1Alpha3 *V1Alpha3Workflow
+	// V1Alpha4 retains typed, engine-owned criteria and bounded collection
+	// expansion separately from v1alpha3's contract grammar.
+	V1Alpha4 *V1Alpha4Workflow
 	// DependencyGraph is the normalized v1alpha2 dependency contract. It is
 	// outside Phase so v1alpha1 continues to reject the unknown dependsOn field.
 	DependencyGraph PhaseDependencyGraph
@@ -152,6 +155,20 @@ func Decode(path string) (*Document, error) {
 		}
 		authored.File = file
 		normalized, err := normalizeV1Alpha3(&authored, locations)
+		if err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", err)
+		}
+		return normalized, nil
+	case "agentflow.dev/v1alpha4":
+		if err := rejectV1Alpha2MergeKeys(&root); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
+		}
+		var authored V1Alpha4Workflow
+		if err := decodeKnownBytes(b, &authored); err != nil {
+			return nil, fmt.Errorf("decode workflow: %w", sourceAwareYAMLError(err, &root))
+		}
+		authored.File = file
+		normalized, err := normalizeV1Alpha4(&authored, locations)
 		if err != nil {
 			return nil, fmt.Errorf("decode workflow: %w", err)
 		}

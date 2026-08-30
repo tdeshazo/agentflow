@@ -144,6 +144,7 @@ type runWorkflowSpec struct {
 	Flow          []workflow.FlowStep            `json:"Flow"`
 	Completion    map[string]workflow.Completion `json:"Completion"`
 	Contracts     workflow.ContractSpec          `json:"Contracts"`
+	Criteria      workflow.CriteriaSpec          `json:"Criteria"`
 	Defaults      *workflow.AuthoringDefaults    `json:"Defaults,omitempty"`
 }
 
@@ -169,6 +170,7 @@ func runIdentitySpec(spec workflow.Spec) any {
 		Flow:          spec.Flow,
 		Completion:    spec.Completion,
 		Contracts:     spec.Contracts,
+		Criteria:      spec.Criteria,
 	}
 	if !reflect.DeepEqual(spec.Lifecycle, workflow.LifecyclePolicy{}) {
 		lifecycle := spec.Lifecycle

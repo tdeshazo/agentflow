@@ -103,6 +103,11 @@ type ActivePhase struct {
 	TargetCriterionID       string                       `json:"target_criterion_id,omitempty"`
 	ProgressAdvancePending  bool                         `json:"progress_advance_pending,omitempty"`
 	ProgressAdvanced        bool                         `json:"progress_advanced,omitempty"`
+	WorkItemAdvancePending  bool                         `json:"work_item_advance_pending,omitempty"`
+	WorkItemAdvanced        bool                         `json:"work_item_advanced,omitempty"`
+	TargetWorkItemID        string                       `json:"target_work_item_id,omitempty"`
+	WorkItemAdapterBefore   string                       `json:"work_item_adapter_before,omitempty"`
+	WorkItemAdapterAfter    string                       `json:"work_item_adapter_after,omitempty"`
 	BookkeepingPending      bool                         `json:"bookkeeping_pending,omitempty"`
 	BookkeepingApplied      bool                         `json:"bookkeeping_applied,omitempty"`
 	BookkeepingStateDigests map[string][]string          `json:"bookkeeping_state_digests,omitempty"`
@@ -569,7 +574,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 }
 
 func usesDependencySchedule(apiVersion string) bool {
-	return apiVersion == "agentflow.dev/v1alpha2" || apiVersion == "agentflow.dev/v1alpha3"
+	return apiVersion == "agentflow.dev/v1alpha2" || apiVersion == "agentflow.dev/v1alpha3" || apiVersion == "agentflow.dev/v1alpha4"
 }
 
 func (e *Engine) startObservation() error {

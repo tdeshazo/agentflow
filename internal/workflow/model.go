@@ -61,6 +61,10 @@ type Spec struct {
 	// of the shared YAML model preserves the grammar-frozen v1alpha1 and the
 	// stable v1alpha2 authoring contracts.
 	Contracts ContractSpec `yaml:"-"`
+	// Criteria is populated only by the v1alpha4 projection. Unlike the legacy
+	// Progress field, its completion state is runtime-owned and has no source
+	// file representation.
+	Criteria CriteriaSpec `yaml:"-"`
 	// Defaults is an authoring convenience. Normalize resolves it before an
 	// engine is constructed, so it never weakens the executable contract.
 	Defaults AuthoringDefaults `yaml:"defaults"`
@@ -311,6 +315,23 @@ type ProgressInvariant struct {
 	NoOtherMayClose       bool `yaml:"no_other_criterion_may_close"`
 }
 
+// CriteriaSpec describes typed, engine-owned work items. Markdown is an
+// optional presentation adapter; it never supplies authoritative state.
+type CriteriaSpec struct {
+	Items           []WorkItem                `yaml:"-"`
+	MarkdownAdapter *MarkdownChecklistAdapter `yaml:"-"`
+}
+
+type WorkItem struct {
+	ID          string `yaml:"id"`
+	Description string `yaml:"description"`
+}
+
+type MarkdownChecklistAdapter struct {
+	Path  string            `yaml:"path"`
+	Items map[string]string `yaml:"items"`
+}
+
 type Validation struct {
 	Repair       string    `yaml:"repair"`
 	Steps        []ToolUse `yaml:"steps"`
@@ -377,6 +398,7 @@ type PhaseAction struct {
 	AssertProgressUnchanged                  bool               `yaml:"-"`
 	AdvanceProgress                          bool               `yaml:"-"`
 	ApplyBookkeeping                         bool               `yaml:"-"`
+	AdvanceWorkItem                          bool               `yaml:"-"`
 	MarkPhaseCompleteFlag                    bool               `yaml:"mark_phase_complete"`
 	RunRepairPolicy                          string             `yaml:"run_repair_policy"`
 	IfStillIncomplete                        IncompleteAction   `yaml:"if_still_incomplete"`
@@ -448,10 +470,15 @@ type Phase struct {
 	Outputs    []string        `yaml:"-"`
 	IfEvidence string          `yaml:"-"`
 	ReadOnly   bool            `yaml:"-"`
-	If         string          `yaml:"if"`
-	Prompt     string          `yaml:"prompt"`
-	After      []PhaseAction   `yaml:"after"`
-	present    map[string]bool
+	// WorkItemID and AdvanceWorkItem are v1alpha4-only. They deliberately do
+	// not reuse v1alpha1 criterion fields, whose semantics are coupled to a
+	// workspace-derived Markdown progress source.
+	WorkItemID      string        `yaml:"-"`
+	AdvanceWorkItem bool          `yaml:"-"`
+	If              string        `yaml:"if"`
+	Prompt          string        `yaml:"prompt"`
+	After           []PhaseAction `yaml:"after"`
+	present         map[string]bool
 }
 
 func (p *Phase) UnmarshalYAML(n *yaml.Node) error {

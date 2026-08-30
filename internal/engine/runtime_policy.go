@@ -103,7 +103,7 @@ func (e *Engine) runtimeOwnsPhaseLifecycle(p *workflow.Phase) bool {
 	if p == nil {
 		return false
 	}
-	if p.AdvanceProgress || len(p.Bookkeeping) > 0 {
+	if p.AdvanceProgress || p.AdvanceWorkItem || len(p.Bookkeeping) > 0 {
 		// Engine-owned transitions have a fixed ordering relative to validation,
 		// durable active state, and checkpointing; they cannot be delegated to a
 		// legacy procedural action list.

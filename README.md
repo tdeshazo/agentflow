@@ -32,6 +32,9 @@ organizes the documentation by purpose:
 - [AgentWorkflow v1alpha3 typed-contract authoring contract](docs/reference/agentflow-v1alpha3.md)
   defines the concise AgentFlow evolution and its dependency/acceptance
   semantics.
+- [AgentWorkflow v1alpha4 work-item authoring contract](docs/reference/agentflow-v1alpha4.md)
+  defines typed criteria, bounded collection expansion, and the optional
+  Markdown checklist adapter.
 - [v1alpha1 capability matrix](docs/reference/v1alpha1-capability-matrix.md)
   defines the frozen API's deterministic successor dispositions.
 - [Go runtime reference](docs/reference/runtime.md) documents the current
@@ -168,6 +171,9 @@ kind: AgentWorkflow
 
 apiVersion: agentflow.dev/v1alpha3
 kind: AgentWorkflow
+
+apiVersion: agentflow.dev/v1alpha4
+kind: AgentWorkflow
 ```
 
 `v1alpha1` is supported in grammar-frozen maintenance mode: decoding,
@@ -199,6 +205,11 @@ validation evidence to another, when a condition must use typed evidence, or
 when an audit must be runtime-enforced read-only. v1alpha3 preserves v1alpha2
 semantics and introduces only the typed-contract grammar documented in its
 [authoring contract](docs/reference/agentflow-v1alpha3.md).
+
+Prefer v1alpha4 when a finite set of work items needs engine-owned exact-target
+advancement or a bounded collection phase. Markdown checklists are optional
+presentation adapters, not workflow progress authority; see its
+[authoring contract](docs/reference/agentflow-v1alpha4.md).
 
 ## Publishing
 

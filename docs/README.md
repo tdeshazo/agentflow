@@ -20,8 +20,10 @@ the section that matches the question you are trying to answer:
 
 - To understand who may act and who may accept work, read
   [Execution authority](architecture/execution-authority.md).
-- To author or audit a workflow with typed handoffs, start with the
-  [AgentWorkflow v1alpha3 authoring contract](reference/agentflow-v1alpha3.md).
+- To author or audit a workflow with typed handoffs or typed work items, start
+  with the [AgentWorkflow v1alpha4 work-item authoring contract](reference/agentflow-v1alpha4.md).
+  The [AgentWorkflow v1alpha3 authoring contract](reference/agentflow-v1alpha3.md)
+  remains the typed-handoff contract.
   The [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)
   remains the concise sequential contract. The
   [AgentWorkflow v1alpha1 field guide](reference/agentflow-v1alpha1.md) and

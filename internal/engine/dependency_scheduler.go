@@ -112,6 +112,9 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 			if !complete {
 				return fmt.Errorf("dependency scheduler has no ready phase without durable accepted dependency evidence")
 			}
+			if err := e.requireAllWorkItems(); err != nil {
+				return err
+			}
 			for _, gate := range e.Workflow.Spec.HumanGates {
 				if err := e.runHuman(ctx, gate.ID); err != nil {
 					return err

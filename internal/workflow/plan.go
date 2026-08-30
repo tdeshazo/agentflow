@@ -24,6 +24,7 @@ type ExpandedPlan struct {
 	RecoveryBehavior           []string             `yaml:"recoveryBehavior"`
 	Validations                []PlannedValidation  `yaml:"validations"`
 	TypedContracts             PlannedContracts     `yaml:"typedContracts,omitempty"`
+	Criteria                   PlannedCriteria      `yaml:"criteria,omitempty"`
 	DependencyGraph            PhaseDependencyGraph `yaml:"dependencyGraph"`
 	Phases                     []PlannedPhase       `yaml:"phases"`
 	ProgressTransitions        []string             `yaml:"progressTransitions"`
@@ -46,6 +47,13 @@ type PlannedValidation struct {
 type PlannedContracts struct {
 	Artifacts []PlannedArtifact `yaml:"artifacts,omitempty"`
 	Evidence  []PlannedEvidence `yaml:"evidence,omitempty"`
+}
+
+// PlannedCriteria exposes runtime-owned item completion and any presentation
+// adapter without making the adapter part of the executable authority.
+type PlannedCriteria struct {
+	Items           []WorkItem                `yaml:"items,omitempty"`
+	MarkdownAdapter *MarkdownChecklistAdapter `yaml:"markdownAdapter,omitempty"`
 }
 
 type PlannedArtifact struct {
@@ -90,6 +98,8 @@ type PlannedPhase struct {
 	Outputs         []string             `yaml:"outputs,omitempty"`
 	IfEvidence      string               `yaml:"ifEvidence,omitempty"`
 	ReadOnly        bool                 `yaml:"readOnly,omitempty"`
+	WorkItemID      string               `yaml:"workItemID,omitempty"`
+	AdvanceWorkItem bool                 `yaml:"advanceWorkItem,omitempty"`
 	Acceptance      []string             `yaml:"acceptance"`
 }
 
@@ -129,6 +139,16 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		},
 		RecoveryBehavior:   []string{"completed commit marker wins over stale active state", "actor_completed resumes deterministic acceptance without replaying the actor", "otherwise validate retained work before rerunning the same phase actor", "safety failures are terminal and never repaired by an actor"},
 		CheckpointBehavior: "runtime checkpoints accepted allowed dirty work; its commit is runtime-owned, not an actor may_commit exercise; it rechecks lineage, integrity, scope, and cleanliness before the commit-valued phase marker",
+	}
+	if len(w.Spec.Criteria.Items) != 0 {
+		plan.Criteria.Items = append([]WorkItem(nil), w.Spec.Criteria.Items...)
+		if adapter := w.Spec.Criteria.MarkdownAdapter; adapter != nil {
+			items := make(map[string]string, len(adapter.Items))
+			for id, label := range adapter.Items {
+				items[id] = label
+			}
+			plan.Criteria.MarkdownAdapter = &MarkdownChecklistAdapter{Path: adapter.Path, Items: items}
+		}
 	}
 	for _, name := range sortedKeys(w.Spec.Agents) {
 		a := w.Spec.Agents[name]
@@ -191,6 +211,9 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			}
 			acceptance = append(acceptance, "deterministic validation")
 		}
+		if p.AdvanceWorkItem {
+			acceptance = append(acceptance, "advance exact typed work item")
+		}
 		if p.Kind == "criterion" {
 			acceptance = append(acceptance, "assert declared progress transition")
 		}
@@ -214,10 +237,13 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
 			Bookkeeping: p.Bookkeeping, Inputs: append([]ContractInput(nil), p.Inputs...),
 			Outputs: append([]string(nil), p.Outputs...), IfEvidence: p.IfEvidence,
-			ReadOnly: p.ReadOnly, Acceptance: acceptance,
+			ReadOnly: p.ReadOnly, WorkItemID: p.WorkItemID, AdvanceWorkItem: p.AdvanceWorkItem, Acceptance: acceptance,
 		})
 		if p.Kind == "criterion" && p.AdvanceProgress {
 			plan.ProgressTransitions = append(plan.ProgressTransitions, p.ID+": engine advances only criterionID after validation")
+		}
+		if p.AdvanceWorkItem {
+			plan.ProgressTransitions = append(plan.ProgressTransitions, p.ID+": engine advances only workItemID after validation")
 		}
 	}
 	for _, gate := range w.Spec.HumanGates {
@@ -253,7 +279,7 @@ func runtimeOwnsPhaseLifecycle(w *Workflow, p Phase) bool {
 	if lifecycle.Policy != "" || lifecycle.Validation != "" || lifecycle.Checkpoint != "" {
 		return true
 	}
-	if p.AdvanceProgress || len(p.Bookkeeping) > 0 {
+	if p.AdvanceProgress || p.AdvanceWorkItem || len(p.Bookkeeping) > 0 {
 		return true
 	}
 	return len(w.Spec.PhaseDefaults.Before) == 0 &&
