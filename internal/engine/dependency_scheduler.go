@@ -112,6 +112,11 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 			if !complete {
 				return fmt.Errorf("dependency scheduler has no ready phase without durable accepted dependency evidence")
 			}
+			for _, gate := range e.Workflow.Spec.HumanGates {
+				if err := e.runHuman(ctx, gate.ID); err != nil {
+					return err
+				}
+			}
 			return e.runCompletion(ctx, "default")
 		}
 		if err := e.runPhase(ctx, next.ID); err != nil {
@@ -147,7 +152,7 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 			return fmt.Errorf("duplicate phase id %q", phase.ID)
 		}
 		phaseIndexes[phase.ID] = i
-		if phase.Kind != "implementation" {
+		if phase.Kind != "implementation" && phase.Kind != "audit" {
 			return fmt.Errorf("phase %q has unsupported v1alpha2 kind %q", phase.ID, phase.Kind)
 		}
 		if phase.Actor == "" {
@@ -261,10 +266,10 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 			if !exists {
 				return fmt.Errorf("validation %q references unknown tool %q", name, step.Uses)
 			}
-			if tool.Type != "shell" {
-				return fmt.Errorf("validation %q references non-shell tool %q (type %q)", name, step.Uses, tool.Type)
+			if tool.Type == "" {
+				return fmt.Errorf("validation %q references tool %q without a type", name, step.Uses)
 			}
-			if strings.TrimSpace(tool.Command) == "" {
+			if tool.Type == "shell" && strings.TrimSpace(tool.Command) == "" {
 				return fmt.Errorf("validation %q references shell tool %q with an empty command", name, step.Uses)
 			}
 		}

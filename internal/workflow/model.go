@@ -124,6 +124,10 @@ type StateInitialize struct {
 	Capture                             any  `yaml:"capture"`
 }
 type StateReset struct {
+	// Allowed is an authoring-contract projection used by v1alpha2. It is not
+	// YAML-addressable in the shared legacy model, so v1alpha1 remains grammar
+	// frozen while the runtime can still enforce an explicit reset policy.
+	Allowed                             *bool  `yaml:"-"`
 	When                                string `yaml:"when"`
 	RequireCleanWorkspace               bool   `yaml:"require_clean_workspace"`
 	RequireCleanImplementationWorkspace bool   `yaml:"require_clean_implementation_workspace"`

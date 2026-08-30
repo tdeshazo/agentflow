@@ -103,7 +103,7 @@ func TestMigrationCheckClassifiesRepresentativesWithoutRewriting(t *testing.T) {
 	}
 	for path, want := range map[string]MigrationClass{
 		"spec.agents.worker.runner": DirectSuccessorCapability,
-		"spec.tools.scope.type":     GeneralizedReplacement,
+		"spec.tools.scope.type":     DirectSuccessorCapability,
 		"spec.phases[0].prompt":     DirectSuccessorCapability,
 		"spec.flow[0].phase":        GeneralizedReplacement,
 	} {

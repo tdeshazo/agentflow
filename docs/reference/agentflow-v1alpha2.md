@@ -37,12 +37,19 @@ AgentFlow's existing executable authority concepts wherever possible:
 | v1alpha2 authoring field | Existing authority concept |
 | --- | --- |
 | `workspace.allowWrites` | Workspace mutation allowlist/policy |
+| `workspace.integrity` | Protected-resource integrity policy |
+| `workspace.initialization` | Observable clean-workspace and lineage policy |
+| `parameters` and phase/gate `if` | Typed template context and bounded conditions |
 | `agents.<name>` | Named actor capability |
 | Mapping-valued `phases[].actor` | Phase-local actor capability lowered to an internal named agent |
-| `validation.<name>.run` | Deterministic shell validation gate |
+| `tools` and `validation.<name>.steps` | Reusable deterministic tool sequence |
+| `validation.<name>.run` | Shorthand deterministic shell validation gate |
 | `validation.<name>.repair.once` | One bounded repair attempt followed by the same validation |
 | `phases[].validation` | Phase acceptance validation |
 | `phases[].dependsOn` | Accepted-phase dependency evidence |
+| `humanGates` | Durable human acknowledgement evidence |
+| `completion.assertions` | Shared deterministic completion assertions |
+| `reset` | Explicit reset permission and cleanliness policy |
 | `completion.validation` | Deterministic final validation gate |
 
 Normalization must preserve the authority boundary: actors can attempt work,
@@ -126,6 +133,26 @@ An actor may change only what the normalized workspace policy permits. A
 successful actor return, a commit, or a claim in actor output cannot widen the
 allowlist. Scope and protected-resource checks remain part of the existing
 acceptance boundary.
+
+`workspace.integrity` protects paths through the shared `exact-hash`,
+`group-exact-hash`, and `normalized-hash` rules. `workspace.initialization`
+selects only observable repository requirements: clean workspace, named
+branch, base ancestry, and same-branch continuity. State-record names, Git ref
+layout, recovery actions, and checkpoint sequencing remain runtime-owned.
+
+### Parameters, conditions, and preconditions
+
+`spec.parameters` is a map of named `string`, `path`, `boolean`, or `integer`
+values. Defaults are type-checked and `env` names are validated. Conditions on
+`phases[].if` and `humanGates[].if` use the bounded typed expression language,
+for example `{{ parameters.audit_enabled }}`; they never read actor prose.
+
+`spec.preconditions` provides deterministic fail-fast checks before actor
+execution. The portable types are `git-repository`, `commands-exist`,
+`files-exist`, `file-contains`, `git-object-exists`, `git-ancestor`,
+`git-lineage`, `git-current-branch-equals`, and `workspace-integrity`.
+`scope: initialization` runs only while establishing new workflow state;
+`always` (or omission) runs for each execution attempt.
 
 ### `spec.agents`
 
@@ -217,13 +244,18 @@ inline-agent fields fail closed.
 ### `spec.validation`
 
 `validation` remains singular and is a map of named deterministic acceptance
-gates. Each v1alpha2 validation has a `run` command interpreted as a shell
-validation. The command's exit status and deterministic validation evidence,
-not actor output, determine whether the gate passes.
+gates. A validation may use the concise `run` shell command, an ordered
+`steps` list of reusable tools, or both. The command or steps' exit status and
+deterministic validation evidence, not actor output, determine whether the
+gate passes.
 
 The `run` command is deterministic validation by contract: it is a repository-
 owned check whose result can be repeated against the relevant workspace. A
-validation without a usable `run` command is invalid.
+validation requires at least one of `run` or `steps`. `dependencies` lists
+workspace-relative inputs for durable evidence. `hard: true` declares a gate
+that cannot also request repair. Supported tools are `shell`,
+`workspace-policy`, `git-checkpoint`, `file-regex`, and
+`markdown-checklist-progress`; tool references are validated before execution.
 
 #### Bounded repair
 
@@ -250,6 +282,12 @@ terminal and do not become repair invitations.
   v1alpha2 agent schema;
 - `prompt`, describing the bounded work intent; and
 - `validation`, naming a declared deterministic validation.
+
+`kind` is either `implementation` (the default) or `audit`. `reasoning` is
+explicit task intent. `requiresChange` defaults to true for implementation and
+false for audit, and may be explicitly set when a task needs the other
+acceptance rule. `if` conditionally selects a graph node without restoring
+procedural flow syntax.
 
 `dependsOn` is optional. Its values are phase IDs. It describes readiness, not
 mere presentation order:
@@ -324,6 +362,25 @@ The repair actor's `may_commit` authority is evaluated for that repair
 invocation. It is not borrowed from the actor of the phase that preceded the
 completion transition.
 
+### Human gates, completion assertions, and reset
+
+`humanGates` runs after the dependency graph accepts all phases and before
+completion. Each gate has a stable ID, optional accepted-phase `requires`, an
+optional bounded `if` condition, instructions/checklist, and an `exact-text`
+acknowledgement. The acknowledgement is persisted as durable evidence, so a
+restart does not ask again. Actor output cannot satisfy a gate.
+
+`completion.assertions` uses the shared deterministic assertion vocabulary:
+`workspace-integrity`, `integrity-baseline-unchanged`,
+`implementation-workspace-clean`, or an assertion-compatible declared tool.
+Assertions run before final validation and the terminal marker.
+
+`reset.allow` explicitly permits or denies reset for a v1alpha2 workflow;
+when false, `agentflow reset` fails without changing durable state.
+`reset.requireCleanWorkspace` additionally refuses reset for a dirty
+implementation workspace. Record deletion and quarantine cleanup remain
+runtime-owned.
+
 ## Dependency-derived execution
 
 `spec.flow` is optional in v1alpha2. When it is omitted, execution is derived
@@ -358,6 +415,8 @@ The following are normative for v1alpha2:
 - Repair actor success never constitutes acceptance.
 - Dependency readiness requires deterministic acceptance of every dependency.
 - Final completion requires the distinct named completion validation.
+- Completion assertions and required human gates pass before the terminal
+  completion marker is written.
 - Structural ambiguity or an unsafe reference fails closed.
 
 These rules are authoring semantics, not prompt conventions. Validation

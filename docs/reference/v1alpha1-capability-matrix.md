@@ -32,12 +32,13 @@ The five representative workflows establish the Phase 1 baseline:
 | --- | --- | --- |
 | [Simple implementation](../../examples/representative/simple-implementation.agent-workflow.yaml) | v1alpha2 | Successor core |
 | [Implementation plus independent audit](../../examples/representative/implementation-independent-audit.agent-workflow.yaml) | v1alpha2 | Successor core |
-| [AgentFlow self-hosting](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | v1alpha2 | Successor core baseline |
-| [Human-gated release](../../examples/representative/human-gated-release.agent-workflow.yaml) | v1alpha1 | Compatibility until durable human gates land |
+| [AgentFlow self-hosting](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | v1alpha2 | Phase 2 portable safety/control |
+| [Human-gated release](../../examples/representative/human-gated-release.agent-workflow.yaml) | v1alpha2 | Phase 2 durable human gate |
 | [Criterion-driven multi-item workflow](../../examples/representative/criterion-driven-multi-item.agent-workflow.yaml) | v1alpha1 | Compatibility until typed engine-owned work items land |
 
-These are migration representatives, not a claim that Phase 2 safety and
-control capabilities are already in v1alpha2. Follow the
-[convergence plan](../planning/v1alpha1-to-v1alpha2-plan.md) for the required
-successor work and [migration guide](../guides/migrating-v1alpha1-to-v1alpha2.md)
-for authority-preserving source migration.
+These are migration representatives. The self-hosting workflow demonstrates
+Phase 2 portable safety/control without lifecycle, recovery, state-record, or
+explicit-flow plumbing. Follow the
+[convergence plan](../planning/v1alpha1-to-v1alpha2-plan.md) and
+[migration guide](../guides/migrating-v1alpha1-to-v1alpha2.md) for
+authority-preserving source migration.

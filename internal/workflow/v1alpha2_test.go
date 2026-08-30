@@ -59,6 +59,109 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2PhaseTwoAuthoritiesNormalizeWithoutProceduralFields(t *testing.T) {
+	document := `
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata: {name: phase-two}
+spec:
+  parameters:
+    release:
+      type: boolean
+      default: true
+  workspace:
+    allowWrites: [internal/**, docs/**]
+    integrity:
+      - {id: instructions, mode: exact-hash, paths: [AGENTS.md]}
+    initialization:
+      requireCleanWorkspace: true
+      requireNamedBranch: true
+      requireBaseAncestor: true
+      requireSameBranch: true
+  tools:
+    scope: {type: workspace-policy, policy: spec.workspace.mutationPolicy}
+    unit: {type: shell, command: go test ./internal/workflow}
+  preconditions:
+    - {id: repository, type: git-repository, scope: initialization}
+  agents:
+    implementer: {runner: codex, model: gpt-5.6-terra}
+    auditor: {runner: codex, model: gpt-5.6-luna}
+  validation:
+    quality:
+      steps: [{uses: scope}, {uses: unit}]
+      hard: true
+  phases:
+    - {id: implement, kind: implementation, actor: implementer, prompt: implement, requiresChange: true, validation: quality}
+    - {id: audit, kind: audit, actor: auditor, prompt: audit, requiresChange: false, if: "{{ parameters.release }}", validation: quality, dependsOn: [implement]}
+  humanGates:
+    - id: release-approval
+      requires: [audit]
+      instructions: Verify the release in the target environment.
+      acknowledgement: {type: exact-text, value: approve}
+      evidence: {value: head_commit}
+  completion:
+    validation: quality
+    assertions: [{type: workspace-integrity}]
+  reset: {allow: true, requireCleanWorkspace: true}
+`
+	d, err := Decode(writeWorkflow(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Validate(d)
+	if result.Status != Executable {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	normalized := result.Normalized.Workflow
+	if got := normalized.Spec.Parameters["release"].Type; got != "boolean" {
+		t.Fatalf("parameter type = %q", got)
+	}
+	if len(normalized.Spec.Workspace.MutationPolicy.Integrity) != 1 || !normalized.Spec.State.Initialize.RequireCleanWorkspace || !normalized.Spec.State.Lineage.RequireSameNamedBranch {
+		t.Fatalf("normalized safety policy = %#v / %#v", normalized.Spec.Workspace, normalized.Spec.State)
+	}
+	if len(normalized.Spec.Validation["quality"].Steps) != 2 || normalized.Spec.Phases[1].Kind != "audit" || normalized.Spec.Phases[1].RequiresChange {
+		t.Fatalf("normalized validation or phases = %#v / %#v", normalized.Spec.Validation, normalized.Spec.Phases)
+	}
+	if len(normalized.Spec.HumanGates) != 1 || len(normalized.Spec.Completion["default"].Assertions) != 1 || normalized.Spec.State.Reset.Allowed == nil || !*normalized.Spec.State.Reset.Allowed || !normalized.Spec.State.Reset.RequireCleanWorkspace {
+		t.Fatalf("normalized completion authority = %#v / %#v", normalized.Spec.HumanGates, normalized.Spec.Completion)
+	}
+}
+
+func TestV1Alpha2HardValidationRejectsRepair(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "repair: {once: coder}", "hard: true\n      repair: {once: coder}", 1)
+	result := ValidateFile(writeWorkflow(t, document))
+	if result.Status != Invalid || !diagnosticsContain(result.Diagnostics, "spec.validation.tests", "hard validation") {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+}
+
+func TestV1Alpha2ValidationStepsRejectUnknownFields(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "run: go test ./...", "steps: [{uses: unknown, ignored: true}]", 1)
+	if _, err := Decode(writeWorkflow(t, document)); err == nil || !strings.Contains(err.Error(), "ignored") {
+		t.Fatalf("decode error = %v, want strict unknown step-field error", err)
+	}
+}
+
+func TestV1Alpha2ResetPolicyNormalizesExplicitDenial(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "completion: {validation: tests}", "completion: {validation: tests}\n  reset: {allow: false}", 1)
+	d, err := Decode(writeWorkflow(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Validate(d)
+	if result.Status != Executable || result.Normalized.Workflow.Spec.State.Reset.Allowed == nil || *result.Normalized.Workflow.Spec.State.Reset.Allowed {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestV1Alpha2ResetPolicyRequiresExplicitDecision(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "completion: {validation: tests}", "completion: {validation: tests}\n  reset: {requireCleanWorkspace: true}", 1)
+	result := ValidateFile(writeWorkflow(t, document))
+	if result.Status != Invalid || !diagnosticsContain(result.Diagnostics, "spec.reset.allow", "is required") {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+}
+
 func TestV1Alpha2ExpandedPlanExposesEffectiveActorCapabilities(t *testing.T) {
 	document := strings.Replace(v1alpha2Fixture,
 		"coder: {runner: codex, model: gpt-5.6-terra}",

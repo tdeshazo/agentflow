@@ -496,6 +496,39 @@ func TestV1Alpha2ConformanceExampleExecutesAuthorityBoundaries(t *testing.T) {
 	assertSchedulingCompletion(t, restarted)
 }
 
+func TestV1Alpha2ResetPolicyDeniesResetBeforeStateMutation(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "reset-denied", []string{"root"}, nil, "true")
+	allow := false
+	w.Spec.State.Reset.Allowed = &allow
+
+	err := newSchedulingEngineAt(t, w, &schedulingProvider{}, repo).Reset()
+	if err == nil || !strings.Contains(err.Error(), "reset is disabled") {
+		t.Fatalf("reset error = %v, want explicit reset-policy denial", err)
+	}
+}
+
+func TestV1Alpha2ScheduleRecordsHumanGateBeforeCompletion(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "human-gated", []string{"root"}, nil, "true")
+	w.Spec.HumanGates = []workflow.HumanGate{{
+		ID:              "release",
+		Requires:        []string{"root"},
+		Instructions:    "Verify the release candidate.",
+		Acknowledgement: workflow.Acknowledgement{Type: "exact-text", Value: "approve"},
+	}}
+	e := newSchedulingEngineAt(t, w, &schedulingProvider{}, repo)
+	e.In = strings.NewReader("approve\n")
+	e.HumanGateInteractive = func(io.Reader, io.Writer) bool { return false }
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _, err := e.validCommitMarker("human/release"); err != nil || !ok {
+		t.Fatalf("human-gate evidence = %t, %v", ok, err)
+	}
+	assertSchedulingCompletion(t, e)
+}
+
 func schedulingWorkflow(repo, name string, ids []string, dependencies map[string][]string, gateCommand string) *workflow.Workflow {
 	graph := workflow.PhaseDependencyGraph{}
 	phases := make([]workflow.Phase, 0, len(ids))

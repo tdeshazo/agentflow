@@ -1,35 +1,51 @@
-apiVersion: agentflow.dev/v1alpha1
+apiVersion: agentflow.dev/v1alpha2
 kind: AgentWorkflow
 metadata:
   name: representative-human-gated-release
-  description: Compatibility representative until the successor has durable human gates.
 
 spec:
+  parameters:
+    require_release_approval:
+      type: boolean
+      default: true
+  workspace:
+    allowWrites: [CHANGELOG.md, docs/**, examples/**]
+    initialization:
+      requireCleanWorkspace: true
+      requireNamedBranch: true
+  preconditions:
+    - id: repository
+      type: git-repository
+      scope: initialization
   agents:
     releaser:
       runner: codex
+      model: gpt-5.6-terra
       approval: never
   tools:
     release-check:
       type: shell
       command: make release-check
+    scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
   validation:
     release-check:
       steps:
+        - uses: scope
         - uses: release-check
-  lifecycle:
-    policy: safe-resume
-    validation: release-check
   phases:
     - id: prepare-release
       kind: implementation
-      label: prepare-release
       actor: releaser
       prompt: Prepare the bounded release candidate and do not publish it.
+      reasoning: Prepare only reviewable release artifacts; publication remains a human decision.
+      requiresChange: true
       validation: release-check
   humanGates:
     - id: release-approval
       requires: [prepare-release]
+      if: "{{ parameters.require_release_approval }}"
       instructions: Verify the release candidate in the target environment before approval.
       checklist:
         - Verify the release notes and version.
@@ -40,6 +56,9 @@ spec:
       evidence:
         record: release-approved
         value: head_commit
-  flow:
-    - phase: prepare-release
-    - human: release-approval
+  completion:
+    validation: release-check
+    assertions: [{type: implementation-workspace-clean}]
+  reset:
+    allow: true
+    requireCleanWorkspace: true

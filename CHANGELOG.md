@@ -14,6 +14,13 @@
 
 ### Added
 
+- Added Phase 2 portable v1alpha2 authority: typed parameters and bounded
+  conditions; integrity, initialization, and lineage policy; deterministic
+  preconditions; reusable multi-step tools and hard validations; phase intent,
+  kind, and change requirements; durable human gates; completion assertions;
+  and explicit reset permission. The self-hosting and human-gated release
+  representatives now use this surface without procedural lifecycle,
+  recovery, state-record, or flow declarations.
 - Put `agentflow.dev/v1alpha1` into grammar-frozen maintenance mode, with a
   machine-readable capability matrix, five representative migration workflows,
   and read-only `agentflow migrate --check` diagnostics that classify every

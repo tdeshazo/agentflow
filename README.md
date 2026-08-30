@@ -177,9 +177,12 @@ conformance suite. The v1alpha2 contract shares the core agent capability
 fields, but intentionally does not claim the full v1alpha1 schema, including
 `spec.defaults.agent` inheritance.
 
-For new workflows that fit its core contract, prefer v1alpha2: safe resume,
-checkpointing, durable phase evidence, and completion ordering are runtime
-owned rather than procedural authoring work. The
+For new workflows that fit its core contract, prefer v1alpha2: portable typed
+parameters and conditions, integrity and initialization policy, deterministic
+preconditions, reusable multi-step validation, durable human gates, completion
+assertions, and reset policy sit alongside safe resume, checkpointing, durable
+phase evidence, and completion ordering owned by the runtime rather than
+procedural authoring work. The
 [v1alpha1-to-v1alpha2 migration guide](docs/guides/migrating-v1alpha1-to-v1alpha2.md)
 and `agentflow migrate --check -f workflow.yaml` define the
 authority-preserving migration procedure and the cases that must remain on

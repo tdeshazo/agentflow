@@ -9,10 +9,12 @@ prompts or YAML.
 
 This is a source migration, not an automatic rewrite. A migration is valid
 only when the v1alpha2 contract can express every authority required by the
-workflow. Never drop a v1alpha1 integrity, lineage, human-verification,
-progress, bookkeeping, or completion requirement merely to make a document
-shorter. Keep that workflow on v1alpha1 until a later version explicitly
-supports the needed declaration.
+workflow. Never drop a v1alpha1 progress loop, Markdown bookkeeping
+transition, custom state layout, or completion requirement merely to make a
+document shorter. v1alpha2 directly supports portable parameters and
+conditions, integrity and initialization policy, deterministic preconditions,
+multi-step tools and validation, phase intent/change controls, human gates,
+completion assertions, and reset policy.
 
 v1alpha1 is grammar-frozen but supported in maintenance mode. Start with the
 machine-readable [capability matrix](../reference/v1alpha1-capability-matrix.md):
@@ -37,12 +39,13 @@ implemented.
    ```
 
 2. Inventory every authority in the plan. The v1alpha2 core can migrate the
-   write allowlist, named or inline actor capabilities, deterministic shell
-   gates, one repair attempt, phase dependencies, and the final completion
-   validation. Stop if the workflow also requires an author-declared integrity
-   rule, custom lineage policy, human gate, progress transition, Markdown
-   bookkeeping transition, parameterized state layout, or another v1alpha1
-   construct that v1alpha2 does not model.
+   write allowlist, named or inline actor capabilities, typed parameters,
+   integrity/lineage/initialization policy, deterministic preconditions,
+   reusable tools and multi-step validation, bounded repair, phase conditions,
+   human gates, completion assertions, reset policy, dependencies, and final
+   completion validation. Stop if the workflow requires a dynamic progress
+   transition, Markdown bookkeeping transition, custom state layout, or
+   another construct the matrix classifies as compatibility-only.
 
 3. Create a new document with `apiVersion: agentflow.dev/v1alpha2`; do not
    change the version of the original in place. Translate only equivalent
@@ -53,9 +56,16 @@ implemented.
    | `workspace.mutationPolicy.allowed` | `workspace.allowWrites` |
    | `agents.<name>` | `agents.<name>` |
    | shell tool plus named validation | `validation.<name>.run` |
+   | reusable tool sequence | `tools` plus `validation.<name>.steps` |
    | `onFailure.strategy: repair-once` | `validation.<name>.repair.once` |
+   | parameters and bounded conditions | `parameters`, `phases[].if`, `humanGates[].if` |
+   | integrity / lineage / initialization | `workspace.integrity` / `workspace.initialization` |
+   | deterministic preconditions | `preconditions` |
    | explicit dependency ordering | `phases[].dependsOn` |
    | `completion.*.finalValidation` | `completion.validation` |
+   | human gate | `humanGates` |
+   | completion assertions | `completion.assertions` |
+   | reset policy | `reset.allow`, `reset.requireCleanWorkspace` |
 
 4. Omit procedural `state`, `lifecycle`, `phaseDefaults`, phase `after`, and
    `recovery.activePhase` plumbing from the new v1alpha2 document. The

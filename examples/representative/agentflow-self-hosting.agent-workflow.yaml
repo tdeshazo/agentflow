@@ -4,8 +4,35 @@ metadata:
   name: agentflow-self-hosting
 
 spec:
+  parameters:
+    run_audit:
+      type: boolean
+      default: true
   workspace:
     allowWrites: [internal/**, provider/**, docs/**, schema/**, examples/**, README.md, CHANGELOG.md]
+    integrity:
+      - id: module-definition
+        mode: group-exact-hash
+        paths: [go.mod, go.sum]
+    initialization:
+      requireCleanWorkspace: true
+      requireNamedBranch: true
+      requireBaseAncestor: true
+      requireSameBranch: true
+  tools:
+    scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+    test:
+      type: shell
+      command: go test ./...
+  preconditions:
+    - id: git-repository
+      type: git-repository
+      scope: initialization
+    - id: go-command
+      type: commands-exist
+      commands: [go]
   agents:
     implementer:
       runner: codex
@@ -25,16 +52,29 @@ spec:
       output_last_message: true
   validation:
     quality:
-      run: go test ./...
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: [go.mod, go.sum]
+      hard: true
   phases:
     - id: implement-agentflow-change
+      kind: implementation
       actor: implementer
       prompt: Implement one bounded AgentFlow specification or interpreter change with focused tests and documentation.
+      reasoning: Work from the requested authority boundary and keep the migration contract deterministic.
+      requiresChange: true
       validation: quality
     - id: independently-audit-agentflow-change
+      kind: audit
       actor: reviewer
       dependsOn: [implement-agentflow-change]
       prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
+      reasoning: Review independently; do not make product changes while auditing.
+      requiresChange: false
+      if: "{{ parameters.run_audit }}"
       validation: quality
   completion:
     validation: quality
+    assertions: [{type: workspace-integrity}]
+  reset:
+    allow: true
+    requireCleanWorkspace: true

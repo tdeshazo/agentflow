@@ -754,6 +754,9 @@ func (e *Engine) Reset() error {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
+	if allowed := e.Workflow.Spec.State.Reset.Allowed; allowed != nil && !*allowed {
+		return fmt.Errorf("reset is disabled by this workflow's v1alpha2 reset policy")
+	}
 	if e.Workflow.Spec.State.Reset.RequireCleanWorkspace || e.Workflow.Spec.State.Reset.RequireCleanImplementationWorkspace || e.Workflow.Spec.State.Reset.When != "" {
 		dirty, err := e.implementationDirtyFiles()
 		if err != nil {
