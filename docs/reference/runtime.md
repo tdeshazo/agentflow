@@ -547,8 +547,9 @@ protected/runtime-owned exclusions. The Stage 6 scheduler consumes this same
 metadata: omitted phase scopes inherit the workflow allowlist, ambiguous or
 overlapping scopes serialize, and actual actor changes are checked against the
 selected phase scope before import. It does not enforce token, byte,
-file-count, monetary, or other budgets. That Stage 5.5 exit criterion remains
-open.
+file-count, monetary, or other budgets. Budget enforcement is explicitly
+deferred to separate resource-control work and is not a Stage 5.5 exit
+criterion.
 
 ## Parallel dependency scheduling
 

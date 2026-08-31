@@ -340,7 +340,7 @@ func plannedContextRecipe(role, phase, validation string, includeFailure bool) P
 			{Component: "unrelated contracts and broad run history", Source: "durable runtime state", Reason: "not declared as direct invocation input"},
 			{Component: "artifact contents", Source: "workspace files", Reason: "actors read verified references from the isolated workspace"},
 			{Component: "resolved parameters, environments, and secrets", Source: "runtime inputs", Reason: "only authorized expansions may enter invocation context at runtime"},
-			{Component: "token and resource budgets", Source: "Stage 5.5 exit criterion", Reason: "enforcement is explicitly deferred"},
+			{Component: "token and resource budgets", Source: "deferred roadmap work", Reason: "enforcement is explicitly deferred"},
 		},
 	}
 }

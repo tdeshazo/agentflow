@@ -159,8 +159,9 @@ Exit condition: the existing v1alpha1 criterion workflow can migrate without put
 
 ### Phase 6: Introduce bounded parallel execution
 
-Status: implemented on `codex/v1alpha1-migration-phase1` (2026-08-30), under
-the documented Stage 5.5 budget-enforcement exception.
+Status: implemented on `codex/v1alpha1-migration-phase1` (2026-08-30).
+Stage 5.5 budgeting is explicitly deferred to separate resource-control work
+and is not a prerequisite for this phase.
 
 Only after typed handoffs exist:
 

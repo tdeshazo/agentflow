@@ -28,7 +28,8 @@
   an inspectable inclusion/exclusion manifest. The Codex adapter validates and
   canonically renders that context inside the quarantine workspace, and
   `plan --expanded` reports secret-free context recipes. Token and resource
-  budget enforcement remains deferred.
+  budget enforcement is explicitly deferred to separate resource-control work
+  and does not block Stage 5.5 completion.
 - Advanced Phase 3 successor migration: the art-portfolio and human-gated
   release workflows now default to v1alpha2 with validated v1alpha1
   compatibility copies, and a v1alpha3 self-hosting representative covers the

@@ -187,7 +187,7 @@ feature work.
 | 3 | Run identity, supervised sessions, and trace foundation | Establish stable run/node identities, explainable state transitions, exclusive attach/detach handoff, and lossless operational output. |
 | 4 | v1alpha1 maintenance and successor migration | Freeze v1alpha1 authoring, migrate the canonical self-hosting path and guidance, and provide deterministic migration diagnostics before deprecation. |
 | 5 | Typed contracts, artifacts, and evidence | Make phase handoffs and acceptance evidence machine-checkable before introducing parallel execution. |
-| 5.5 | Invocation context compilation (partially complete) | Compile bounded, inspectable per-node execution context from typed dependencies, authority, workspace state, and budgets before bounded parallel execution; token and resource-budget enforcement remains open. |
+| 5.5 | Invocation context compilation (complete; budgeting deferred) | Compile deterministic, inspectable per-node execution context from typed dependencies, authority, and workspace state before bounded parallel execution. Token and resource-budget enforcement is deferred to separate resource-control work. |
 | 6 | Parallel dependency scheduling (complete) | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
 | 7 | Executor and tool extensibility | Add providers and tools only through the established capability, identity, and typed-contract boundaries. |
 | 8 | Reusable workflows and composition | Add pinned, trust-aware composition without creating an alternate authority path. |
@@ -578,15 +578,15 @@ Typed handoffs precede parallel scheduling so fan-out/fan-in and downstream read
 
 ## Execution stage 5.5 — Invocation context compilation
 
-**Implementation status (2026-08-30): partially complete.** Every phase,
+**Implementation status (2026-08-30): complete, with budgeting deferred.** Every phase,
 resumed-phase, and validation-repair actor now receives deterministic versioned
 context compiled from normalized authority, verified direct contracts,
 workspace state, and bounded durable failure evidence. The Codex adapter
 validates and renders that provider-neutral context, while expanded plans show
 the inclusion/exclusion recipe without resolving sensitive values. Context is
 not persisted as acceptance state. Per-invocation token, byte, file-count,
-monetary, and other resource-budget enforcement is intentionally deferred and
-remains an open exit criterion, so this stage is not complete.
+monetary, and other resource-budget enforcement is explicitly deferred to
+separate resource-control work and is not a Stage 5.5 exit criterion.
 
 **Goal:** Compile the smallest sufficient, inspectable execution context for each actor from authoritative workflow and workspace state before bounded parallel scheduling multiplies context cost.
 
@@ -598,7 +598,6 @@ This stage follows typed contracts because the compiler consumes machine-checkab
 - Derive context from the workflow and phase objectives, accepted dependency identities, typed artifacts/outputs, relevant evidence, authorized workspace/resource scope, bounded validation failures, executor capabilities, and declared budgets.
 - Make compilation deterministic for unchanged authoritative state except for explicitly declared dynamic retrieval inputs.
 - Keep context a derived view: Git/workspace state, the workflow definition, typed artifacts/evidence, and durable run state remain authoritative.
-- Enforce per-invocation context/token budgets from stage 2, reserving capacity for reasoning and output rather than filling the provider window opportunistically.
 - Include dependency artifacts by identity/reference and selected content instead of indiscriminate transcript or actor-output copying.
 - Bound repair context to relevant deterministic failure evidence and authorized workspace state.
 - Let provider adapters render compiled context without independently reconstructing workflow semantics.
@@ -606,11 +605,14 @@ This stage follows typed contracts because the compiler consumes machine-checkab
 - Establish explicit file/resource-scope metadata that stage 6 conflict analysis can reuse when deciding whether ready nodes may execute concurrently.
 - Defer semantic indexing, embeddings, learned ranking, and autonomous retrieval until the deterministic compiler seam is proven.
 
+### Explicitly deferred work
+
+- Per-invocation context, token, byte, file-count, monetary, and other resource-budget enforcement remains part of separate resource-control work. It does not block Stage 5.5 completion.
+
 ### Exit criteria
 
 - Every actor invocation receives a runtime-generated, inspectable context manifest.
 - The same unchanged authoritative state compiles to equivalent context.
-- Context compilation respects token/resource budgets and fails deterministically when required context cannot fit.
 - Dependent nodes receive declared typed outputs/evidence without scraping prior actor prose or replaying full transcripts.
 - Repair actors receive bounded relevant failure context rather than unbounded run history.
 - Provider adapters consume normalized compiled context rather than re-deriving workflow authority.
@@ -618,9 +620,9 @@ This stage follows typed contracts because the compiler consumes machine-checkab
 - Stage 6 can use the same normalized resource-scope metadata to distinguish safe disjoint concurrency from conflicts.
 - A self-hosting workflow demonstrates materially smaller phase-specific context than passing broad repository/run history while preserving deterministic acceptance.
 
-The unresolved exit criterion is deterministic enforcement of context/token
-and other resource budgets. Conservative filesystem resource metadata is
-consumed by Stage 6 conflict analysis, but metadata is not budget enforcement.
+Conservative filesystem resource metadata is consumed by Stage 6 conflict
+analysis. It does not constitute budget enforcement, which remains explicitly
+deferred beyond Stage 5.5.
 
 ---
 
@@ -635,9 +637,9 @@ validation, checkpointing, contract publication, and acceptance remain
 authored-order transitions. Git-backed active-batch and per-node records make
 parallel interruption recover through the ordinary safe-resume boundary.
 
-Stage 6 proceeds under the recorded Stage 5.5 budget-enforcement exception:
-the compiler/resource metadata prerequisite is present, while token and other
-invocation-budget enforcement remains an explicit Stage 5.5 exit gap.
+Stage 6 consumes the compiler's resource metadata prerequisite. Token and other
+invocation-budget enforcement remains explicitly deferred and is not a Stage 6
+prerequisite or a Stage 5.5 exit gap.
 
 **Goal:** Extend the reviewed v1alpha2 dependency contract beyond its implemented deterministic serial scheduler into bounded parallel execution while retaining deterministic advancement and recovery.
 

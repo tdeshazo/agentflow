@@ -292,7 +292,7 @@ func invocationContextManifest(includeFailure bool) provider.ContextManifest {
 		{Component: "unrelated contracts and broad run history", Source: "durable runtime state", Reason: "not declared as direct invocation input"},
 		{Component: "artifact contents", Source: "workspace files", Reason: "actors read verified references from the isolated workspace"},
 		{Component: "resolved parameters, environments, and secrets", Source: "runtime inputs", Reason: "only their authorized expansions may appear in the objective"},
-		{Component: "token and resource budgets", Source: "Stage 5.5 exit criterion", Reason: "enforcement is explicitly deferred"},
+		{Component: "token and resource budgets", Source: "deferred roadmap work", Reason: "enforcement is explicitly deferred"},
 	}
 	return provider.ContextManifest{Included: included, Excluded: excluded}
 }
