@@ -86,6 +86,7 @@ func TestBuildArgsEnforcesActorFilesystemBoundary(t *testing.T) {
 
 func TestValidateRequestRejectsUnenforceableActorFilesystemBoundary(t *testing.T) {
 	err := validateRequest(provider.Request{
+		Context: provider.InvocationContext{Version: provider.InvocationContextVersion},
 		Sandbox: "danger-full-access",
 		FilesystemBoundary: []provider.FilesystemRule{{
 			Path:   "/authoritative",
@@ -227,7 +228,7 @@ done
 		Workspace:         workspace,
 		Model:             "gpt-test",
 		Reasoning:         "high",
-		Prompt:            "perform the task",
+		Context:           testInvocationContext("perform the task"),
 		Sandbox:           "workspace-write",
 		Approval:          "never",
 		OutputLastMessage: true,
@@ -298,6 +299,7 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 	}
 	result, err := p.Run(context.Background(), provider.Request{
 		Workspace:         workspace,
+		Context:           testInvocationContext("perform the task"),
 		Approval:          "never",
 		OutputLastMessage: true,
 		Presentation:      provider.PresentationAlways,
@@ -356,6 +358,7 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	}
 	if _, err := p.Run(context.Background(), provider.Request{
 		Workspace:         workspace,
+		Context:           testInvocationContext("perform the task"),
 		Approval:          "never",
 		OutputLastMessage: true,
 		Presentation:      provider.PresentationAuto,
@@ -389,7 +392,7 @@ printf '%s\n' "$@" > "$ARGS_FILE"
 	t.Setenv("ARGS_FILE", argsFile)
 
 	p := Provider{Binary: fake, Stdout: io.Discard, Stderr: io.Discard}
-	result, err := p.Run(context.Background(), provider.Request{Workspace: workspace, Approval: "never"})
+	result, err := p.Run(context.Background(), provider.Request{Workspace: workspace, Approval: "never", Context: testInvocationContext("perform the task")})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -436,10 +439,54 @@ func contains(values []string, want string) bool {
 	return slices.Contains(values, want)
 }
 
+func testInvocationContext(objective string) provider.InvocationContext {
+	return provider.InvocationContext{
+		Version:   provider.InvocationContextVersion,
+		Objective: objective,
+		Workspace: provider.WorkspaceContext{Root: provider.WorkspacePlaceholder},
+	}
+}
+
 func TestRunRejectsUnsupportedApprovalPolicy(t *testing.T) {
 	p := Provider{Binary: "does-not-matter"}
-	_, err := p.Run(context.Background(), provider.Request{Workspace: t.TempDir(), Approval: "on-request"})
+	_, err := p.Run(context.Background(), provider.Request{Workspace: t.TempDir(), Approval: "on-request", Context: testInvocationContext("perform the task")})
 	if err == nil {
 		t.Fatal("expected approval policy error")
+	}
+}
+
+func TestRenderInvocationContextIsDeterministicAndResolvesOnlyWorkspace(t *testing.T) {
+	workspace := filepath.Join(string(filepath.Separator), "tmp", "actor-quarantine")
+	context := testInvocationContext("Edit " + provider.WorkspacePlaceholder + "/src/result.txt and preserve /opt/reference.txt.")
+	context.Artifacts = []provider.ArtifactReference{{
+		Name: "result", Producer: "implement", Type: "files",
+		Path: provider.WorkspacePlaceholder + "/src/result.txt", Digest: "abc", Mode: 0o100644,
+	}}
+	context.Validations = []provider.ValidationRequirement{{Name: "gate"}}
+
+	first, err := RenderInvocationContext(context, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RenderInvocationContext(context, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("equivalent context rendered differently")
+	}
+	if strings.Contains(first, provider.WorkspacePlaceholder) || !strings.Contains(first, filepath.Join(workspace, "src", "result.txt")) || !strings.Contains(first, "/opt/reference.txt") {
+		t.Fatalf("rendered context did not resolve only the workspace placeholder:\n%s", first)
+	}
+}
+
+func TestValidateRequestRejectsMissingOrUnsupportedContextVersion(t *testing.T) {
+	for _, version := range []string{"", "agentflow.dev/invocation-context/v999"} {
+		t.Run(version, func(t *testing.T) {
+			err := validateRequest(provider.Request{Context: provider.InvocationContext{Version: version}})
+			if err == nil || !strings.Contains(err.Error(), "invocation context version") {
+				t.Fatalf("validateRequest() error = %v", err)
+			}
+		})
 	}
 }

@@ -57,7 +57,7 @@ type Request struct {
 	Workspace string
 	Model     string
 	Reasoning string
-	Prompt    string
+	Context   InvocationContext
 	Sandbox   string
 	Approval  string
 	Ephemeral bool

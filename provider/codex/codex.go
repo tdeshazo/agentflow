@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -62,7 +63,11 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 	args := buildArgsForOutput(req, last, p.outputIsTTY(stdout) && p.outputIsTTY(stderr))
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = req.Workspace
-	cmd.Stdin = bytes.NewBufferString(req.Prompt)
+	prompt, err := RenderInvocationContext(req.Context, req.Workspace)
+	if err != nil {
+		return provider.Result{}, err
+	}
+	cmd.Stdin = bytes.NewBufferString(prompt)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -120,6 +125,9 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 }
 
 func validateRequest(req provider.Request) error {
+	if req.Context.Version != provider.InvocationContextVersion {
+		return fmt.Errorf("codex provider does not support invocation context version %q", req.Context.Version)
+	}
 	if req.Approval != "" && req.Approval != "never" {
 		return fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
 	}
@@ -147,6 +155,28 @@ func validateRequest(req provider.Request) error {
 		seen[rule.Path] = rule.Access
 	}
 	return nil
+}
+
+// RenderInvocationContext validates and renders the provider-neutral context
+// deterministically. It resolves only the engine's stable workspace
+// placeholder and does not reconstruct workflow semantics.
+func RenderInvocationContext(context provider.InvocationContext, workspace string) (string, error) {
+	if context.Version != provider.InvocationContextVersion {
+		return "", fmt.Errorf("codex provider does not support invocation context version %q", context.Version)
+	}
+	if workspace == "" || !filepath.IsAbs(workspace) {
+		return "", fmt.Errorf("codex provider requires an absolute workspace to render invocation context")
+	}
+	b, err := json.MarshalIndent(context, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("render codex invocation context: %w", err)
+	}
+	encodedWorkspace, err := json.Marshal(filepath.Clean(workspace))
+	if err != nil {
+		return "", fmt.Errorf("render codex workspace: %w", err)
+	}
+	resolved := strings.ReplaceAll(string(b), provider.WorkspacePlaceholder, string(encodedWorkspace[1:len(encodedWorkspace)-1]))
+	return "AgentFlow invocation context (" + provider.InvocationContextVersion + "):\n" + resolved + "\n", nil
 }
 
 func codexPermissionsBase(sandbox string) string {

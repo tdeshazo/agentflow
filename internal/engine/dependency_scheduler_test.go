@@ -17,6 +17,7 @@ import (
 
 type schedulingProvider struct {
 	calls         []string
+	contexts      []provider.InvocationContext
 	action        func(context.Context, provider.Request) error
 	skipPhaseFile bool
 }
@@ -27,6 +28,7 @@ func (p *schedulingProvider) EnforcesFilesystemBoundary() bool { return true }
 func (p *schedulingProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	phase := request.Metadata["phase"]
 	p.calls = append(p.calls, phase+":"+request.Metadata["actor"])
+	p.contexts = append(p.contexts, request.Context)
 	if p.action != nil {
 		if err := p.action(ctx, request); err != nil {
 			return provider.Result{}, err

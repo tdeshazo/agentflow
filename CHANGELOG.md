@@ -14,12 +14,21 @@
 
 ### Added
 
-- Completed Phase 3 successor migration: the art-portfolio and human-gated
+- Added a deterministic, versioned invocation-context compiler for primary,
+  resumed, and validation-repair actors. Provider requests now carry typed
+  objectives, workspace/dependency state, declared artifact and evidence
+  references, effective authority, validations, bounded repair failures, and
+  an inspectable inclusion/exclusion manifest. The Codex adapter validates and
+  canonically renders that context inside the quarantine workspace, and
+  `plan --expanded` reports secret-free context recipes. Token and resource
+  budget enforcement remains deferred.
+- Advanced Phase 3 successor migration: the art-portfolio and human-gated
   release workflows now default to v1alpha2 with validated v1alpha1
-  compatibility copies. Expanded-plan comparison coverage verifies portable
-  mutation, integrity, validation, repair, resume, human-evidence, and
-  completion authority; the criterion/bookkeeping self-hosting source remains
-  an explicit Phase 5 exception.
+  compatibility copies, and a v1alpha3 self-hosting representative covers the
+  portable safety/control subset plus typed handoffs. The canonical workflow
+  under `spec/` remains v1alpha1; its criterion progress and Markdown
+  bookkeeping are intentionally absent from that representative, so canonical
+  migration and the Phase 3 semantic-equivalence exit condition remain open.
 - Added Phase 2 portable v1alpha2 authority: typed parameters and bounded
   conditions; integrity, initialization, and lineage policy; deterministic
   preconditions; reusable multi-step tools and hard validations; phase intent,

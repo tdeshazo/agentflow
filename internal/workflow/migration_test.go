@@ -113,6 +113,162 @@ func TestMigrationCheckClassifiesRepresentativesWithoutRewriting(t *testing.T) {
 	}
 }
 
+func TestMigrationCheckPointsStableProgressToV1Alpha4(t *testing.T) {
+	report, err := MigrationCheckFile(filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diagnostics := make(map[string]MigrationDiagnostic, len(report.Diagnostics))
+	for _, diagnostic := range report.Diagnostics {
+		diagnostics[diagnostic.Path] = diagnostic
+	}
+	const successor = "agentflow.dev/v1alpha4 spec.criteria, phase workItem/advanceWorkItem, and optional markdownChecklist adapter"
+	for _, path := range []string{
+		"spec.progress.source.path",
+		"spec.progress.criteria[0].id",
+		"spec.progress.criterionPhaseInvariant.targeted_item_must_be_checked",
+		"spec.phases[0].criterionID",
+		"spec.phases[0].advanceProgress",
+	} {
+		diagnostic, ok := diagnostics[path]
+		if !ok {
+			t.Errorf("missing migration diagnostic for %s", path)
+			continue
+		}
+		if diagnostic.Classification != GeneralizedReplacement {
+			t.Errorf("%s classification = %q, want %q", path, diagnostic.Classification, GeneralizedReplacement)
+		}
+		if diagnostic.Successor != successor {
+			t.Errorf("%s successor = %q, want %q", path, diagnostic.Successor, successor)
+		}
+		if !strings.Contains(diagnostic.Note, "typed work items") || !strings.Contains(diagnostic.Note, "does not replace runtime rediscovery loops") {
+			t.Errorf("%s note does not distinguish stable progress from dynamic loops: %q", path, diagnostic.Note)
+		}
+	}
+}
+
+func TestMigrationCheckKeepsDynamicProgressRediscoveryInV1Alpha1(t *testing.T) {
+	path := writeWorkflow(t, `apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata: {name: dynamic-progress-migration}
+spec:
+  parameters:
+    maxSteps: {type: integer, default: 1}
+  agents: {worker: {runner: codex}}
+  tools: {gate: {type: shell, command: "true"}}
+  validation: {gate: {steps: [{uses: gate}]}}
+  progress:
+    selection: {strategy: first-unchecked}
+    criteria:
+      - {id: one, text: First criterion}
+  phases:
+    - {id: one, kind: criterion, actor: worker, criterionID: one, advanceProgress: true, validation: gate, prompt: implement}
+  flow:
+    - loop:
+        while: "{{ progress.unchecked_count > 0 }}"
+        maxIterations: "{{ parameters.maxSteps }}"
+        select: "{{ progress.next_unchecked }}"
+        dispatchByCriterion: {one: one}
+        requireUncheckedCountDelta: -1
+`)
+	report, err := MigrationCheckFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diagnostics := make(map[string]MigrationDiagnostic, len(report.Diagnostics))
+	for _, diagnostic := range report.Diagnostics {
+		diagnostics[diagnostic.Path] = diagnostic
+	}
+	for _, path := range []string{
+		"spec.progress.selection.strategy",
+		"spec.flow[0].loop.while",
+		"spec.flow[0].loop.maxIterations",
+		"spec.flow[0].loop.select",
+		"spec.flow[0].loop.dispatchByCriterion.one",
+		"spec.flow[0].loop.requireUncheckedCountDelta",
+	} {
+		diagnostic, ok := diagnostics[path]
+		if !ok {
+			t.Errorf("missing migration diagnostic for %s", path)
+			continue
+		}
+		if diagnostic.Classification != CompatibilityOnly || diagnostic.Successor != "none" {
+			t.Errorf("%s migration = %#v, want compatibility-only with no successor", path, diagnostic)
+		}
+		if !strings.Contains(diagnostic.Note, "runtime") || !strings.Contains(diagnostic.Note, "v1alpha4") {
+			t.Errorf("%s note does not explain the v1alpha4 boundary: %q", path, diagnostic.Note)
+		}
+	}
+}
+
+func TestMigrationCheckClassifiesAuthoredEmptyCollections(t *testing.T) {
+	path := writeWorkflow(t, `apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: empty-migration-collections
+spec:
+  parameters: {}
+  preconditions: []
+  agents:
+    worker:
+      runner: codex
+      approval: never
+  tools:
+    scope:
+      type: workspace-policy
+  validation:
+    phaseGate:
+      steps:
+        - uses: scope
+  phases:
+    - id: build
+      kind: implementation
+      label: build
+      actor: worker
+      validation: phaseGate
+      prompt: make the bounded change
+  flow:
+    - phase: build
+`)
+	report, err := MigrationCheckFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts := make(map[string]int, len(report.Diagnostics))
+	diagnostics := make(map[string]MigrationDiagnostic, len(report.Diagnostics))
+	for _, diagnostic := range report.Diagnostics {
+		counts[diagnostic.Path]++
+		diagnostics[diagnostic.Path] = diagnostic
+	}
+	for _, want := range []struct {
+		path string
+		line int
+	}{
+		{path: "spec.parameters", line: 6},
+		{path: "spec.preconditions", line: 7},
+	} {
+		if counts[want.path] != 1 {
+			t.Errorf("%s diagnostic count = %d, want 1", want.path, counts[want.path])
+			continue
+		}
+		diagnostic := diagnostics[want.path]
+		if diagnostic.Line != want.line || diagnostic.Column != 3 {
+			t.Errorf("%s position = %d:%d, want %d:3", want.path, diagnostic.Line, diagnostic.Column, want.line)
+		}
+		if diagnostic.Classification != DirectSuccessorCapability {
+			t.Errorf("%s classification = %q, want %q", want.path, diagnostic.Classification, DirectSuccessorCapability)
+		}
+	}
+	for _, path := range []string{"spec.agents", "spec.agents.worker", "spec.tools", "spec.validation", "spec.phases", "spec.flow"} {
+		if counts[path] != 0 {
+			t.Errorf("nonempty container %s diagnostic count = %d, want 0", path, counts[path])
+		}
+	}
+}
+
 func TestMigrationCheckRejectsNonV1Alpha1Source(t *testing.T) {
 	_, err := MigrationCheckFile(filepath.Join("testdata", "conformance", "valid", "v1alpha2-concise.yaml"))
 	if err == nil || !strings.Contains(err.Error(), "requires an agentflow.dev/v1alpha1") {
@@ -158,8 +314,11 @@ func TestPhaseThreeMigrationsPreservePortableAuthority(t *testing.T) {
 		successor := phaseThreePlan(t, filepath.Join("..", "..", "examples", "representative", "human-gated-release.agent-workflow.yaml"))
 		legacySpec, successorSpec := legacy.NormalizedExecution.Spec, successor.NormalizedExecution.Spec
 		legacyGate, successorGate := legacySpec.HumanGates[0], successorSpec.HumanGates[0]
-		if legacyGate.ID != successorGate.ID || !reflect.DeepEqual(legacyGate.Requires, successorGate.Requires) || !reflect.DeepEqual(legacyGate.Checklist, successorGate.Checklist) || legacyGate.Acknowledgement != successorGate.Acknowledgement || legacyGate.Evidence != successorGate.Evidence {
+		if legacyGate.ID != successorGate.ID || !reflect.DeepEqual(legacyGate.Requires, successorGate.Requires) || !reflect.DeepEqual(legacyGate.Checklist, successorGate.Checklist) || legacyGate.Acknowledgement != successorGate.Acknowledgement || successorGate.Evidence != (Marker{Value: "head_commit"}) {
 			t.Fatalf("human gate authority changed:\nlegacy %#v\nsuccessor %#v", legacyGate, successorGate)
+		}
+		if legacyGate.Evidence.Record == "" || successorGate.Evidence.Record != "" || successorGate.IdempotentRecord != "" {
+			t.Fatalf("successor human evidence record must be runtime-owned:\nlegacy %#v\nsuccessor %#v", legacyGate, successorGate)
 		}
 		if successorSpec.Phases[0].ID != legacySpec.Phases[0].ID || successorSpec.Phases[0].Validation != legacySpec.Phases[0].Validation {
 			t.Fatalf("release phase authority changed: %#v", successorSpec.Phases[0])

@@ -29,7 +29,7 @@ type V1Alpha4Spec struct {
 	Evidence      map[string]V1Alpha3Evidence   `yaml:"evidence"`
 	Criteria      V1Alpha4Criteria              `yaml:"criteria"`
 	Phases        []V1Alpha4Phase               `yaml:"phases"`
-	HumanGates    []HumanGate                   `yaml:"humanGates"`
+	HumanGates    []V1Alpha2HumanGate           `yaml:"humanGates"`
 	Completion    V1Alpha3Completion            `yaml:"completion"`
 	Reset         V1Alpha2Reset                 `yaml:"reset"`
 }

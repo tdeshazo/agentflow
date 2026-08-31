@@ -89,6 +89,45 @@ func TestGeneratedSchemaDeclaresAuthorityAndRuntimeBoundary(t *testing.T) {
 	}
 }
 
+func TestGeneratedSuccessorSchemasExcludeLegacyHumanGateAuthority(t *testing.T) {
+	for _, version := range []string{v1alpha2APIVersion, v1alpha3APIVersion, v1alpha4APIVersion} {
+		t.Run(version, func(t *testing.T) {
+			contents, err := GeneratedSchema(version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var schema map[string]any
+			if err := json.Unmarshal(contents, &schema); err != nil {
+				t.Fatal(err)
+			}
+			definitions := schema["$defs"].(map[string]any)
+			gate := definitions["V1Alpha2HumanGate"].(map[string]any)["properties"].(map[string]any)
+			for _, field := range []string{"id", "requires", "if", "instructions", "checklist", "acknowledgement", "skip"} {
+				if _, ok := gate[field]; !ok {
+					t.Errorf("successor human gate omitted %q", field)
+				}
+			}
+			for _, field := range []string{"after", "idempotent_record", "when", "evidence"} {
+				if _, ok := gate[field]; ok {
+					t.Errorf("successor human gate exposes legacy authority %q", field)
+				}
+			}
+
+			skip := definitions["V1Alpha2HumanSkip"].(map[string]any)["properties"].(map[string]any)
+			for _, field := range []string{"allowed_when", "warning"} {
+				if _, ok := skip[field]; !ok {
+					t.Errorf("successor human skip omitted %q", field)
+				}
+			}
+			for _, field := range []string{"record", "evidence"} {
+				if _, ok := skip[field]; ok {
+					t.Errorf("successor human skip exposes legacy authority %q", field)
+				}
+			}
+		})
+	}
+}
+
 func TestReferenceDocumentsPointToGeneratedSchemas(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "..", "docs", "reference", "agentflow-v1alpha1.md"),

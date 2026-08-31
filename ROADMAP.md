@@ -187,7 +187,7 @@ feature work.
 | 3 | Run identity, supervised sessions, and trace foundation | Establish stable run/node identities, explainable state transitions, exclusive attach/detach handoff, and lossless operational output. |
 | 4 | v1alpha1 maintenance and successor migration | Freeze v1alpha1 authoring, migrate the canonical self-hosting path and guidance, and provide deterministic migration diagnostics before deprecation. |
 | 5 | Typed contracts, artifacts, and evidence | Make phase handoffs and acceptance evidence machine-checkable before introducing parallel execution. |
-| 5.5 | Invocation context compilation | Compile bounded, inspectable per-node execution context from typed dependencies, authority, workspace state, and budgets before bounded parallel execution. |
+| 5.5 | Invocation context compilation (partially complete) | Compile bounded, inspectable per-node execution context from typed dependencies, authority, workspace state, and budgets before bounded parallel execution; token and resource-budget enforcement remains open. |
 | 6 | Parallel dependency scheduling | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
 | 7 | Executor and tool extensibility | Add providers and tools only through the established capability, identity, and typed-contract boundaries. |
 | 8 | Reusable workflows and composition | Add pinned, trust-aware composition without creating an alternate authority path. |
@@ -406,6 +406,13 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
 
 ## Execution stage 4 — `v1alpha1` maintenance and successor migration
 
+**Implementation status (2026-08-30): partially complete.** Successor examples,
+the human-gated representative, and a v1alpha3 portable self-hosting
+representative are checked in. The canonical workflow under `spec/` remains
+v1alpha1, and the representative intentionally omits its criterion progress and
+Markdown bookkeeping semantics. Canonical successor migration with equivalent
+authority therefore remains an open exit criterion.
+
 **Goal:** Evolve the portable authority semantics proven in v1alpha1 into the
 concise successor contract without carrying forward procedural runtime plumbing
 or declaring v1alpha1 deprecated before a real migration path exists.
@@ -571,6 +578,16 @@ Typed handoffs precede parallel scheduling so fan-out/fan-in and downstream read
 
 ## Execution stage 5.5 — Invocation context compilation
 
+**Implementation status (2026-08-30): partially complete.** Every phase,
+resumed-phase, and validation-repair actor now receives deterministic versioned
+context compiled from normalized authority, verified direct contracts,
+workspace state, and bounded durable failure evidence. The Codex adapter
+validates and renders that provider-neutral context, while expanded plans show
+the inclusion/exclusion recipe without resolving sensitive values. Context is
+not persisted as acceptance state. Per-invocation token, byte, file-count,
+monetary, and other resource-budget enforcement is intentionally deferred and
+remains an open exit criterion, so this stage is not complete.
+
 **Goal:** Compile the smallest sufficient, inspectable execution context for each actor from authoritative workflow and workspace state before bounded parallel scheduling multiplies context cost.
 
 This stage follows typed contracts because the compiler consumes machine-checkable dependency outputs and evidence. It precedes parallelism because concurrent branches must not each reconstruct broad repository or run-history context independently.
@@ -600,6 +617,10 @@ This stage follows typed contracts because the compiler consumes machine-checkab
 - `agentflow plan` can explain why context elements are included or excluded without revealing secrets.
 - Stage 6 can use the same normalized resource-scope metadata to distinguish safe disjoint concurrency from conflicts.
 - A self-hosting workflow demonstrates materially smaller phase-specific context than passing broad repository/run history while preserving deterministic acceptance.
+
+The unresolved exit criterion is deterministic enforcement of context/token
+and other resource budgets. Conservative filesystem resource metadata is
+available for Stage 6, but metadata is not budget enforcement.
 
 ---
 

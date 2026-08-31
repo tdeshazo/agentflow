@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,6 +32,25 @@ func TestV1Alpha3TypedContractsAuthorizeOnlyVerifiedHandoffs(t *testing.T) {
 	if got := strings.Join(providerImpl.calls, ","); got != "implement:worker,audit:auditor" {
 		t.Fatalf("actor calls = %q", got)
 	}
+	if len(providerImpl.contexts) != 2 {
+		t.Fatalf("compiled contexts = %d", len(providerImpl.contexts))
+	}
+	auditContext := providerImpl.contexts[1]
+	if auditContext.Version != provider.InvocationContextVersion || auditContext.Invocation.Phase != "audit" || !auditContext.Authority.ReadOnly || len(auditContext.Authority.WritablePaths) != 0 {
+		t.Fatalf("audit context identity/authority = %#v", auditContext)
+	}
+	if len(auditContext.Dependencies) != 1 || auditContext.Dependencies[0].Phase != "implement" || auditContext.Dependencies[0].Commit == "" {
+		t.Fatalf("audit dependencies = %#v", auditContext.Dependencies)
+	}
+	if len(auditContext.Artifacts) != 1 || auditContext.Artifacts[0].Name != "result" || auditContext.Artifacts[0].Path != provider.WorkspacePlaceholder+"/src/result.txt" || auditContext.Artifacts[0].Digest == "" {
+		t.Fatalf("audit artifacts = %#v", auditContext.Artifacts)
+	}
+	if len(auditContext.Evidence) != 1 || auditContext.Evidence[0].Name != "implementation-accepted" {
+		t.Fatalf("audit evidence = %#v", auditContext.Evidence)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", auditContext), "audit-accepted") {
+		t.Fatalf("audit context included undeclared downstream evidence: %#v", auditContext.Evidence)
+	}
 	var artifact ContractArtifact
 	if ok, err := engine.Store.GetJSON(engine.contractArtifactRecord("implement", "result"), &artifact); err != nil || !ok || len(artifact.Files) != 1 {
 		t.Fatalf("artifact record = %#v, ok=%t, err=%v", artifact, ok, err)
@@ -37,6 +58,49 @@ func TestV1Alpha3TypedContractsAuthorizeOnlyVerifiedHandoffs(t *testing.T) {
 	var evidence ContractEvidence
 	if ok, err := engine.Store.GetJSON(engine.contractEvidenceRecord("audit", "audit-accepted"), &evidence); err != nil || !ok || evidence.Validation != "audit-gate" {
 		t.Fatalf("evidence record = %#v, ok=%t, err=%v", evidence, ok, err)
+	}
+}
+
+func TestInvocationContextCompilationIsDeterministic(t *testing.T) {
+	repo := newDurableRepo(t)
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["phase"] != "implement" {
+			return nil
+		}
+		path := filepath.Join(request.Workspace, "src", "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("accepted\n"), 0o644)
+	}}
+	e := newTypedContractEngine(t, repo, providerImpl)
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := e.phaseByID("audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := e.Workflow.Spec.Agents[phase.Actor]
+	first, err := e.compileInvocationContext(phase.Actor, invocationRolePhase, phase.Prompt, agent, phase, []string{phase.Validation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.compileInvocationContext(phase.Actor, invocationRolePhase, phase.Prompt, agent, phase, []string{phase.Validation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("equivalent authoritative state produced different contexts:\nfirst=%#v\nsecond=%#v", first, second)
+	}
+	changedObjective, err := e.compileInvocationContext(phase.Actor, invocationRolePhase, "different objective", agent, phase, []string{phase.Validation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := first
+	want.Objective = "different objective"
+	if !reflect.DeepEqual(want, changedObjective) {
+		t.Fatalf("objective change affected unrelated context components")
 	}
 }
 
@@ -204,6 +268,43 @@ func TestV1Alpha3ArtifactInputRejectsChangedProducerContentBeforeAudit(t *testin
 	}
 	if err := engine.validateContractArtifactInput(consumer, "result"); err == nil || !strings.Contains(err.Error(), "no longer matches producer identity") {
 		t.Fatalf("artifact input error = %v", err)
+	}
+}
+
+func TestV1Alpha3IncompatibleDurableArtifactFailsBeforeProviderExecution(t *testing.T) {
+	repo := newDurableRepo(t)
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		if request.Metadata["phase"] != "implement" {
+			return nil
+		}
+		path := filepath.Join(request.Workspace, "src", "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("accepted\n"), 0o644)
+	}}
+	e := newTypedContractEngine(t, repo, providerImpl)
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runPhase(context.Background(), "implement"); err != nil {
+		t.Fatal(err)
+	}
+	var record ContractArtifact
+	if ok, err := e.Store.GetJSON(e.contractArtifactRecord("implement", "result"), &record); err != nil || !ok {
+		t.Fatalf("artifact record: ok=%t err=%v", ok, err)
+	}
+	record.Type = "incompatible"
+	if err := e.Store.SetJSON(e.contractArtifactRecord("implement", "result"), record); err != nil {
+		t.Fatal(err)
+	}
+
+	err := e.runPhase(context.Background(), "audit")
+	if err == nil || !strings.Contains(err.Error(), `requires compatible artifact "result"`) {
+		t.Fatalf("audit error = %v", err)
+	}
+	if got := strings.Join(providerImpl.calls, ","); got != "implement:worker" {
+		t.Fatalf("provider calls = %q, want compiler failure before audit actor", got)
 	}
 }
 

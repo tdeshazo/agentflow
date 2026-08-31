@@ -151,9 +151,8 @@ spec:
       acknowledgement:
         type: exact-text
         value: "yes"
-      evidence:
-        record: human-verification
-        value: head_commit
+      skip:
+        allowed_when: "{{ not parameters.require_human_verification }}"
   completion:
     validation: final-quality
     assertions: [{type: workspace-integrity}, {type: implementation-workspace-clean}]

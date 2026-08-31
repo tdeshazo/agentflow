@@ -39,7 +39,7 @@ type V1Alpha2Spec struct {
 	Preconditions []Check                       `yaml:"preconditions"`
 	Validation    map[string]V1Alpha2Validation `yaml:"validation"`
 	Phases        []V1Alpha2Phase               `yaml:"phases"`
-	HumanGates    []HumanGate                   `yaml:"humanGates"`
+	HumanGates    []V1Alpha2HumanGate           `yaml:"humanGates"`
 	Completion    V1Alpha2Completion            `yaml:"completion"`
 	Reset         V1Alpha2Reset                 `yaml:"reset"`
 }
@@ -369,6 +369,25 @@ type V1Alpha2Completion struct {
 	Assertions []Assertion `yaml:"assertions"`
 }
 
+// V1Alpha2HumanGate exposes portable human verification authority without
+// allowing authors to select durable record names or procedural gate actions.
+type V1Alpha2HumanGate struct {
+	ID              string            `yaml:"id"`
+	Requires        []string          `yaml:"requires"`
+	If              string            `yaml:"if"`
+	Instructions    string            `yaml:"instructions"`
+	Checklist       []ChecklistItem   `yaml:"checklist"`
+	Acknowledgement Acknowledgement   `yaml:"acknowledgement"`
+	Skip            V1Alpha2HumanSkip `yaml:"skip"`
+}
+
+// V1Alpha2HumanSkip allows a conditional gate to be skipped without exposing
+// the runtime-owned durable evidence layout.
+type V1Alpha2HumanSkip struct {
+	AllowedWhen string `yaml:"allowed_when"`
+	Warning     string `yaml:"warning"`
+}
+
 func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Document, error) {
 	if authored == nil {
 		return nil, fmt.Errorf("empty v1alpha2 workflow")
@@ -402,7 +421,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 			Tools:      make(map[string]Tool, len(authored.Spec.Tools)+len(authored.Spec.Validation)),
 			Validation: make(map[string]Validation, len(authored.Spec.Validation)),
 			Phases:     make([]Phase, 0, len(authored.Spec.Phases)),
-			HumanGates: append([]HumanGate(nil), authored.Spec.HumanGates...),
+			HumanGates: normalizeV1Alpha2HumanGates(authored.Spec.HumanGates),
 			Completion: map[string]Completion{"default": {FinalValidation: authored.Spec.Completion.Validation, Assertions: append([]Assertion(nil), authored.Spec.Completion.Assertions...)}},
 		},
 		File: authored.File,
@@ -469,6 +488,23 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		DependencyGraph:   graph,
 		PhaseDependencies: graph.phaseDependenciesMap(),
 	}, nil
+}
+
+func normalizeV1Alpha2HumanGates(authored []V1Alpha2HumanGate) []HumanGate {
+	gates := make([]HumanGate, 0, len(authored))
+	for _, gate := range authored {
+		gates = append(gates, HumanGate{
+			ID:              gate.ID,
+			Requires:        append([]string(nil), gate.Requires...),
+			If:              gate.If,
+			Instructions:    gate.Instructions,
+			Checklist:       append([]ChecklistItem(nil), gate.Checklist...),
+			Acknowledgement: gate.Acknowledgement,
+			Evidence:        Marker{Value: "head_commit"},
+			Skip:            HumanSkip{AllowedWhen: gate.Skip.AllowedWhen, Warning: gate.Skip.Warning},
+		})
+	}
+	return gates
 }
 
 func normalizeV1Alpha2Agent(agent V1Alpha2Agent) Agent {
@@ -813,12 +849,7 @@ func (v v1alpha2Validator) references() {
 			v.add(path+".acknowledgement", "requires exact-text acknowledgement with a value")
 		}
 		v.condition(path+".if", gate.If)
-		if gate.When != "" {
-			v.add(path+".when", "use if; legacy when is not part of v1alpha2")
-		}
-		if gate.If != "" && gate.When != "" {
-			v.add(path, "must not declare both if and when")
-		}
+		v.condition(path+".skip.allowed_when", gate.Skip.AllowedWhen)
 	}
 	v.assertions("spec.completion.assertions", v.w.Spec.Completion.Assertions)
 	v.dependencyCycles(graph, phaseIndex)

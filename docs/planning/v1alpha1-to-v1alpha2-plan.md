@@ -108,6 +108,16 @@ Exit condition: the self-hosting workflow can be represented without lifecycle, 
 
 ### Phase 3: Migrate real workflows
 
+Status: partially complete. Shipped examples and the human-gated
+representative default to v1alpha2, and a v1alpha3 self-hosting representative
+demonstrates the portable safety/control subset with typed handoffs. The
+canonical workflow at `spec/agent-workflow-v1alpha1.yaml` remains v1alpha1.
+The representative intentionally omits its criterion progress and Markdown
+bookkeeping semantics; v1alpha4 supplies generalized typed work-item building
+blocks, but they have not yet been applied to the canonical workflow and
+verified as an equivalent migration. The exit condition below therefore
+remains open.
+
 - Migrate self-hosting first.
 - Compare expanded normalized plans, not YAML fields.
 - Then migrate shipped examples and one human-gated workflow.

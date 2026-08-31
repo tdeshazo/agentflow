@@ -368,7 +368,10 @@ completion transition.
 completion. Each gate has a stable ID, optional accepted-phase `requires`, an
 optional bounded `if` condition, instructions/checklist, and an `exact-text`
 acknowledgement. The acknowledgement is persisted as durable evidence, so a
-restart does not ask again. Actor output cannot satisfy a gate.
+restart does not ask again. The runtime records the accepted commit under its
+own `human/<gate-id>` identity; successor documents cannot name evidence
+records or attach procedural actions to a gate. An optional `skip` may contain
+only `allowed_when` and `warning`. Actor output cannot satisfy or skip a gate.
 
 `completion.assertions` uses the shared deterministic assertion vocabulary:
 `workspace-integrity`, `integrity-baseline-unchanged`,

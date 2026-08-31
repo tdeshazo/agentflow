@@ -54,7 +54,7 @@ Choose the requested mode:
    fail-fix-rerun cycles. Put the complete relevant contract in the repair
    prompt or provide one deterministic preflight that reports all mismatches.
 8. In v1alpha4, declare criteria with stable IDs and exactly one `advanceWorkItem` phase per item. Use `forEach` only for statically declared work items and set `maxItems` to that exact count. Use `markdownChecklist` only as the runtime-owned mirror; do not ask an actor to edit it. Keep dynamic criterion loops and Markdown bookkeeping transitions in v1alpha1 compatibility workflows.
-9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, durable evidence, and intentional skip behavior.
+9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, and intentional skip behavior. In v1alpha2 and later, rely on the runtime-owned durable evidence identity; do not declare record names or procedural gate actions.
 10. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
 11. Design the same document for fresh initialization, active-phase recovery,
     accepted-phase resume, completion retry, already-complete invocation, and

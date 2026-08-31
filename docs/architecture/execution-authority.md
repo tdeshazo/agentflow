@@ -75,6 +75,25 @@ checkpointing, file/checklist assertions, and other supported tools according
 to the workflow. A provider executes the AI actor request; it does not become a
 deterministic tool and its final message does not replace a validation result.
 
+### Derived invocation context
+
+Provider-visible context is compiled immediately before each actor invocation;
+it is neither authored workflow authority nor durable acceptance state. The
+compiler selects the expanded objective, current relevant workspace projection,
+accepted direct dependency commits, only the typed artifacts/evidence declared
+by the consumer, effective mutation and commit authority, executor capabilities,
+required validations, and the selected bounded/redacted repair failure when
+applicable. It excludes transcripts, provider output, unrelated contracts,
+broad history, artifact bodies, timestamps, random quarantine paths, complete
+environments, and secrets.
+
+The engine represents the workspace with a stable placeholder. Provider
+adapters may validate and render the structured context and resolve that
+placeholder to the isolated actor workspace; they may not reconstruct workflow
+semantics or substitute the authoritative workspace. Pending invocation state
+continues to persist only attribution and quarantine-reconciliation data, not
+the compiled context or objective.
+
 ## Acceptance and checkpointing
 
 A mutable phase is accepted only after its configured deterministic validation
@@ -204,11 +223,12 @@ invocation record containing only non-secret execution attribution:
 - the validation identity or scope, when required for a repair or completion
   invocation.
 
-It never stores the prompt, model output, provider final message, parameter
-values, environment values, or secrets. The record is written before
-`provider.Run` begins and is retained until the authority result and any
-required phase attribution are durable. Pending invocation evidence identifies
-which invocation caused `HEAD` movement; it is never phase acceptance evidence.
+It never stores the compiled context, objective, model output, provider final
+message, parameter values, environment values, or secrets. The record is
+written before `provider.Run` begins and is retained until the authority result
+and any required phase attribution are durable. Pending invocation evidence
+identifies which invocation caused `HEAD` movement; it is never phase acceptance
+evidence.
 
 After provider return, including a provider error, the runtime compares current
 `HEAD` with the recorded start commit. If it moved, the movement is attributed

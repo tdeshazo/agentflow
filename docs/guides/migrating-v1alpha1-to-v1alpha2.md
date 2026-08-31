@@ -101,15 +101,18 @@ superficial YAML similarity as proof of equivalence.
 | Default successor | Compatibility copy | Preserved authority |
 | --- | --- | --- |
 | [`examples/art-portfolio.agent-workflow.yaml`](../../examples/art-portfolio.agent-workflow.yaml) | [`examples/art-portfolio-v1alpha1.agent-workflow.yaml`](../../examples/art-portfolio-v1alpha1.agent-workflow.yaml) | Identical mutation scope, resolved agent capabilities, phase acceptance gates, bounded repair, and final validation; v1alpha2 adds explicit initialization, lineage, reset, and clean-completion policy. |
-| [`examples/representative/human-gated-release.agent-workflow.yaml`](../../examples/representative/human-gated-release.agent-workflow.yaml) | [`examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml`](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) | The same release phase, deterministic gate, checklist, exact acknowledgement, and durable human evidence; v1alpha2 adds final completion validation and initialization policy. |
-| [`examples/representative/agentflow-self-hosting.agent-workflow.yaml`](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | [`spec/agent-workflow-v1alpha1.yaml`](../../spec/agent-workflow-v1alpha1.yaml) | Mutation/integrity policy, deterministic gate and bounded repair, safe resume, human evidence, and final completion are equal or stronger without lifecycle, recovery, state-record, or flow plumbing. |
+| [`examples/representative/human-gated-release.agent-workflow.yaml`](../../examples/representative/human-gated-release.agent-workflow.yaml) | [`examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml`](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) | The same release phase, deterministic gate, checklist, exact acknowledgement, and durable human evidence; v1alpha2 makes the evidence record runtime-owned and adds final completion validation and initialization policy. |
+| [`examples/representative/agentflow-self-hosting.agent-workflow.yaml`](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | [`spec/agent-workflow-v1alpha1.yaml`](../../spec/agent-workflow-v1alpha1.yaml) | Portable mutation/integrity policy, deterministic gates and bounded repair, safe resume, human evidence, final completion, and typed handoffs are represented without lifecycle, recovery, state-record, or flow plumbing. Criterion progress and Markdown bookkeeping are intentionally excluded, so this is not a semantic-equivalence claim for the canonical source. |
 
-The canonical self-hosting v1alpha1 source remains executable as a
-compatibility source. Its portable successor now uses v1alpha3 typed handoffs
-and does not mechanically copy criterion progress or Markdown bookkeeping.
-Phase 5 provides their generalized replacement in v1alpha4: the
-criterion-driven representative uses typed engine-owned work items and keeps
-Markdown only as an optional presentation adapter.
+The canonical self-hosting source under `spec/` remains v1alpha1 and
+executable. The v1alpha3 file is a portable successor representative, not yet a
+replacement for that canonical source: it adds typed handoffs but does not
+mechanically copy criterion progress or Markdown bookkeeping. Phase 5 provides
+generalized replacement building blocks in v1alpha4—the criterion-driven
+representative uses typed engine-owned work items and keeps Markdown only as an
+optional presentation adapter—but applying those semantics to the canonical
+self-hosting workflow and proving equivalent authority remain open Phase 3
+work.
 
 ## What does not migrate automatically
 

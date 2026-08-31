@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -98,7 +99,7 @@ spec:
       requires: [audit]
       instructions: Verify the release in the target environment.
       acknowledgement: {type: exact-text, value: approve}
-      evidence: {value: head_commit}
+      skip: {allowed_when: "{{ not parameters.release }}", warning: Release approval was not required.}
   completion:
     validation: quality
     assertions: [{type: workspace-integrity}]
@@ -124,6 +125,46 @@ spec:
 	}
 	if len(normalized.Spec.HumanGates) != 1 || len(normalized.Spec.Completion["default"].Assertions) != 1 || normalized.Spec.State.Reset.Allowed == nil || !*normalized.Spec.State.Reset.Allowed || !normalized.Spec.State.Reset.RequireCleanWorkspace {
 		t.Fatalf("normalized completion authority = %#v / %#v", normalized.Spec.HumanGates, normalized.Spec.Completion)
+	}
+	gate := normalized.Spec.HumanGates[0]
+	if gate.Evidence != (Marker{Value: "head_commit"}) || gate.IdempotentRecord != "" || gate.Skip.Record != "" || gate.Skip.Evidence != (Marker{}) {
+		t.Fatalf("normalized human evidence authority = %#v", gate)
+	}
+	if gate.Skip.AllowedWhen != "{{ not parameters.release }}" || gate.Skip.Warning != "Release approval was not required." {
+		t.Fatalf("normalized human skip authority = %#v", gate.Skip)
+	}
+}
+
+func TestV1Alpha2SuccessorHumanGatesRejectLegacyAuthority(t *testing.T) {
+	versions := []string{"agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3", "agentflow.dev/v1alpha4"}
+	legacyFields := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{name: "procedural after", yaml: "after: []", want: "field after"},
+		{name: "custom idempotent record", yaml: "idempotent_record: custom", want: "field idempotent_record"},
+		{name: "legacy when", yaml: `when: "{{ true }}"`, want: "field when"},
+		{name: "custom evidence record", yaml: "evidence: {record: custom, value: head_commit}", want: "field evidence"},
+		{name: "custom skip record", yaml: "skip: {record: custom}", want: "field record"},
+		{name: "custom skip evidence record", yaml: "skip: {evidence: {record: custom}}", want: "field evidence"},
+	}
+	for _, version := range versions {
+		for _, field := range legacyFields {
+			t.Run(version+"/"+field.name, func(t *testing.T) {
+				document := fmt.Sprintf(`apiVersion: %s
+kind: AgentWorkflow
+metadata: {name: strict-human-gate}
+spec:
+  humanGates:
+    - id: approval
+      %s
+`, version, field.yaml)
+				if _, err := Decode(writeWorkflow(t, document)); err == nil || !strings.Contains(err.Error(), field.want) {
+					t.Fatalf("Decode error = %v, want strict rejection containing %q", err, field.want)
+				}
+			})
+		}
 	}
 }
 

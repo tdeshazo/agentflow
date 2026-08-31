@@ -65,7 +65,7 @@ func TestPlanExpandedCLI(t *testing.T) {
 	if strings.Contains(output.String(), "\x1b[") {
 		t.Fatalf("plan YAML contains ANSI escapes: %q", output.String())
 	}
-	for _, want := range []string{"resolvedLifecycle:", "safetyEnforcementPoints:", "recoveryBehavior:", "completionContract:"} {
+	for _, want := range []string{"resolvedLifecycle:", "safetyEnforcementPoints:", "recoveryBehavior:", "contextRecipes:", "runtimeResolved: true", "artifact contents", "completionContract:"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("plan output missing %q:\n%s", want, output.String())
 		}

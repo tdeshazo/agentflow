@@ -162,6 +162,10 @@ func collectMigrationDiagnostics(node *yaml.Node, path string, matrix MigrationM
 				childPath = path + "." + childPath
 			}
 			if value.Kind == yaml.MappingNode || value.Kind == yaml.SequenceNode {
+				if len(value.Content) == 0 {
+					appendMigrationDiagnostic(childPath, key, matrix, diagnostics)
+					continue
+				}
 				collectMigrationDiagnostics(value, childPath, matrix, diagnostics)
 				continue
 			}
@@ -171,6 +175,10 @@ func collectMigrationDiagnostics(node *yaml.Node, path string, matrix MigrationM
 		for i, child := range node.Content {
 			childPath := fmt.Sprintf("%s[%d]", path, i)
 			if child.Kind == yaml.MappingNode || child.Kind == yaml.SequenceNode {
+				if len(child.Content) == 0 {
+					appendMigrationDiagnostic(childPath, child, matrix, diagnostics)
+					continue
+				}
 				collectMigrationDiagnostics(child, childPath, matrix, diagnostics)
 				continue
 			}

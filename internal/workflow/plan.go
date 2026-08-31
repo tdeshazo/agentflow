@@ -10,27 +10,28 @@ import (
 // It intentionally contains no provider invocation or mutable tool operation.
 type ExpandedPlan struct {
 	Workflow string `yaml:"workflow"`
-	// NormalizedExecution is the complete executable projection after concise
-	// defaults and version-specific syntax have been lowered. It deliberately
-	// retains every shared workflow field that can affect execution so plan
-	// output is a comparison surface, not a summary that hides policy.
+	// NormalizedExecution is the complete authority projection after concise
+	// defaults and version-specific syntax have been lowered. Actor and repair
+	// objective prose is redacted; lifecycle, policy, and other executable
+	// control fields remain a comparison surface rather than a hidden summary.
 	// Authoring defaults are cleared because their resolved values appear at
 	// their authority-owning locations below.
-	NormalizedExecution        Workflow             `yaml:"normalizedExecution"`
-	WorkspaceMutationAllowlist []string             `yaml:"workspaceMutationAllowlist"`
-	ResolvedAgents             []PlannedAgent       `yaml:"resolvedAgents"`
-	ResolvedLifecycle          LifecyclePolicy      `yaml:"resolvedLifecycle"`
-	SafetyEnforcementPoints    []string             `yaml:"safetyEnforcementPoints"`
-	RecoveryBehavior           []string             `yaml:"recoveryBehavior"`
-	Validations                []PlannedValidation  `yaml:"validations"`
-	TypedContracts             PlannedContracts     `yaml:"typedContracts,omitempty"`
-	Criteria                   PlannedCriteria      `yaml:"criteria,omitempty"`
-	DependencyGraph            PhaseDependencyGraph `yaml:"dependencyGraph"`
-	Phases                     []PlannedPhase       `yaml:"phases"`
-	ProgressTransitions        []string             `yaml:"progressTransitions"`
-	CheckpointBehavior         string               `yaml:"checkpointBehavior"`
-	HumanGates                 []string             `yaml:"humanGates"`
-	CompletionContract         []string             `yaml:"completionContract"`
+	NormalizedExecution        Workflow               `yaml:"normalizedExecution"`
+	WorkspaceMutationAllowlist []string               `yaml:"workspaceMutationAllowlist"`
+	ResolvedAgents             []PlannedAgent         `yaml:"resolvedAgents"`
+	ResolvedLifecycle          LifecyclePolicy        `yaml:"resolvedLifecycle"`
+	SafetyEnforcementPoints    []string               `yaml:"safetyEnforcementPoints"`
+	RecoveryBehavior           []string               `yaml:"recoveryBehavior"`
+	Validations                []PlannedValidation    `yaml:"validations"`
+	TypedContracts             PlannedContracts       `yaml:"typedContracts,omitempty"`
+	Criteria                   PlannedCriteria        `yaml:"criteria,omitempty"`
+	DependencyGraph            PhaseDependencyGraph   `yaml:"dependencyGraph"`
+	Phases                     []PlannedPhase         `yaml:"phases"`
+	ContextRecipes             []PlannedContextRecipe `yaml:"contextRecipes"`
+	ProgressTransitions        []string               `yaml:"progressTransitions"`
+	CheckpointBehavior         string                 `yaml:"checkpointBehavior"`
+	HumanGates                 []string               `yaml:"humanGates"`
+	CompletionContract         []string               `yaml:"completionContract"`
 }
 type PlannedValidation struct {
 	Name             string   `yaml:"name"`
@@ -101,6 +102,24 @@ type PlannedPhase struct {
 	WorkItemID      string               `yaml:"workItemID,omitempty"`
 	AdvanceWorkItem bool                 `yaml:"advanceWorkItem,omitempty"`
 	Acceptance      []string             `yaml:"acceptance"`
+}
+
+// PlannedContextRecipe explains invocation-time context selection without
+// resolving or printing any provider prompt, parameter, failure, or artifact
+// content.
+type PlannedContextRecipe struct {
+	Role       string                    `yaml:"role"`
+	Phase      string                    `yaml:"phase,omitempty"`
+	Validation string                    `yaml:"validation,omitempty"`
+	Included   []PlannedContextComponent `yaml:"included"`
+	Excluded   []PlannedContextComponent `yaml:"excluded"`
+}
+
+type PlannedContextComponent struct {
+	Component       string `yaml:"component"`
+	Source          string `yaml:"source"`
+	Reason          string `yaml:"reason"`
+	RuntimeResolved bool   `yaml:"runtimeResolved,omitempty"`
 }
 
 func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
@@ -239,6 +258,17 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			Outputs: append([]string(nil), p.Outputs...), IfEvidence: p.IfEvidence,
 			ReadOnly: p.ReadOnly, WorkItemID: p.WorkItemID, AdvanceWorkItem: p.AdvanceWorkItem, Acceptance: acceptance,
 		})
+		if p.Actor != "" && !(p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0) {
+			plan.ContextRecipes = append(plan.ContextRecipes,
+				plannedContextRecipe("phase", p.ID, "", false),
+				plannedContextRecipe("phase-resume", p.ID, "", false),
+			)
+			if validation != "" {
+				if configured, ok := w.Spec.Validation[validation]; ok && configured.OnFailure.Strategy == "repair-once" {
+					plan.ContextRecipes = append(plan.ContextRecipes, plannedContextRecipe("validation-repair", p.ID, validation, true))
+				}
+			}
+		}
 		if p.Kind == "criterion" && p.AdvanceProgress {
 			plan.ProgressTransitions = append(plan.ProgressTransitions, p.ID+": engine advances only criterionID after validation")
 		}
@@ -259,7 +289,47 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		plan.CompletionContract = append(plan.CompletionContract, strings.Join(parts, ": "))
 	}
 	sort.Strings(plan.HumanGates)
+	usedRepair := map[string]bool{}
+	for _, recipe := range plan.ContextRecipes {
+		if recipe.Role == "validation-repair" {
+			usedRepair[recipe.Validation] = true
+		}
+	}
+	for _, name := range sortedKeys(w.Spec.Validation) {
+		validation := w.Spec.Validation[name]
+		if validation.OnFailure.Strategy == "repair-once" && !usedRepair[name] {
+			plan.ContextRecipes = append(plan.ContextRecipes, plannedContextRecipe("validation-repair", "", name, true))
+		}
+	}
 	return plan, nil
+}
+
+func plannedContextRecipe(role, phase, validation string, includeFailure bool) PlannedContextRecipe {
+	included := []PlannedContextComponent{
+		{Component: "invocation identity", Source: "normalized phase and selected actor authority", Reason: "identify the bounded unit of work"},
+		{Component: "expanded objective", Source: "authored phase or repair objective", Reason: "state the actor-owned outcome"},
+		{Component: "workspace state", Source: "Git workspace projection", Reason: "inspect relevant retained and current work", RuntimeResolved: true},
+		{Component: "direct dependency identities", Source: "durable accepted phase markers", Reason: "bind inputs to accepted producers", RuntimeResolved: true},
+		{Component: "declared artifact references", Source: "durable typed contract records and verified workspace files", Reason: "provide only declared typed handoffs", RuntimeResolved: true},
+		{Component: "declared deterministic evidence", Source: "durable typed evidence records", Reason: "provide only declared validation claims", RuntimeResolved: true},
+		{Component: "effective authority", Source: "normalized workspace, phase, and actor policy", Reason: "describe runtime-enforced mutation and commit boundaries"},
+		{Component: "executor capabilities", Source: "normalized actor and provider boundary", Reason: "describe effective execution capabilities"},
+		{Component: "required validations", Source: "normalized lifecycle and selected validation policy", Reason: "identify deterministic checks required for acceptance"},
+	}
+	if includeFailure {
+		included = append(included, PlannedContextComponent{Component: "selected repair failure", Source: "durable bounded and redacted validation failure", Reason: "focus repair on the failed deterministic validation", RuntimeResolved: true})
+	}
+	return PlannedContextRecipe{
+		Role: role, Phase: phase, Validation: validation, Included: included,
+		Excluded: []PlannedContextComponent{
+			{Component: "timestamps and random quarantine paths", Source: "runtime implementation detail", Reason: "non-deterministic and unnecessary"},
+			{Component: "transcripts and provider output", Source: "prior provider execution", Reason: "not workflow authority"},
+			{Component: "unrelated contracts and broad run history", Source: "durable runtime state", Reason: "not declared as direct invocation input"},
+			{Component: "artifact contents", Source: "workspace files", Reason: "actors read verified references from the isolated workspace"},
+			{Component: "resolved parameters, environments, and secrets", Source: "runtime inputs", Reason: "only authorized expansions may enter invocation context at runtime"},
+			{Component: "token and resource budgets", Source: "Stage 5.5 exit criterion", Reason: "enforcement is explicitly deferred"},
+		},
+	}
 }
 
 func normalizedExecutionProjection(w *Workflow, graph PhaseDependencyGraph) Workflow {
@@ -270,6 +340,18 @@ func normalizedExecutionProjection(w *Workflow, graph PhaseDependencyGraph) Work
 	// Leaving them here would make it unclear whether an authority came from a
 	// generated default or from the resolved execution contract.
 	projection.Spec.Defaults = AuthoringDefaults{}
+	// Objectives are provider-visible data resolved only during invocation
+	// compilation. Expanded planning explains their source but never prints
+	// authored prompt text.
+	projection.Spec.Phases = append([]Phase(nil), w.Spec.Phases...)
+	for i := range projection.Spec.Phases {
+		projection.Spec.Phases[i].Prompt = ""
+	}
+	projection.Spec.Validation = make(map[string]Validation, len(w.Spec.Validation))
+	for name, validation := range w.Spec.Validation {
+		validation.OnFailure.Repair.Prompt = ""
+		projection.Spec.Validation[name] = validation
+	}
 	projection.DependencyGraph = clonePhaseDependencyGraph(graph)
 	return projection
 }

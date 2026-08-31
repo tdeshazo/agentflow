@@ -339,10 +339,10 @@ For a mutable AI phase, the runtime performs this fixed contract:
    protected integrity, and mutation scope;
 4. capture the phase-start commit and progress snapshot, then persist the active
    phase before invoking the actor;
-5. prepend a runtime-owned execution boundary to the authored prompt, naming
-   writable and protected path patterns, engine-owned progress files, effective
-   commit authority, and the selected validation gate; this is advance guidance
-   for the actor and does not replace any enforcement boundary;
+5. compile a versioned provider-neutral invocation context containing the
+   expanded objective, relevant workspace state, accepted direct dependencies,
+   declared typed inputs, effective write/protected/runtime-owned/commit
+   authority, executor capabilities, and selected validation gates;
 6. persist the pending invocation before `provider.Run`, inspect `HEAD` after it
    returns even on provider error, attribute any movement to that actor, enforce
    the effective commit rule, and durably record the result before clearing the
@@ -483,7 +483,7 @@ type Provider interface {
 }
 ```
 
-`Request` describes workspace, model, reasoning effort, prompt, sandbox,
+`Request` describes workspace, model, reasoning effort, structured context, sandbox,
 execution-lifetime preferences, and an engine-owned filesystem boundary without
 exposing Codex-specific command-line arguments to the interpreter. Providers
 must enforce every `FilesystemBoundary` rule or reject the request; treating the
@@ -504,13 +504,48 @@ permission as authority for the current invocation. Runtime-owned checkpoint
 commits are outside this actor-created commit rule.
 
 The initial provider is `codex`. It maps an AgentFlow actor to non-interactive
-`codex exec`, passes prompts on stdin, uses the declared model/reasoning/sandbox,
+`codex exec`, validates the context version, substitutes only the quarantine
+workspace placeholder, renders the structured context canonically on stdin,
+uses the declared model/reasoning/sandbox,
 and honors `output_last_message` as capture intent. When true, the provider is
 asked to capture and return its final message when supported; when false, the
 runtime does not request that capture. A returned final message is diagnostic
 or presentation output only. Workflow acceptance does not depend on it;
 deterministic validation still owns advancement, and the message is never
 `actor_completed` evidence, dependency evidence, or completion authority.
+
+### Invocation context compilation
+
+Immediately before every primary, resumed, or validation-repair provider call,
+the engine derives `provider.InvocationContext` from normalized workflow
+authority and current runtime state. The context includes only the invocation
+identity and expanded objective; relevant changed and dirty paths; accepted
+direct dependency commits; verified references to declared artifact files and
+deterministic evidence; effective write, integrity, read-only, runtime-owned,
+and commit authority; executor capabilities; selected validations; and, for a
+repair, the selected durable bounded/redacted validation failure.
+
+Artifact bodies, transcripts, provider output, unrelated contracts, broad run
+history, timestamps, random quarantine paths, complete environments, and secret
+values are excluded. Artifact references carry workspace path, digest, and mode,
+so an actor reads the verified file from its quarantine rather than receiving a
+copied body. Compilation uses `{{ agentflow.workspace }}` as a stable workspace
+identity. Only the provider adapter resolves that placeholder, and only to the
+quarantine workspace while rendering.
+
+The compiled context is a derived view and is never written to durable workflow
+authority. Pending invocation records retain their existing attribution-only
+schema and do not acquire context, objectives, resolved parameters, failure
+output, artifact content, or secrets. `plan --expanded` exposes a per-phase,
+resume, and repair recipe listing each component's authority source and reason,
+plus intentional exclusions; runtime-resolved values and prompt text are not
+printed.
+
+Resource metadata currently grants read access to the full quarantine,
+identifies effective allowed writes (none for a read-only phase), and lists
+protected/runtime-owned exclusions for future Stage 6 conflict analysis. It
+does not enforce token, byte, file-count, monetary, or other budgets. That
+Stage 5.5 exit criterion remains open.
 
 ## Executed v1alpha1 core
 
@@ -560,7 +595,7 @@ The current runtime supports the following executable core:
 - automatic Git checkpoints of allowed dirty files;
 - resumable active phases and commit-aware phase markers;
 - interactive human gates with conditional skip, placement prerequisites, and
-  durable configured evidence records;
+  durable evidence records;
 - conditional flow steps, validation steps, generalized phase lifecycle
   actions, phases, runtime-derived active-phase recovery, and human gates;
 - flow assertions for clean workspace and empty progress; and
@@ -573,7 +608,10 @@ Completion summaries accept only `branch`, `base_commit`, `head_commit`,
 `final_gate_green`, `commits_since_base`, and `changed_files_since_base`;
 gate-green fields require a configured final validation. Human gates require
 declared prerequisite phases and an exact-text acknowledgement with a non-empty
-value. These contracts are validated before a repository is mutated.
+value. v1alpha2 and later store their evidence under the runtime-owned
+`human/<gate-id>` identity; only v1alpha1 compatibility documents may configure
+record layout or procedural gate actions. These contracts are validated before
+a repository is mutated.
 
 The expression evaluator is deliberately small and parsed before execution. It
 supports typed literals, a finite list of workflow/state/progress references,

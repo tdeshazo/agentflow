@@ -131,31 +131,71 @@ func (e *Engine) validateContractInputs(phase *workflow.Phase) error {
 }
 
 func (e *Engine) validateContractArtifactInput(consumer *workflow.Phase, name string) error {
+	_, err := e.loadContractArtifactInput(consumer, name)
+	return err
+}
+
+func (e *Engine) loadContractArtifactInput(consumer *workflow.Phase, name string) (ContractArtifact, error) {
 	producer, err := e.contractArtifactProducer(consumer, name)
 	if err != nil {
-		return err
+		return ContractArtifact{}, err
 	}
 	var record ContractArtifact
 	ok, err := e.Store.GetJSON(e.contractArtifactRecord(producer.ID, name), &record)
 	if err != nil {
-		return err
+		return ContractArtifact{}, err
 	}
 	if !ok {
-		return fmt.Errorf("phase %s requires artifact %q from phase %s, but no durable artifact record exists", consumer.ID, name, producer.ID)
+		return ContractArtifact{}, fmt.Errorf("phase %s requires artifact %q from phase %s, but no durable artifact record exists", consumer.ID, name, producer.ID)
 	}
-	if record.Version != contractRecordVersion || record.Name != name || record.Producer != producer.ID {
-		return fmt.Errorf("phase %s requires compatible artifact %q from phase %s", consumer.ID, name, producer.ID)
+	declared, declaredOK := e.Workflow.Spec.Contracts.Artifacts[name]
+	if !declaredOK || record.Version != contractRecordVersion || record.Name != name || record.Producer != producer.ID || record.Type != declared.Type || record.Persistence != declared.Persistence || len(record.Files) == 0 {
+		return ContractArtifact{}, fmt.Errorf("phase %s requires compatible artifact %q from phase %s", consumer.ID, name, producer.ID)
 	}
+	patterns := make([]string, 0, len(declared.Paths))
+	for _, path := range declared.Paths {
+		expanded, err := e.context(consumer).Expand(path)
+		if err != nil {
+			return ContractArtifact{}, fmt.Errorf("expand artifact %q input path: %w", name, err)
+		}
+		pattern, err := workspaceRelativePattern(e.Repo.Root, expanded)
+		if err != nil {
+			return ContractArtifact{}, fmt.Errorf("artifact %q input path: %w", name, err)
+		}
+		patterns = append(patterns, pattern)
+	}
+	matchedPatterns := make([]bool, len(patterns))
+	priorPath := ""
 	for _, file := range record.Files {
+		safe, err := workspaceRelativePattern(e.Repo.Root, file.Path)
+		if err != nil || safe != filepath.ToSlash(file.Path) || priorPath != "" && file.Path <= priorPath {
+			return ContractArtifact{}, fmt.Errorf("phase %s requires compatible artifact %q from phase %s", consumer.ID, name, producer.ID)
+		}
+		priorPath = file.Path
+		declaredFile := false
+		for i, pattern := range patterns {
+			if dependencyMatches(pattern, file.Path) {
+				declaredFile = true
+				matchedPatterns[i] = true
+			}
+		}
+		if !declaredFile {
+			return ContractArtifact{}, fmt.Errorf("phase %s artifact %q record contains undeclared path %q", consumer.ID, name, file.Path)
+		}
 		identity, err := hashValidationFile(filepath.Join(e.Repo.Root, filepath.FromSlash(file.Path)))
 		if err != nil {
-			return fmt.Errorf("phase %s artifact %q input %q is missing: %w", consumer.ID, name, file.Path, err)
+			return ContractArtifact{}, fmt.Errorf("phase %s artifact %q input %q is missing: %w", consumer.ID, name, file.Path, err)
 		}
 		if identity.Digest != file.Digest || identity.Mode != file.Mode {
-			return fmt.Errorf("phase %s artifact %q input %q no longer matches producer identity", consumer.ID, name, file.Path)
+			return ContractArtifact{}, fmt.Errorf("phase %s artifact %q input %q no longer matches producer identity", consumer.ID, name, file.Path)
 		}
 	}
-	return nil
+	for i, matched := range matchedPatterns {
+		if !matched {
+			return ContractArtifact{}, fmt.Errorf("phase %s artifact %q record omits declared path %q", consumer.ID, name, declared.Paths[i])
+		}
+	}
+	return record, nil
 }
 
 func (e *Engine) contractArtifactProducer(consumer *workflow.Phase, name string) (*workflow.Phase, error) {
@@ -191,12 +231,16 @@ func (e *Engine) persistContractValidationEvidence(name string, phase *workflow.
 }
 
 func (e *Engine) contractEvidenceAvailable(consumer *workflow.Phase, name string) (bool, error) {
+	if _, ok := e.Workflow.Spec.Contracts.Evidence[name]; !ok {
+		return false, fmt.Errorf("phase %s requires undeclared evidence %q", consumer.ID, name)
+	}
 	for _, dependency := range e.Workflow.DependencyGraph.Dependencies(consumer.ID) {
 		phase, err := e.phaseByID(dependency)
 		if err != nil {
 			return false, err
 		}
-		validation, ok := e.Workflow.Spec.Validation[phase.Validation]
+		validationName := e.phaseValidation(phase)
+		validation, ok := e.Workflow.Spec.Validation[validationName]
 		if !ok {
 			continue
 		}
@@ -212,7 +256,7 @@ func (e *Engine) contractEvidenceAvailable(consumer *workflow.Phase, name string
 			if !ok {
 				return false, nil
 			}
-			if record.Version != contractRecordVersion || record.Name != name || record.Producer != phase.ID || record.Validation != phase.Validation {
+			if record.Version != contractRecordVersion || record.Name != name || record.Producer != phase.ID || record.Validation != validationName {
 				return false, fmt.Errorf("phase %s requires compatible evidence %q from phase %s", consumer.ID, name, phase.ID)
 			}
 			return true, nil
@@ -224,9 +268,13 @@ func (e *Engine) contractEvidenceAvailable(consumer *workflow.Phase, name string
 func (e *Engine) requireCompletionEvidence() error {
 	completion := e.Workflow.Spec.Completion["default"]
 	for _, name := range completion.Evidence {
+		if _, ok := e.Workflow.Spec.Contracts.Evidence[name]; !ok {
+			return fmt.Errorf("completion requires undeclared evidence %q", name)
+		}
 		found := false
 		for _, phase := range e.Workflow.Spec.Phases {
-			validation, ok := e.Workflow.Spec.Validation[phase.Validation]
+			validationName := e.phaseValidation(&phase)
+			validation, ok := e.Workflow.Spec.Validation[validationName]
 			if !ok {
 				continue
 			}
@@ -239,7 +287,7 @@ func (e *Engine) requireCompletionEvidence() error {
 				if err != nil {
 					return err
 				}
-				if ok && record.Version == contractRecordVersion && record.Name == name && record.Producer == phase.ID && record.Validation == phase.Validation {
+				if ok && record.Version == contractRecordVersion && record.Name == name && record.Producer == phase.ID && record.Validation == validationName {
 					found = true
 				}
 			}

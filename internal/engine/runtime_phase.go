@@ -349,8 +349,7 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 			e.presenter().RetainedWorkPreflight()
 		}
 	}
-	prompt := "Resume this phase from the repository state already present.\nInspect partial commits and working-tree changes first; preserve correct work and finish only this phase's objective.\n\n" + p.Prompt
-	if err := e.runPhaseActor(ctx, p, prompt, &a); err != nil {
+	if err := e.runResumedPhaseActor(ctx, p, &a); err != nil {
 		return err
 	}
 	return e.finishPhase(ctx, p, a)
@@ -369,7 +368,15 @@ func (e *Engine) validateExistingPhaseState(ctx context.Context, name string, p 
 // does not cover repair actors; their bounded invocation is governed by their
 // validation policy, while this record answers whether the phase itself ran.
 func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt string, active *ActivePhase) error {
-	if err := e.runAgent(ctx, p.Actor, p.Reasoning, prompt, p); err != nil {
+	return e.runPhaseActorWithRole(ctx, p, prompt, invocationRolePhase, active)
+}
+
+func (e *Engine) runResumedPhaseActor(ctx context.Context, p *workflow.Phase, active *ActivePhase) error {
+	return e.runPhaseActorWithRole(ctx, p, p.Prompt, invocationRolePhaseResume, active)
+}
+
+func (e *Engine) runPhaseActorWithRole(ctx context.Context, p *workflow.Phase, objective, role string, active *ActivePhase) error {
+	if err := e.runAgentWithRole(ctx, p.Actor, p.Reasoning, objective, role, p); err != nil {
 		if policyErr := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); policyErr != nil {
 			var safetyErr *safetyViolation
 			if errors.As(policyErr, &safetyErr) {
@@ -402,7 +409,11 @@ func (e *Engine) runPhaseActor(ctx context.Context, p *workflow.Phase, prompt st
 	return nil
 }
 func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase) error {
-	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, PendingActorInvocation{Role: "phase"}, e.selectedPhaseValidations(p))
+	return e.runAgentWithRole(ctx, actorName, reasoning, prompt, invocationRolePhase, p)
+}
+
+func (e *Engine) runAgentWithRole(ctx context.Context, actorName, reasoning, objective, role string, p *workflow.Phase) error {
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, objective, role, p, PendingActorInvocation{Role: "phase"}, e.selectedPhaseValidations(p))
 }
 
 func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, prompt, validation string, p *workflow.Phase) error {
@@ -410,10 +421,10 @@ func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, promp
 		Role:            "validation-repair",
 		ValidationScope: e.validationInvocationScope(validation, p),
 	}
-	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, p, scope, []string{validation})
+	return e.runAgentWithInvocation(ctx, actorName, reasoning, prompt, invocationRoleRepair, p, scope, []string{validation})
 }
 
-func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase, invocation PendingActorInvocation, validations []string) error {
+func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, objective, role string, p *workflow.Phase, invocation PendingActorInvocation, validations []string) error {
 	a, ok := e.Workflow.Spec.Agents[actorName]
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
@@ -427,11 +438,11 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	if err != nil {
 		return err
 	}
-	prompt, err = x.Expand(prompt)
+	objective, err = x.Expand(objective)
 	if err != nil {
 		return err
 	}
-	prompt, err = e.runtimeOwnedActorPrompt(x, a, p, validations, prompt)
+	invocationContext, err := e.compileInvocationContext(actorName, role, objective, a, p, validations)
 	if err != nil {
 		return err
 	}
@@ -460,7 +471,7 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		Workspace:         e.Repo.Root,
 		Model:             model,
 		Reasoning:         reasoning,
-		Prompt:            prompt,
+		Context:           invocationContext,
 		Sandbox:           a.Sandbox,
 		Approval:          a.Approval,
 		Ephemeral:         a.Ephemeral,
@@ -506,45 +517,6 @@ func (e *Engine) selectedPhaseValidations(p *workflow.Phase) []string {
 	return validations
 }
 
-func (e *Engine) runtimeOwnedActorPrompt(x workflow.Context, agent workflow.Agent, p *workflow.Phase, validations []string, authoredPrompt string) (string, error) {
-	var contract strings.Builder
-	contract.WriteString("Runtime-enforced execution boundary:\n")
-	writePromptList(&contract, "writable path patterns", e.Workflow.Spec.Workspace.MutationPolicy.Allowed)
-	writeProtectedPromptPatterns(&contract, e.Workflow.Spec.Workspace.MutationPolicy.Integrity)
-
-	progressFiles, err := e.engineOwnedProgressFiles(x, p)
-	if err != nil {
-		return "", err
-	}
-	writePromptList(&contract, "runtime-owned progress files (do not edit)", progressFiles)
-	if p != nil {
-		inputs := make([]string, 0, len(p.Inputs))
-		for _, input := range p.Inputs {
-			if input.Artifact != "" {
-				inputs = append(inputs, "artifact:"+input.Artifact)
-			}
-			if input.Evidence != "" {
-				inputs = append(inputs, "evidence:"+input.Evidence)
-			}
-		}
-		writePromptList(&contract, "verified typed inputs", inputs)
-		if p.ReadOnly {
-			contract.WriteString("read-only audit: do not modify workspace files; the runtime rejects any workspace mutation\n")
-		}
-	}
-
-	if e.effectiveActorCommitPermission(agent) {
-		contract.WriteString("commit authority: allowed; commits created by this actor are permitted but do not establish acceptance\n")
-	} else {
-		contract.WriteString("commit authority: forbidden; do not create commits\n")
-	}
-	writePromptList(&contract, "required checks", validations)
-	contract.WriteString("If the task conflicts with this boundary, stop and report the conflict instead of changing protected or out-of-scope files, editing runtime-owned progress, or creating an unauthorized commit.\n")
-	contract.WriteString("\nTask:\n")
-	contract.WriteString(authoredPrompt)
-	return contract.String(), nil
-}
-
 func (e *Engine) engineOwnedProgressFiles(x workflow.Context, p *workflow.Phase) ([]string, error) {
 	if p == nil {
 		return nil, nil
@@ -575,50 +547,6 @@ func (e *Engine) engineOwnedProgressFiles(x workflow.Context, p *workflow.Phase)
 		resolved = append(resolved, path)
 	}
 	return resolved, nil
-}
-
-func writePromptList(prompt *strings.Builder, label string, values []string) {
-	fmt.Fprintf(prompt, "%s:\n", label)
-	if len(values) == 0 {
-		prompt.WriteString("  - (none)\n")
-		return
-	}
-	for _, value := range values {
-		fmt.Fprintf(prompt, "  - %q\n", value)
-	}
-}
-
-func writeProtectedPromptPatterns(prompt *strings.Builder, rules []workflow.IntegrityRule) {
-	prompt.WriteString("protected path patterns:\n")
-	count := 0
-	for _, rule := range rules {
-		for _, path := range rule.Paths {
-			if actorPromptInternalPath(path) {
-				continue
-			}
-			fmt.Fprintf(prompt, "  - %q", path)
-			if len(rule.Exclude) > 0 {
-				fmt.Fprintf(prompt, " [excludes=%s]", quotedPromptValues(rule.Exclude))
-			}
-			prompt.WriteString("\n")
-			count++
-		}
-	}
-	if count == 0 {
-		prompt.WriteString("  - (none)\n")
-	}
-}
-
-func actorPromptInternalPath(path string) bool {
-	return gitstate.IsActorPrivatePath(path)
-}
-
-func quotedPromptValues(values []string) string {
-	quoted := make([]string, 0, len(values))
-	for _, value := range values {
-		quoted = append(quoted, fmt.Sprintf("%q", value))
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // effectiveActorCommitPermission reports whether one specific actor invocation
@@ -728,7 +656,6 @@ func remapProviderRequestWorkspace(request provider.Request, authoritativeRoot, 
 	request.Workspace = quarantineRoot
 	request.Model = remap(request.Model)
 	request.Reasoning = remap(request.Reasoning)
-	request.Prompt = remap(request.Prompt)
 	request.Sandbox = remap(request.Sandbox)
 	request.Approval = remap(request.Approval)
 	request.Presentation = provider.PresentationIntent(remap(string(request.Presentation)))

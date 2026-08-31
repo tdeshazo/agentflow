@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -43,6 +44,53 @@ func TestExpandedPlanRevealsResolvedDefaultsAndAcceptanceOrder(t *testing.T) {
 	if strings.Index(acceptance, "deterministic validation") > strings.Index(acceptance, "checkpoint") {
 		t.Fatalf("validation occurs after checkpoint: %q", acceptance)
 	}
+	if len(plan.ContextRecipes) != 3 {
+		t.Fatalf("context recipes = %#v", plan.ContextRecipes)
+	}
+	for _, recipe := range plan.ContextRecipes {
+		if len(recipe.Included) == 0 || len(recipe.Excluded) == 0 {
+			t.Fatalf("incomplete context recipe = %#v", recipe)
+		}
+		for _, component := range recipe.Included {
+			if component.Component == "workspace state" && !component.RuntimeResolved {
+				t.Fatalf("workspace recipe is not runtime-resolved: %#v", recipe)
+			}
+		}
+	}
+	repairRecipe := plan.ContextRecipes[2]
+	if repairRecipe.Role != "validation-repair" || repairRecipe.Validation != "gate" || repairRecipe.Included[len(repairRecipe.Included)-1].Component != "selected repair failure" {
+		t.Fatalf("repair context recipe = %#v", repairRecipe)
+	}
+}
+
+func TestExpandedPlansExposeContextRecipesAcrossAPIVersions(t *testing.T) {
+	paths := []string{
+		filepath.Join("testdata", "conformance", "valid", "minimal.yaml"),
+		filepath.Join("testdata", "conformance", "valid", "v1alpha2-concise.yaml"),
+		filepath.Join("testdata", "conformance", "valid", "v1alpha3-typed-contracts.yaml"),
+		filepath.Join("testdata", "conformance", "valid", "v1alpha4-typed-work-items.yaml"),
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			document, err := Decode(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := BuildExpandedPlan(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.ContextRecipes) == 0 {
+				t.Fatalf("%s has no context recipes", document.Workflow.APIVersion)
+			}
+			for _, recipe := range plan.ContextRecipes {
+				blob := fmt.Sprintf("%#v", recipe)
+				if strings.Contains(blob, document.Workflow.Spec.Phases[0].Prompt) {
+					t.Fatalf("context recipe exposed prompt text: %s", blob)
+				}
+			}
+		})
+	}
 }
 
 func TestExpandedPlanIncludesCompleteNormalizedExecutionContract(t *testing.T) {
@@ -61,6 +109,15 @@ func TestExpandedPlanIncludesCompleteNormalizedExecutionContract(t *testing.T) {
 	want := *normalized.Workflow
 	want.Spec = normalized.Workflow.Spec
 	want.Spec.Defaults = AuthoringDefaults{}
+	want.Spec.Phases = append([]Phase(nil), normalized.Workflow.Spec.Phases...)
+	for i := range want.Spec.Phases {
+		want.Spec.Phases[i].Prompt = ""
+	}
+	want.Spec.Validation = make(map[string]Validation, len(normalized.Workflow.Spec.Validation))
+	for name, validation := range normalized.Workflow.Spec.Validation {
+		validation.OnFailure.Repair.Prompt = ""
+		want.Spec.Validation[name] = validation
+	}
 	want.DependencyGraph = clonePhaseDependencyGraph(normalized.DependencyGraph)
 	if !reflect.DeepEqual(plan.NormalizedExecution, want) {
 		t.Fatalf("normalized execution differs from executable workflow:\n got %#v\nwant %#v", plan.NormalizedExecution, want)

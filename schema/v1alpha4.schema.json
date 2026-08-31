@@ -122,92 +122,6 @@
       },
       "type": "object"
     },
-    "HumanAfter": {
-      "additionalProperties": false,
-      "properties": {
-        "phase": {
-          "type": "string"
-        },
-        "validation": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "HumanGate": {
-      "additionalProperties": false,
-      "properties": {
-        "acknowledgement": {
-          "$ref": "#/$defs/Acknowledgement"
-        },
-        "after": {
-          "items": {
-            "$ref": "#/$defs/HumanAfter"
-          },
-          "type": "array"
-        },
-        "checklist": {
-          "items": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "$ref": "#/$defs/ChecklistItem"
-              }
-            ]
-          },
-          "type": "array"
-        },
-        "evidence": {
-          "$ref": "#/$defs/Marker"
-        },
-        "id": {
-          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
-          "type": "string"
-        },
-        "idempotent_record": {
-          "type": "string"
-        },
-        "if": {
-          "type": "string"
-        },
-        "instructions": {
-          "type": "string"
-        },
-        "requires": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "skip": {
-          "$ref": "#/$defs/HumanSkip"
-        },
-        "when": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "HumanSkip": {
-      "additionalProperties": false,
-      "properties": {
-        "allowed_when": {
-          "type": "string"
-        },
-        "evidence": {
-          "$ref": "#/$defs/Marker"
-        },
-        "record": {
-          "type": "string"
-        },
-        "warning": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "IntegrityRule": {
       "additionalProperties": false,
       "properties": {
@@ -244,18 +158,6 @@
             "type": "string"
           },
           "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "Marker": {
-      "additionalProperties": false,
-      "properties": {
-        "record": {
-          "type": "string"
-        },
-        "value": {
-          "type": "string"
         }
       },
       "type": "object"
@@ -361,6 +263,59 @@
           "type": "string"
         },
         "sandbox": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2HumanGate": {
+      "additionalProperties": false,
+      "properties": {
+        "acknowledgement": {
+          "$ref": "#/$defs/Acknowledgement"
+        },
+        "checklist": {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/ChecklistItem"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
+          "type": "string"
+        },
+        "if": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "requires": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "$ref": "#/$defs/V1Alpha2HumanSkip"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2HumanSkip": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_when": {
+          "type": "string"
+        },
+        "warning": {
           "type": "string"
         }
       },
@@ -683,7 +638,7 @@
         },
         "humanGates": {
           "items": {
-            "$ref": "#/$defs/HumanGate"
+            "$ref": "#/$defs/V1Alpha2HumanGate"
           },
           "type": "array"
         },

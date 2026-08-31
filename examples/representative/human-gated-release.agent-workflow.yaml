@@ -53,9 +53,8 @@ spec:
       acknowledgement:
         type: exact-text
         value: approve-release
-      evidence:
-        record: release-approved
-        value: head_commit
+      skip:
+        allowed_when: "{{ not parameters.require_release_approval }}"
   completion:
     validation: release-check
     assertions: [{type: implementation-workspace-clean}]
