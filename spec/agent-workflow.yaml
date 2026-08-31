@@ -1,13 +1,12 @@
-apiVersion: agentflow.dev/v1alpha3
+apiVersion: agentflow.dev/v1alpha4
 kind: AgentWorkflow
 metadata:
   name: agentflow-self-hosting
 
 spec:
-  # The two independent read-only audits fan out after implementation and are
-  # joined by the scheduler before human verification and completion.
   execution:
     maxParallel: 2
+
   parameters:
     require_human_verification:
       type: boolean
@@ -18,15 +17,25 @@ spec:
     luna_model:
       type: string
       default: "{{ env.LUNA_MODEL | default('gpt-5.6-luna') }}"
+
   workspace:
-    allowWrites: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
+    allowWrites:
+      - internal/**
+      - cmd/**/*_test.go
+      - README.md
+      - docs/guides/**
+      - docs/planning/**
+      - spec/agent-workflow-progress.md
     integrity:
       - id: repository-instructions
         mode: exact-hash
         paths: [CONTRIBUTING.md, GO_STYLE_GUIDE.md, CODE_REVIEW.md]
-      - id: self-hosting-workflow
+      - id: canonical-self-hosting-workflow
         mode: exact-hash
-        paths: [examples/representative/agentflow-self-hosting.agent-workflow.yaml]
+        paths: [spec/agent-workflow.yaml]
+      - id: v1alpha1-compatibility-workflow
+        mode: exact-hash
+        paths: [spec/agent-workflow-v1alpha1.yaml]
       - id: agentflow-authoring-contract
         mode: exact-hash
         paths: [skills/agentflow-spec/SKILL.md]
@@ -44,6 +53,7 @@ spec:
       requireNamedBranch: true
       requireBaseAncestor: true
       requireSameBranch: true
+
   tools:
     scope:
       type: workspace-policy
@@ -51,6 +61,7 @@ spec:
     test:
       type: shell
       command: sh scripts/check.sh
+
   preconditions:
     - id: git-repository
       type: git-repository
@@ -64,7 +75,9 @@ spec:
         - CONTRIBUTING.md
         - GO_STYLE_GUIDE.md
         - CODE_REVIEW.md
-        - examples/representative/agentflow-self-hosting.agent-workflow.yaml
+        - spec/agent-workflow.yaml
+        - spec/agent-workflow-v1alpha1.yaml
+        - spec/agent-workflow-progress.md
         - skills/agentflow-spec/SKILL.md
         - ROADMAP.md
         - docs/planning/README.md
@@ -74,6 +87,7 @@ spec:
       type: file-contains
       path: .github/workflows/quality.yml
       text: scripts/check.sh
+
   agents:
     implementer:
       runner: codex
@@ -91,64 +105,136 @@ spec:
       ephemeral: true
       may_commit: false
       output_last_message: true
+
   validation:
-    phase-quality:
+    baseline-quality:
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: ["**"]
+      hard: true
+      produces: [baseline-accepted]
+    implementation-quality:
       steps: [{uses: scope}, {uses: test}]
       dependencies: ["**"]
       repair: {once: implementer}
       produces: [implementation-accepted]
+    verification-quality:
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: ["**"]
+      repair: {once: implementer}
+      produces: [verification-accepted]
+    integrated-audit-quality:
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: ["**"]
+      hard: true
+      produces: [integrated-audit-accepted]
+    final-audit-quality:
+      steps: [{uses: scope}, {uses: test}]
+      dependencies: ["**"]
+      hard: true
+      produces: [final-audit-accepted]
     final-quality:
       steps: [{uses: scope}, {uses: test}]
       dependencies: ["**"]
       hard: true
-      produces: [audit-accepted]
+
   artifacts:
     implementation-surface:
       type: files
       paths: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
       persistence: workspace
+
   evidence:
+    baseline-accepted: {type: validation}
     implementation-accepted: {type: validation}
-    audit-accepted: {type: validation}
+    verification-accepted: {type: validation}
+    integrated-audit-accepted: {type: validation}
+    final-audit-accepted: {type: validation}
+
+  criteria:
+    items:
+      - id: implement-agentflow-change
+        description: Implement one bounded AgentFlow specification or interpreter change.
+      - id: verify-agentflow-change
+        description: Add focused deterministic tests and documentation for the change.
+    markdownChecklist:
+      path: spec/agent-workflow-progress.md
+      items:
+        implement-agentflow-change: Implement one bounded AgentFlow specification or interpreter change.
+        verify-agentflow-change: Add focused deterministic tests and documentation for the change.
+
   phases:
+    - id: baseline-audit
+      kind: audit
+      actor: reviewer
+      prompt: Inspect the starting repository state without editing it; deterministic validation owns baseline acceptance.
+      reasoning: high
+      requiresChange: false
+      validation: baseline-quality
+      readOnly: true
+
     - id: implement-agentflow-change
       kind: implementation
       actor: implementer
+      dependsOn: [baseline-audit]
+      inputs: [{evidence: baseline-accepted}]
       prompt: Implement one bounded AgentFlow specification or interpreter change with focused tests and documentation.
       reasoning: high
       requiresChange: true
-      validation: phase-quality
+      validation: implementation-quality
+      writes: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
+      workItem: implement-agentflow-change
+      advanceWorkItem: true
+
+    - id: verify-agentflow-change
+      kind: implementation
+      actor: implementer
+      dependsOn: [implement-agentflow-change]
+      inputs: [{evidence: implementation-accepted}]
       outputs: [implementation-surface]
+      prompt: Add or refine focused deterministic tests and documentation for the accepted AgentFlow change.
+      reasoning: high
+      requiresChange: true
+      validation: verification-quality
+      writes: [internal/**, cmd/**/*_test.go, README.md, docs/guides/**, docs/planning/**]
+      workItem: verify-agentflow-change
+      advanceWorkItem: true
+
     - id: integrated-regression-audit
       kind: audit
       actor: reviewer
-      dependsOn: [implement-agentflow-change]
-      inputs: [{artifact: implementation-surface}, {evidence: implementation-accepted}]
-      ifEvidence: implementation-accepted
-      readOnly: true
-      prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks.
+      dependsOn: [implement-agentflow-change, verify-agentflow-change]
+      inputs:
+        - {artifact: implementation-surface}
+        - {evidence: implementation-accepted}
+        - {evidence: verification-accepted}
+      prompt: Independently audit the accepted AgentFlow change for authority, migration, and regression risks without editing the workspace.
       reasoning: high
       requiresChange: false
-      validation: final-quality
+      validation: integrated-audit-quality
+      readOnly: true
+
     - id: final-implementation-audit
       kind: audit
       actor: reviewer
-      dependsOn: [implement-agentflow-change]
-      inputs: [{artifact: implementation-surface}, {evidence: implementation-accepted}]
-      ifEvidence: implementation-accepted
-      readOnly: true
+      dependsOn: [implement-agentflow-change, verify-agentflow-change]
+      inputs:
+        - {artifact: implementation-surface}
+        - {evidence: implementation-accepted}
+        - {evidence: verification-accepted}
       prompt: Perform a final cross-cutting audit of implementation and tests; report only verified defects without editing the workspace.
       reasoning: high
       requiresChange: false
-      validation: final-quality
+      validation: final-audit-quality
+      readOnly: true
+
   humanGates:
     - id: terminal-confirmation
       requires: [integrated-regression-audit, final-implementation-audit]
       if: "{{ parameters.require_human_verification }}"
-      instructions: Run the repository's isolated local procedure and verify behavior in the real target terminal or environment.
+      instructions: Run the repository's isolated local procedure and verify the behavior in the real target terminal/environment.
       checklist:
         - Verify the primary interaction is usable end-to-end.
-        - Verify denied and authorization paths are actually denied.
+        - Verify denied/authorization paths are actually denied.
         - Verify compact, standard, and wide layouts remain reachable.
         - Verify repeated submission does not duplicate a pending mutation.
         - Verify backing out before submission causes no mutation.
@@ -157,10 +243,14 @@ spec:
         value: "yes"
       skip:
         allowed_when: "{{ not parameters.require_human_verification }}"
+
   completion:
     validation: final-quality
-    assertions: [{type: workspace-integrity}, {type: implementation-workspace-clean}]
-    evidence: [audit-accepted]
+    assertions:
+      - {type: workspace-integrity}
+      - {type: implementation-workspace-clean}
+    evidence: [integrated-audit-accepted, final-audit-accepted]
+
   reset:
     allow: true
     requireCleanWorkspace: true

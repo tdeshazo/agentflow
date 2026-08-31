@@ -328,20 +328,26 @@ func TestPhaseThreeMigrationsPreservePortableAuthority(t *testing.T) {
 		}
 	})
 
-	t.Run("self hosting carries portable authority while retaining its criterion exception", func(t *testing.T) {
+	t.Run("canonical self hosting successor preserves or strengthens portable authority", func(t *testing.T) {
 		legacy := phaseThreePlan(t, filepath.Join("..", "..", "spec", "agent-workflow-v1alpha1.yaml"))
-		successor := phaseThreePlan(t, filepath.Join("..", "..", "examples", "representative", "agentflow-self-hosting.agent-workflow.yaml"))
+		successor := phaseThreePlan(t, filepath.Join("..", "..", "spec", "agent-workflow.yaml"))
 		legacySpec, successorSpec := legacy.NormalizedExecution.Spec, successor.NormalizedExecution.Spec
-		if got, want := strings.Join(successor.WorkspaceMutationAllowlist, ","), strings.Join(legacy.WorkspaceMutationAllowlist, ","); got != want {
-			t.Fatalf("self-hosting mutation authority = %q, want %q", got, want)
+		actorWrites := append([]string(nil), successor.WorkspaceMutationAllowlist...)
+		if got := actorWrites[len(actorWrites)-1]; got != "spec/agent-workflow-progress.md" {
+			t.Fatalf("runtime-owned adapter path = %q", got)
+		}
+		actorWrites = actorWrites[:len(actorWrites)-1]
+		if got, want := strings.Join(actorWrites, ","), strings.Join(legacy.WorkspaceMutationAllowlist, ","); got != want {
+			t.Fatalf("self-hosting actor mutation authority = %q, want %q", got, want)
 		}
 		wantIntegrity := map[string][]string{
-			"repository-instructions":      {"CONTRIBUTING.md", "GO_STYLE_GUIDE.md", "CODE_REVIEW.md"},
-			"self-hosting-workflow":        {"examples/representative/agentflow-self-hosting.agent-workflow.yaml"},
-			"agentflow-authoring-contract": {"skills/agentflow-spec/SKILL.md"},
-			"canonical-quality-gate":       {"scripts/check.sh", ".github/workflows/quality.yml"},
-			"canonical-roadmap":            {"ROADMAP.md"},
-			"planning-guidance":            {"docs/planning/README.md"},
+			"repository-instructions":         {"CONTRIBUTING.md", "GO_STYLE_GUIDE.md", "CODE_REVIEW.md"},
+			"canonical-self-hosting-workflow": {"spec/agent-workflow.yaml"},
+			"v1alpha1-compatibility-workflow": {"spec/agent-workflow-v1alpha1.yaml"},
+			"agentflow-authoring-contract":    {"skills/agentflow-spec/SKILL.md"},
+			"canonical-quality-gate":          {"scripts/check.sh", ".github/workflows/quality.yml"},
+			"canonical-roadmap":               {"ROADMAP.md"},
+			"planning-guidance":               {"docs/planning/README.md"},
 		}
 		gotIntegrity := make(map[string][]string, len(successorSpec.Workspace.MutationPolicy.Integrity))
 		root := filepath.Join("..", "..")
@@ -374,14 +380,51 @@ func TestPhaseThreeMigrationsPreservePortableAuthority(t *testing.T) {
 				t.Errorf("self-hosting phase %q reasoning = %q, want supported Codex effort high", phase.ID, phase.Reasoning)
 			}
 		}
-		if got := successorSpec.Validation["phase-quality"].OnFailure; got.Strategy != "repair-once" || got.MaxRepairAttempts != 1 || got.Repair.Actor != "implementer" {
-			t.Fatalf("self-hosting repair authority = %#v", got)
+		for _, name := range []string{"implementation-quality", "verification-quality"} {
+			if got := successorSpec.Validation[name].OnFailure; got.Strategy != "repair-once" || got.MaxRepairAttempts != 1 || got.Repair.Actor != "implementer" {
+				t.Fatalf("self-hosting validation %q repair authority = %#v", name, got)
+			}
 		}
-		if len(successorSpec.HumanGates) != 1 || successorSpec.HumanGates[0].Acknowledgement.Type != "exact-text" || successorSpec.Completion["default"].FinalValidation != "final-quality" {
+		for _, name := range []string{"baseline-quality", "integrated-audit-quality", "final-audit-quality", "final-quality"} {
+			if got := successorSpec.Validation[name].OnFailure; got.Strategy != "" || got.MaxRepairAttempts != 0 {
+				t.Fatalf("hard self-hosting validation %q acquired repair authority: %#v", name, got)
+			}
+		}
+		if len(successorSpec.HumanGates) != 1 || successorSpec.HumanGates[0].Acknowledgement.Type != "exact-text" || !reflect.DeepEqual(successorSpec.HumanGates[0].Checklist, legacySpec.HumanGates[0].Checklist) || successorSpec.Completion["default"].FinalValidation != "final-quality" {
 			t.Fatalf("self-hosting human/completion authority = %#v / %#v", successorSpec.HumanGates, successorSpec.Completion)
 		}
-		if len(legacySpec.Progress.Criteria) == 0 || len(successorSpec.Progress.Criteria) != 0 {
-			t.Fatalf("criterion compatibility boundary is not explicit: legacy %#v successor %#v", legacySpec.Progress, successorSpec.Progress)
+		if len(legacySpec.Progress.Criteria) != 2 || len(successorSpec.Criteria.Items) != 2 || successorSpec.Criteria.MarkdownAdapter == nil {
+			t.Fatalf("typed criterion replacement is incomplete: legacy %#v successor %#v", legacySpec.Progress, successorSpec.Criteria)
+		}
+		if successorSpec.Criteria.MarkdownAdapter.Path != "spec/agent-workflow-progress.md" {
+			t.Fatalf("Markdown adapter = %#v", successorSpec.Criteria.MarkdownAdapter)
+		}
+		phases := map[string]Phase{}
+		for _, phase := range successorSpec.Phases {
+			phases[phase.ID] = phase
+		}
+		if !phases["baseline-audit"].ReadOnly || phases["baseline-audit"].Validation != "baseline-quality" {
+			t.Fatalf("baseline authority = %#v", phases["baseline-audit"])
+		}
+		for _, id := range []string{"implement-agentflow-change", "verify-agentflow-change"} {
+			if !phases[id].AdvanceWorkItem || phases[id].WorkItemID != id || !phases[id].RequiresChange {
+				t.Fatalf("work-item phase %q = %#v", id, phases[id])
+			}
+		}
+		for _, id := range []string{"integrated-regression-audit", "final-implementation-audit"} {
+			if !phases[id].ReadOnly || phases[id].Actor != "reviewer" || phases[id].RequiresChange {
+				t.Fatalf("independent audit phase %q = %#v", id, phases[id])
+			}
+		}
+		if successorSpec.Agents["reviewer"].MayCommit {
+			t.Fatalf("reviewer acquired commit authority: %#v", successorSpec.Agents["reviewer"])
+		}
+		completion := successorSpec.Completion["default"]
+		if !reflect.DeepEqual(completion.Evidence, []string{"integrated-audit-accepted", "final-audit-accepted"}) || len(completion.Assertions) != 2 {
+			t.Fatalf("typed completion authority = %#v", completion)
+		}
+		if successorSpec.Lifecycle.Policy != "safe-resume" || !successorSpec.State.Initialize.RequireCleanWorkspace || !successorSpec.State.Initialize.RequireNamedBranch || !successorSpec.State.Lineage.RequireBaseIsAncestorOfHead || !successorSpec.State.Resume.RequireSameBranch {
+			t.Fatalf("successor resume authority is not at least as strict: lifecycle=%#v state=%#v", successorSpec.Lifecycle, successorSpec.State)
 		}
 	})
 }
