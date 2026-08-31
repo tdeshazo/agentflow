@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
@@ -13,22 +14,23 @@ import (
 // LastError is bounded and redacts environment-shaped diagnostics before it is
 // persisted; it remains diagnostic only and never authorizes recovery.
 type StatusSnapshot struct {
-	SchemaVersion    int    `json:"schema_version"`
-	Workflow         string `json:"workflow"`
-	Repo             string `json:"repo"`
-	Initialized      bool   `json:"initialized"`
-	State            string `json:"state"`
-	HumanGate        string `json:"human_gate,omitempty"`
-	Base             string `json:"base,omitempty"`
-	Branch           string `json:"branch,omitempty"`
-	ActivePhase      string `json:"active_phase,omitempty"`
-	PhaseStartCommit string `json:"phase_start_commit,omitempty"`
-	ActorCompleted   bool   `json:"actor_completed"`
-	FailureKind      string `json:"failure_kind,omitempty"`
-	ValidationFailed string `json:"validation_failed,omitempty"`
-	FailureStage     string `json:"failure_stage,omitempty"`
-	LastError        string `json:"last_error,omitempty"`
-	QuarantinePath   string `json:"quarantine_path,omitempty"`
+	SchemaVersion    int      `json:"schema_version"`
+	Workflow         string   `json:"workflow"`
+	Repo             string   `json:"repo"`
+	Initialized      bool     `json:"initialized"`
+	State            string   `json:"state"`
+	HumanGate        string   `json:"human_gate,omitempty"`
+	Base             string   `json:"base,omitempty"`
+	Branch           string   `json:"branch,omitempty"`
+	ActivePhase      string   `json:"active_phase,omitempty"`
+	ParallelPhases   []string `json:"parallel_phases,omitempty"`
+	PhaseStartCommit string   `json:"phase_start_commit,omitempty"`
+	ActorCompleted   bool     `json:"actor_completed"`
+	FailureKind      string   `json:"failure_kind,omitempty"`
+	ValidationFailed string   `json:"validation_failed,omitempty"`
+	FailureStage     string   `json:"failure_stage,omitempty"`
+	LastError        string   `json:"last_error,omitempty"`
+	QuarantinePath   string   `json:"quarantine_path,omitempty"`
 	// Recovery and NextAction are stable, non-secret classifications. They
 	// describe how the existing runtime will evaluate a later run; they never
 	// authorize recovery or expose validation command output.
@@ -75,6 +77,16 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 			return StatusSnapshot{}, fmt.Errorf("active phase record %q has an invalid start commit", e.activeRecord())
 		}
 	}
+	var batch parallelBatch
+	batchExists, err := e.Store.GetJSON(parallelBatchRecord, &batch)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	if batchExists {
+		if err := e.validateParallelBatch(batch); err != nil {
+			return StatusSnapshot{}, fmt.Errorf("parallel scheduler status: %w", err)
+		}
+	}
 	var lastFailure gitstate.FailureRecord
 	failureExists, err := e.Store.GetJSON(e.lastFailureRecord(), &lastFailure)
 	if err != nil {
@@ -116,12 +128,15 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 			}
 		}
 	}
+	if initialized && !completed && !activeExists && batchExists {
+		state = "parallel-active"
+	}
 	if initialized && !completed && !activeExists && failureExists {
 		state = "failed/retryable"
 	}
 
 	pendingGate := ""
-	if initialized && !completed && !activeExists {
+	if initialized && !completed && !activeExists && !batchExists {
 		if gate, err := e.pendingHumanGateForStatus(); err != nil {
 			return StatusSnapshot{}, err
 		} else if gate != "" {
@@ -146,6 +161,7 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		LastError:          lastFailure.Error,
 		QuarantinePath:     lastFailure.QuarantinePath,
 		IntegrityViolation: lastFailure.IntegrityViolation,
+		ParallelPhases:     append([]string(nil), batch.Phases...),
 	}
 	if activeExists {
 		snapshot.ActivePhase = active.PhaseID
@@ -163,6 +179,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 
 func setRecoveryMetadata(snapshot *StatusSnapshot) {
 	switch snapshot.State {
+	case "parallel-active":
+		snapshot.Recovery = "automatic-on-rerun"
+		snapshot.NextAction = "rerun"
 	case "validation-failed/recoverable":
 		snapshot.Recovery = "automatic-on-rerun"
 		snapshot.NextAction = "rerun"
@@ -225,6 +244,9 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 			// absent from StatusSnapshot because it may contain command output.
 			p.MetadataStyled("validation_error", snapshot.validationError, clioutput.RoleError)
 		}
+	}
+	if len(snapshot.ParallelPhases) != 0 {
+		p.MetadataStyled("parallel_phases", strings.Join(snapshot.ParallelPhases, ", "), clioutput.RoleAccent)
 	}
 	if snapshot.FailureStage != "" {
 		p.MetadataStyled("failure_stage", snapshot.FailureStage, clioutput.RoleWarning)

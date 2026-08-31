@@ -57,6 +57,9 @@ type Spec struct {
 	Recovery      Recovery              `yaml:"recovery"`
 	Flow          []FlowStep            `yaml:"flow"`
 	Completion    map[string]Completion `yaml:"completion"`
+	// Execution is populated only by successor API projections. Keeping it out
+	// of the shared YAML model preserves the grammar-frozen v1alpha1 contract.
+	Execution ExecutionSpec `yaml:"-"`
 	// Contracts is populated only by the v1alpha3 projection. Keeping it out
 	// of the shared YAML model preserves the grammar-frozen v1alpha1 and the
 	// stable v1alpha2 authoring contracts.
@@ -68,6 +71,12 @@ type Spec struct {
 	// Defaults is an authoring convenience. Normalize resolves it before an
 	// engine is constructed, so it never weakens the executable contract.
 	Defaults AuthoringDefaults `yaml:"defaults"`
+}
+
+// ExecutionSpec selects the bounded dependency-scheduler policy. A zero value
+// preserves the historical serial scheduler.
+type ExecutionSpec struct {
+	MaxParallel int `yaml:"maxParallel"`
 }
 
 // AuthoringDefaults contains only inherited capability and lifecycle values.
@@ -470,6 +479,9 @@ type Phase struct {
 	Outputs    []string        `yaml:"-"`
 	IfEvidence string          `yaml:"-"`
 	ReadOnly   bool            `yaml:"-"`
+	// Writes is the phase-local mutation authority introduced with parallel
+	// scheduling. An empty list conservatively inherits the workflow allowlist.
+	Writes []string `yaml:"-"`
 	// WorkItemID and AdvanceWorkItem are v1alpha4-only. They deliberately do
 	// not reuse v1alpha1 criterion fields, whose semantics are coupled to a
 	// workspace-derived Markdown progress source.

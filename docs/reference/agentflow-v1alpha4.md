@@ -62,7 +62,12 @@ phases:
 
 Each generated actor receives the assigned item ID and description in its
 runtime prompt. Dependencies on a collection fan in on all of its generated
-nodes. This is static bounded expansion, not a dynamic loop.
+nodes. With `execution.maxParallel` enabled, generated nodes may run
+concurrently when their enforced `writes` scopes resolve to disjoint paths;
+for example, `items/{{ phase.id }}/**` gives each expanded phase a distinct
+directory. A shared Markdown adapter is runtime-owned workspace state and
+therefore serializes those transitions. This is static bounded expansion, not
+a dynamic loop.
 
 ## Markdown checklist adapter
 

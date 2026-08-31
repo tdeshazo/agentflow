@@ -5,7 +5,9 @@ package provider
 import "context"
 
 // Provider executes an AI-owned unit of work. The interpreter owns lifecycle,
-// validation, checkpointing, and completion; providers only perform the requested work.
+// validation, checkpointing, and completion; providers only perform the
+// requested work. Run may be called concurrently for independent scheduler
+// nodes, so implementations must not mutate shared state without synchronization.
 type Provider interface {
 	Name() string
 	Run(context.Context, Request) (Result, error)

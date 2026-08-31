@@ -60,6 +60,72 @@ func TestDecodeDispatchesV1Alpha2AndNormalizesDependencies(t *testing.T) {
 	}
 }
 
+func TestV1Alpha2ParallelExecutionNormalizesBoundAndWriteAuthority(t *testing.T) {
+	document := strings.Replace(v1alpha2Fixture, "spec:\n", "spec:\n  execution: {maxParallel: 2}\n", 1)
+	document = strings.Replace(document, "validation: tests}", "validation: tests, writes: [src/**]}", 1)
+	document = strings.Replace(document, "dependsOn: [implement]}", "dependsOn: [implement], writes: [tests/**]}", 1)
+	d, err := Decode(writeWorkflow(t, document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Validate(d)
+	if result.Status != Executable {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+	if got := result.Normalized.Workflow.Spec.Execution.MaxParallel; got != 2 {
+		t.Fatalf("normalized maxParallel = %d, want 2", got)
+	}
+	if got := result.Normalized.Workflow.Spec.Phases[0].Writes; !reflect.DeepEqual(got, []string{"src/**"}) {
+		t.Fatalf("normalized phase writes = %#v", got)
+	}
+	plan, err := BuildExpandedPlan(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Scheduler.MaxParallel != 2 || len(plan.Phases[0].Writes) != 1 {
+		t.Fatalf("planned scheduler = %#v, phases = %#v", plan.Scheduler, plan.Phases)
+	}
+}
+
+func TestV1Alpha2ParallelExecutionRejectsUnsafeAuthority(t *testing.T) {
+	tests := []struct {
+		name      string
+		transform func(string) string
+		path      string
+		message   string
+	}{
+		{
+			name: "zero bound",
+			transform: func(document string) string {
+				return strings.Replace(document, "spec:\n", "spec:\n  execution: {maxParallel: 0}\n", 1)
+			},
+			path: "spec.execution.maxParallel", message: "between 1 and 32",
+		},
+		{
+			name: "excessive bound",
+			transform: func(document string) string {
+				return strings.Replace(document, "spec:\n", "spec:\n  execution: {maxParallel: 33}\n", 1)
+			},
+			path: "spec.execution.maxParallel", message: "between 1 and 32",
+		},
+		{
+			name: "write scope outside workflow authority",
+			transform: func(document string) string {
+				return strings.Replace(document, "validation: tests}", "validation: tests, writes: [secrets/**]}", 1)
+			},
+			path: "spec.phases[0].writes[0]", message: "within workspace.allowWrites",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := ValidateFile(writeWorkflow(t, test.transform(v1alpha2Fixture)))
+			if result.Status != Invalid || !diagnosticsContain(result.Diagnostics, test.path, test.message) {
+				t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestV1Alpha2PhaseTwoAuthoritiesNormalizeWithoutProceduralFields(t *testing.T) {
 	document := `
 apiVersion: agentflow.dev/v1alpha2

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -377,6 +378,64 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 	}
 	if got := strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"); !containsColorArg(got, "auto") {
 		t.Fatalf("attached Codex args = %#v, want --color auto", got)
+	}
+}
+
+func TestRunSerializesConcurrentWritesToSharedStreams(t *testing.T) {
+	workspace := t.TempDir()
+	fake := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(fake, []byte(`#!/bin/sh
+i=0
+while [ "$i" -lt 200 ]; do
+	printf 'provider stdout\n'
+	printf 'provider stderr\n' >&2
+	i=$((i + 1))
+done
+`), 0o755); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+
+	var output bytes.Buffer
+	p := Provider{
+		Binary: fake,
+		Stdout: &output,
+		Stderr: &output,
+		OutputTTY: func(io.Writer) bool {
+			return false
+		},
+	}
+
+	const runs = 8
+	start := make(chan struct{})
+	errs := make(chan error, runs)
+	var group sync.WaitGroup
+	group.Add(runs)
+	for range runs {
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := p.Run(context.Background(), provider.Request{
+				Workspace: workspace,
+				Context:   testInvocationContext("perform the task"),
+				Approval:  "never",
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	}
+
+	if got, want := strings.Count(output.String(), "provider stdout\n"), runs*200; got != want {
+		t.Fatalf("stdout line count = %d, want %d", got, want)
+	}
+	if got, want := strings.Count(output.String(), "provider stderr\n"), runs*200; got != want {
+		t.Fatalf("stderr line count = %d, want %d", got, want)
 	}
 }
 

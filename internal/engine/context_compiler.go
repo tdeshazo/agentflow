@@ -88,7 +88,11 @@ func (e *Engine) compileInvocationContext(actorName, role, objective string, age
 
 	x := e.context(phase)
 	if !context.Authority.ReadOnly {
-		for _, path := range e.Workflow.Spec.Workspace.MutationPolicy.Allowed {
+		writes, err := e.effectivePhaseWrites(phase)
+		if err != nil {
+			return provider.InvocationContext{}, err
+		}
+		for _, path := range writes {
 			expanded, err := expandContextPath(x, path, e.Repo.Root)
 			if err != nil {
 				return provider.InvocationContext{}, fmt.Errorf("compile writable path %q: %w", path, err)

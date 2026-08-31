@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 )
@@ -303,5 +304,84 @@ func TestActorQuarantineRejectsOutOfScopePermissionOnlyChanges(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o644 {
 		t.Fatalf("rejected permission change poisoned primary mode = %04o, want 0644", got)
+	}
+}
+
+func TestChangedPathPermissionsPreservesDisjointSiblingState(t *testing.T) {
+	tests := []struct {
+		name        string
+		prepareLeft func(*testing.T, string)
+		assertLeft  func(*testing.T, string)
+	}{
+		{
+			name: "deleted file remains deleted",
+			prepareLeft: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			assertLeft: func(t *testing.T, path string) {
+				t.Helper()
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("accepted sibling deletion was reverted: %v", err)
+				}
+			},
+		},
+		{
+			name: "chmod remains in effect",
+			prepareLeft: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.Chmod(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			assertLeft: func(t *testing.T, path string) {
+				t.Helper()
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := info.Mode().Perm(); got != 0o600 {
+					t.Fatalf("accepted sibling mode = %04o, want 0600", got)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			left := filepath.Join(repo, "left.txt")
+			right := filepath.Join(repo, "right.txt")
+			if err := os.WriteFile(left, []byte("left\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(right, []byte("right\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tt.prepareLeft(t, left)
+
+			// The later actor observed left.txt at the baseline mode, but only
+			// right.txt belongs to its actual changed-path delta.
+			finalPermissions := gitstate.FilePermissions{
+				"left.txt":  0o644,
+				"right.txt": 0o600,
+			}
+			permissions := changedPathPermissions(finalPermissions, []string{"right.txt"})
+			if _, ok := permissions["left.txt"]; ok {
+				t.Fatal("permission delta retained a disjoint sibling path")
+			}
+			if _, err := (gitstate.Repo{Root: repo}).ApplyPatchIdempotent(nil, permissions); err != nil {
+				t.Fatalf("apply later actor permission delta: %v", err)
+			}
+			tt.assertLeft(t, left)
+			rightInfo, err := os.Stat(right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rightInfo.Mode().Perm(); got != 0o600 {
+				t.Fatalf("later actor mode = %04o, want 0600", got)
+			}
+		})
 	}
 }

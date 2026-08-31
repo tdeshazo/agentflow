@@ -94,6 +94,31 @@ semantics or substitute the authoritative workspace. Pending invocation state
 continues to persist only attribution and quarantine-reconciliation data, not
 the compiled context or objective.
 
+### Parallel scheduler authority
+
+Parallel readiness is derived from the same accepted dependency markers as
+serial readiness. `execution.maxParallel` only bounds how many isolated actor
+invocations may be active; it does not authorize a phase, validation,
+checkpoint, or completion transition. Declaration order is the deterministic
+selection and reconciliation tie-breaker, never a substitute for dependency
+evidence.
+
+The effective phase resource scope combines its enforced `writes` authority
+with runtime-owned workspace paths. Omitted `writes` inherits the complete
+workflow allowlist. The scheduler admits a batch only when scopes are empty
+(read-only) or provably disjoint; equal, nested, or ambiguous patterns and
+effective actor commit authority serialize. Every actor still runs in its own
+quarantine, and actual changes outside its phase scope are terminal safety
+failures even when those paths are allowed elsewhere in the workflow.
+
+An active batch and its per-node active, pending, outcome, and provider-return
+records are execution-policy state. They let restart reconcile retained
+quarantines and decide whether an actor returned, but they cannot satisfy
+`dependsOn`. Nodes are promoted one at a time through the ordinary
+validation/checkpoint/marker boundary. Provider failure cancels siblings and
+blocks downstream readiness without converting sibling cancellation into
+acceptance.
+
 ## Acceptance and checkpointing
 
 A mutable phase is accepted only after its configured deterministic validation
@@ -201,7 +226,8 @@ pre-upgrade ambiguous records receive the conservative completion lookup.
 ## Durable execution and recovery
 
 The interpreter stores workflow evidence in Git objects and namespaced refs,
-including base/branch lineage, an active-phase record, completed phase markers,
+including base/branch lineage, an active-phase record, parallel active-batch
+and phase-scoped invocation records, completed phase markers,
 human-gate evidence, integrity baselines, run identity, a pending actor
 invocation record, and the final completion marker. Successful deterministic
 validations also have digest-only, content-addressed evidence keyed by their

@@ -21,6 +21,7 @@ type V1Alpha3Workflow struct {
 
 type V1Alpha3Spec struct {
 	Parameters    map[string]Parameter          `yaml:"parameters"`
+	Execution     V1Alpha2Execution             `yaml:"execution"`
 	Workspace     V1Alpha2Workspace             `yaml:"workspace"`
 	Agents        map[string]V1Alpha2Agent      `yaml:"agents"`
 	Tools         map[string]Tool               `yaml:"tools"`
@@ -72,6 +73,7 @@ type V1Alpha3Phase struct {
 	Inputs         []V1Alpha3ContractInput `yaml:"inputs"`
 	Outputs        []string                `yaml:"outputs"`
 	ReadOnly       bool                    `yaml:"readOnly"`
+	Writes         []string                `yaml:"writes"`
 }
 
 type V1Alpha3Completion struct {
@@ -95,12 +97,13 @@ func (w *V1Alpha3Workflow) v1alpha2Projection() *V1Alpha2Workflow {
 			ID: phase.ID, Kind: phase.Kind, Actor: phase.Actor, Prompt: phase.Prompt,
 			Reasoning: phase.Reasoning, RequiresChange: phase.RequiresChange, If: phase.If,
 			Validation: phase.Validation, DependsOn: append([]string(nil), phase.DependsOn...),
+			Writes: append([]string(nil), phase.Writes...),
 		})
 	}
 	return &V1Alpha2Workflow{
 		APIVersion: w.APIVersion, Kind: w.Kind, Metadata: w.Metadata,
 		Spec: V1Alpha2Spec{
-			Parameters: w.Spec.Parameters, Workspace: w.Spec.Workspace, Agents: w.Spec.Agents,
+			Parameters: w.Spec.Parameters, Execution: w.Spec.Execution, Workspace: w.Spec.Workspace, Agents: w.Spec.Agents,
 			Tools: w.Spec.Tools, Preconditions: w.Spec.Preconditions, Validation: validations,
 			Phases: phases, HumanGates: w.Spec.HumanGates,
 			Completion: V1Alpha2Completion{Validation: w.Spec.Completion.Validation, Assertions: w.Spec.Completion.Assertions},
@@ -139,6 +142,7 @@ func normalizeV1Alpha3(authored *V1Alpha3Workflow, locations Locations) (*Docume
 		w.Spec.Phases[index].Outputs = append([]string(nil), phase.Outputs...)
 		w.Spec.Phases[index].IfEvidence = phase.IfEvidence
 		w.Spec.Phases[index].ReadOnly = phase.ReadOnly
+		w.Spec.Phases[index].Writes = append([]string(nil), phase.Writes...)
 	}
 	for name, validation := range authored.Spec.Validation {
 		shared := w.Spec.Validation[name]
@@ -249,6 +253,9 @@ func (v v1alpha3Validator) contracts() {
 		}
 		if phase.ReadOnly && len(phase.Outputs) != 0 {
 			v.add(path+".outputs", "read-only phases must not emit workspace artifacts")
+		}
+		if phase.ReadOnly && len(phase.Writes) != 0 {
+			v.add(path+".writes", "read-only phases must not declare writes")
 		}
 		if phase.ReadOnly && phase.Actor.Inline == nil {
 			if agent, ok := v.authored.Spec.Agents[phase.Actor.Name]; ok && agent.MayCommit {

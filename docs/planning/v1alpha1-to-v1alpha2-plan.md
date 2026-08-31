@@ -159,6 +159,9 @@ Exit condition: the existing v1alpha1 criterion workflow can migrate without put
 
 ### Phase 6: Introduce bounded parallel execution
 
+Status: implemented on `codex/v1alpha1-migration-phase1` (2026-08-30), under
+the documented Stage 5.5 budget-enforcement exception.
+
 Only after typed handoffs exist:
 
 - run independent ready nodes concurrently;
@@ -167,7 +170,10 @@ Only after typed handoffs exist:
 - persist scheduler state;
 - support deterministic fan-out/fan-in and restart.
 
-Exit condition: serial and parallel execution produce equivalent acceptance outcomes, and unsafe overlapping writes fail before invocation.
+Exit condition: satisfied. Serial is the default, parallel actors use isolated
+workspaces, overlap is explicitly serialized before invocation, actual changes
+remain phase-scope enforced, and authored-order deterministic acceptance is
+shared by both modes.
 
 ### Phase 7: Composition and tooling
 

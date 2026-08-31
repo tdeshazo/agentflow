@@ -357,6 +357,17 @@ func (p Presenter) PhaseStart(id, label string) {
 	p.eventLine("▸", ">", "", RoleAccent, "Phase %s: %s", id, label)
 }
 
+// SchedulerBatchStart presents one bounded parallel dispatch without making
+// terminal output part of scheduler authority.
+func (p Presenter) SchedulerBatchStart(phases []string) {
+	p.eventLine("⇉", ">>", "", RoleAccent, "Parallel phases: %s", strings.Join(phases, ", "))
+}
+
+// SchedulerBatchResume presents durable parallel-batch recovery.
+func (p Presenter) SchedulerBatchResume(phases []string) {
+	p.eventLine("↺", "~", "", RoleAccent, "Recovering parallel phases: %s", strings.Join(phases, ", "))
+}
+
 // PhaseSkip presents a condition-based phase skip.
 func (p Presenter) PhaseSkip(id, reason string) {
 	if reason == "" {

@@ -4,6 +4,10 @@ metadata:
   name: agentflow-self-hosting
 
 spec:
+  # The two independent read-only audits fan out after implementation and are
+  # joined by the scheduler before human verification and completion.
+  execution:
+    maxParallel: 2
   parameters:
     require_human_verification:
       type: boolean
@@ -129,9 +133,9 @@ spec:
     - id: final-implementation-audit
       kind: audit
       actor: reviewer
-      dependsOn: [integrated-regression-audit]
-      inputs: [{evidence: audit-accepted}]
-      ifEvidence: audit-accepted
+      dependsOn: [implement-agentflow-change]
+      inputs: [{artifact: implementation-surface}, {evidence: implementation-accepted}]
+      ifEvidence: implementation-accepted
       readOnly: true
       prompt: Perform a final cross-cutting audit of implementation and tests; report only verified defects without editing the workspace.
       reasoning: high
@@ -139,7 +143,7 @@ spec:
       validation: final-quality
   humanGates:
     - id: terminal-confirmation
-      requires: [final-implementation-audit]
+      requires: [integrated-regression-audit, final-implementation-audit]
       if: "{{ parameters.require_human_verification }}"
       instructions: Run the repository's isolated local procedure and verify behavior in the real target terminal or environment.
       checklist:

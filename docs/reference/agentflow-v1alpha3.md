@@ -55,6 +55,13 @@ runtime also rejects any workspace mutation observed after the actor returns.
 Read-only audits may emit validation evidence, but cannot emit a workspace
 artifact.
 
+Read-only audits are also the simplest parallel fan-out units. With
+`spec.execution.maxParallel` greater than one, independent ready audits have
+empty write scopes and may execute concurrently in separate quarantine
+workspaces. They remain individually validated and accepted, and a downstream
+fan-in phase is not ready until every declared audit dependency has an
+accepted marker.
+
 ## Completion evidence
 
 `spec.completion.evidence` names validation evidence that must have a

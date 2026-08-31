@@ -541,11 +541,41 @@ resume, and repair recipe listing each component's authority source and reason,
 plus intentional exclusions; runtime-resolved values and prompt text are not
 printed.
 
-Resource metadata currently grants read access to the full quarantine,
-identifies effective allowed writes (none for a read-only phase), and lists
-protected/runtime-owned exclusions for future Stage 6 conflict analysis. It
-does not enforce token, byte, file-count, monetary, or other budgets. That
-Stage 5.5 exit criterion remains open.
+Resource metadata grants read access to the full quarantine, identifies
+effective phase writes (none for a read-only phase), and lists
+protected/runtime-owned exclusions. The Stage 6 scheduler consumes this same
+metadata: omitted phase scopes inherit the workflow allowlist, ambiguous or
+overlapping scopes serialize, and actual actor changes are checked against the
+selected phase scope before import. It does not enforce token, byte,
+file-count, monetary, or other budgets. That Stage 5.5 exit criterion remains
+open.
+
+## Parallel dependency scheduling
+
+Successor workflows may set `spec.execution.maxParallel` from 1 through 32.
+Omission resolves to one. At each scheduling decision the engine derives the
+ready set exclusively from the immutable dependency graph and durable accepted
+phase markers, then selects a declaration-ordered batch whose effective
+resource scopes are pairwise disjoint. Read-only phases have an empty write
+scope; phases with effective actor commit permission, conditional execution,
+or runtime-owned progress/bookkeeping transitions remain serial.
+
+Concurrent providers receive separate quarantine repositories based on the
+same authoritative baseline. The first provider failure cancels sibling
+contexts. Provider completion does not accept a phase: quarantine imports,
+deterministic validations, runtime checkpoints, contract publication, and
+phase markers are processed in authored order. A disjoint sibling may advance
+authoritative HEAD before another quarantine is imported; the later import is
+accepted only when its actual changed paths do not intersect authoritative
+changes since the shared baseline.
+
+The active batch and every node's active phase, pending invocation, invocation
+outcome, and provider-return state are Git-object/ref-backed. Restart promotes
+one node at a time into the ordinary active-phase recovery path, so retained
+partial work, bounded repair, terminal safety failures, and acceptance markers
+keep their existing meanings. `status` exposes the batch's phase IDs, and
+`reset` validates and removes every retained batch quarantine before deleting
+its authority records.
 
 ## Executed v1alpha1 core
 

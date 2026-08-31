@@ -6,6 +6,17 @@ package workflow
 // runtime's deterministic acceptance boundary.
 const PhaseDependencyAccepted = "deterministically accepted"
 
+const MaxParallelPhases = 32
+
+// EffectiveMaxParallel preserves serial execution when the author omits the
+// Stage 6 scheduler bound.
+func EffectiveMaxParallel(configured int) int {
+	if configured <= 0 {
+		return 1
+	}
+	return configured
+}
+
 // PhaseDependencyGraph is the normalized, ordered declaration of phase
 // dependencies. Nodes preserve authoring order so a future scheduler has an
 // explicit, deterministic tie breaker without relying on Go map iteration.

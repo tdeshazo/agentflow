@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
@@ -42,6 +43,52 @@ func TestV1Alpha4WorkItemsAdvanceExactlyOnceAndMirrorMarkdown(t *testing.T) {
 	}
 	if got, want := string(contents), "- [x] Add API\n- [x] Add tests\n"; got != want {
 		t.Fatalf("Markdown adapter = %q, want %q", got, want)
+	}
+	assertSchedulingCompletion(t, engine)
+}
+
+func TestV1Alpha4WorkItemsWithDisjointWritesRunConcurrently(t *testing.T) {
+	repo := newDurableRepo(t)
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	providerImpl := &schedulingProvider{skipPhaseFile: true, action: func(ctx context.Context, request provider.Request) error {
+		phaseID := request.Metadata["phase"]
+		started <- phaseID
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		path := filepath.Join(request.Workspace, "src", phaseID+".txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(phaseID+"\n"), 0o644)
+	}}
+	engine := newWorkItemEngine(t, repo, providerImpl)
+	engine.Workflow.Spec.Execution.MaxParallel = 2
+	engine.Workflow.Spec.Criteria.MarkdownAdapter = nil
+	for i := range engine.Workflow.Spec.Phases {
+		phase := &engine.Workflow.Spec.Phases[i]
+		phase.Writes = []string{"src/" + phase.ID + ".txt"}
+	}
+
+	runResult := make(chan error, 1)
+	go func() {
+		runResult <- engine.Run(context.Background())
+	}()
+	seen := make(map[string]bool, 2)
+	for len(seen) < 2 {
+		select {
+		case phaseID := <-started:
+			seen[phaseID] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("work-item actors did not start concurrently")
+		}
+	}
+	close(release)
+	if err := <-runResult; err != nil {
+		t.Fatal(err)
 	}
 	assertSchedulingCompletion(t, engine)
 }

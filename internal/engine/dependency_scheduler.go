@@ -17,9 +17,9 @@ type PhaseAcceptance func(phaseID string) (bool, error)
 
 // ReadyNodeScheduler derives ready nodes from the immutable dependency graph
 // and durable acceptance evidence. It owns no mutable scheduler bookkeeping,
-// so a restarted scheduler makes the same decision from the same state. Its
-// Ready method is also the future concurrent scheduler seam; v1alpha2 uses
-// Next for deterministic serial execution.
+// so a restarted scheduler makes the same decision from the same state. The
+// execution policy may dispatch a conflict-free prefix of Ready concurrently;
+// acceptance remains deterministic and ordered.
 type ReadyNodeScheduler struct {
 	graph workflow.PhaseDependencyGraph
 }
@@ -59,9 +59,8 @@ func (s ReadyNodeScheduler) Ready(accepted PhaseAcceptance) ([]workflow.PhaseDep
 	return ready, nil
 }
 
-// Next returns the first ready node in authored order. It is intentionally a
-// thin serial policy over Ready so future parallel dispatch can reuse the
-// same readiness semantics without changing the language contract.
+// Next returns the first ready node in authored order. It remains the serial
+// policy over Ready for callers that do not opt in to parallel execution.
 func (s ReadyNodeScheduler) Next(accepted PhaseAcceptance) (*workflow.PhaseDependencyNode, error) {
 	ready, err := s.Ready(accepted)
 	if err != nil || len(ready) == 0 {
@@ -71,8 +70,8 @@ func (s ReadyNodeScheduler) Next(accepted PhaseAcceptance) (*workflow.PhaseDepen
 }
 
 // AllAccepted reports whether every graph node has accepted-phase evidence.
-// It lets the serial scheduler distinguish a genuinely completed graph from
-// an invalid or blocked graph with no currently ready nodes.
+// It lets the scheduler distinguish a genuinely completed graph from an
+// invalid or blocked graph with no currently ready nodes.
 func (s ReadyNodeScheduler) AllAccepted(accepted PhaseAcceptance) (bool, error) {
 	for _, node := range s.graph.Nodes {
 		complete, err := accepted(node.ID)
@@ -101,11 +100,11 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 	}
 	scheduler := NewReadyNodeScheduler(e.Workflow.DependencyGraph)
 	for {
-		next, err := scheduler.Next(e.phaseDependencyAccepted)
+		ready, err := scheduler.Ready(e.phaseDependencyAccepted)
 		if err != nil {
 			return err
 		}
-		if next == nil {
+		if len(ready) == 0 {
 			complete, err := scheduler.AllAccepted(e.phaseDependencyAccepted)
 			if err != nil {
 				return err
@@ -126,7 +125,17 @@ func (e *Engine) runV1Alpha2Schedule(ctx context.Context) error {
 			}
 			return e.runCompletion(ctx, "default")
 		}
-		if err := e.runPhase(ctx, next.ID); err != nil {
+		batch, err := e.parallelReadyBatch(ready)
+		if err != nil {
+			return err
+		}
+		if len(batch) > 1 {
+			if err := e.runParallelBatch(ctx, batch); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := e.runPhase(ctx, ready[0].ID); err != nil {
 			return err
 		}
 	}
@@ -143,6 +152,9 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 	}
 	if len(w.Spec.Workspace.MutationPolicy.Allowed) == 0 {
 		return fmt.Errorf("v1alpha2 workspace allowWrites must declare at least one path")
+	}
+	if max := w.Spec.Execution.MaxParallel; max < 0 || max > workflow.MaxParallelPhases {
+		return fmt.Errorf("execution maxParallel must be between 1 and %d when configured", workflow.MaxParallelPhases)
 	}
 	for i, path := range w.Spec.Workspace.MutationPolicy.Allowed {
 		if strings.TrimSpace(path) == "" {
@@ -197,6 +209,23 @@ func validateV1Alpha2ScheduleContract(w *workflow.Workflow) error {
 		}
 		if phase.Validation == "" {
 			return fmt.Errorf("phase %q has no deterministic validation", phase.ID)
+		}
+		if phase.ReadOnly && len(phase.Writes) != 0 {
+			return fmt.Errorf("read-only phase %q must not declare writes", phase.ID)
+		}
+		seenWrites := make(map[string]bool, len(phase.Writes))
+		for writeIndex, authored := range phase.Writes {
+			cleaned, ok := workspacepath.Clean(authored)
+			if !ok {
+				return fmt.Errorf("phase %q write scope %d must be workspace-relative", phase.ID, writeIndex)
+			}
+			if seenWrites[cleaned] {
+				return fmt.Errorf("phase %q has duplicate write scope %q", phase.ID, cleaned)
+			}
+			seenWrites[cleaned] = true
+			if !runtimePatternCoveredByAny(w.Spec.Workspace.MutationPolicy.Allowed, cleaned) {
+				return fmt.Errorf("phase %q write scope %q is outside workspace allowWrites", phase.ID, authored)
+			}
 		}
 		if _, exists := w.Spec.Validation[phase.Validation]; !exists {
 			return fmt.Errorf("phase %q references unknown validation %q", phase.ID, phase.Validation)

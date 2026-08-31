@@ -188,7 +188,7 @@ feature work.
 | 4 | v1alpha1 maintenance and successor migration | Freeze v1alpha1 authoring, migrate the canonical self-hosting path and guidance, and provide deterministic migration diagnostics before deprecation. |
 | 5 | Typed contracts, artifacts, and evidence | Make phase handoffs and acceptance evidence machine-checkable before introducing parallel execution. |
 | 5.5 | Invocation context compilation (partially complete) | Compile bounded, inspectable per-node execution context from typed dependencies, authority, workspace state, and budgets before bounded parallel execution; token and resource-budget enforcement remains open. |
-| 6 | Parallel dependency scheduling | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
+| 6 | Parallel dependency scheduling (complete) | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
 | 7 | Executor and tool extensibility | Add providers and tools only through the established capability, identity, and typed-contract boundaries. |
 | 8 | Reusable workflows and composition | Add pinned, trust-aware composition without creating an alternate authority path. |
 | 9 | Developer tooling and observability completion | Complete authoring/review tooling, observability exports, metrics, semantic comparison, and documentation drift checks not already required by earlier stages. |
@@ -620,11 +620,24 @@ This stage follows typed contracts because the compiler consumes machine-checkab
 
 The unresolved exit criterion is deterministic enforcement of context/token
 and other resource budgets. Conservative filesystem resource metadata is
-available for Stage 6, but metadata is not budget enforcement.
+consumed by Stage 6 conflict analysis, but metadata is not budget enforcement.
 
 ---
 
 ## Execution stage 6 — Parallel dependency graph and scheduler
+
+**Implementation status (2026-08-30): complete.** Successor workflows retain
+serial execution by default and may opt into a bounded scheduler with
+`execution.maxParallel`. Ready read-only phases and phases with enforced,
+provably disjoint `writes` scopes execute concurrently in isolated quarantine
+workspaces. Provider failures cancel siblings; reconciliation, deterministic
+validation, checkpointing, contract publication, and acceptance remain
+authored-order transitions. Git-backed active-batch and per-node records make
+parallel interruption recover through the ordinary safe-resume boundary.
+
+Stage 6 proceeds under the recorded Stage 5.5 budget-enforcement exception:
+the compiler/resource metadata prerequisite is present, while token and other
+invocation-budget enforcement remains an explicit Stage 5.5 exit gap.
 
 **Goal:** Extend the reviewed v1alpha2 dependency contract beyond its implemented deterministic serial scheduler into bounded parallel execution while retaining deterministic advancement and recovery.
 
@@ -644,11 +657,17 @@ available for Stage 6, but metadata is not budget enforcement.
 
 ### Exit criteria
 
-- Independent read-only or disjoint work can execute concurrently.
-- Dependencies, not YAML declaration order alone, determine readiness.
-- A restart reconstructs the same executable graph and accepted-node state.
-- Conflicting concurrent mutation is rejected or explicitly serialized.
-- At least one self-hosted AgentFlow development workflow uses dependencies without weakening its mutation/checkpoint guarantees.
+- [x] Independent read-only or disjoint work executes concurrently in isolated
+  actor workspaces.
+- [x] Readiness and fan-in derive from accepted dependency markers rather than
+  YAML order alone; authored order is only the deterministic selection and
+  integration tie-breaker.
+- [x] Restart validates and reconstructs active batches and per-node retained
+  work from durable Git state.
+- [x] Equal, nested, ambiguous, undeclared, and actor-commit mutation scopes
+  are serialized; actual changes outside a declared phase scope fail closed.
+- [x] The v1alpha3 self-hosting representative fans out two independent
+  read-only audits and joins them before human verification/completion.
 
 ---
 

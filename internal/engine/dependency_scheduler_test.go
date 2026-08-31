@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 )
 
 type schedulingProvider struct {
+	mu            sync.Mutex
 	calls         []string
 	contexts      []provider.InvocationContext
 	action        func(context.Context, provider.Request) error
@@ -27,8 +30,10 @@ func (p *schedulingProvider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p *schedulingProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	phase := request.Metadata["phase"]
+	p.mu.Lock()
 	p.calls = append(p.calls, phase+":"+request.Metadata["actor"])
 	p.contexts = append(p.contexts, request.Context)
+	p.mu.Unlock()
 	if p.action != nil {
 		if err := p.action(ctx, request); err != nil {
 			return provider.Result{}, err
@@ -65,11 +70,280 @@ func TestV1Alpha2SerialReadyNodeScheduler(t *testing.T) {
 			if err := e.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Join(p.calls, ","); got != strings.Join(tt.want, ",") {
+			if got := strings.Join(p.recordedCalls(), ","); got != strings.Join(tt.want, ",") {
 				t.Fatalf("actor calls = %q, want %q", got, strings.Join(tt.want, ","))
 			}
 			assertSchedulingCompletion(t, e)
 		})
+	}
+}
+
+func TestV1Alpha2ParallelSchedulerRunsDisjointFanOutAndJoinsDeterministically(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-disjoint-fan-out", []string{"left", "right", "join"}, map[string][]string{
+		"join": {"left", "right"},
+	}, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"left/**", "right/**", "join/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"left/**"}
+	w.Spec.Phases[1].Writes = []string{"right/**"}
+	w.Spec.Phases[2].Writes = []string{"join/**"}
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var concurrent atomic.Int32
+	var maximum atomic.Int32
+	p := &schedulingProvider{skipPhaseFile: true, action: func(ctx context.Context, request provider.Request) error {
+		phase := request.Metadata["phase"]
+		if phase == "left" || phase == "right" {
+			current := concurrent.Add(1)
+			for {
+				observed := maximum.Load()
+				if current <= observed || maximum.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			started <- phase
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			concurrent.Add(-1)
+		}
+		path := filepath.Join(request.Workspace, phase, "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(phase+"\n"), 0o644)
+	}}
+	e := newSchedulingEngine(t, w, p)
+	done := make(chan error, 1)
+	go func() { done <- e.Run(context.Background()) }()
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case phase := <-started:
+			seen[phase] = true
+		case <-time.After(10 * time.Second):
+			t.Fatal("parallel fan-out did not start both actors")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !seen["left"] || !seen["right"] || maximum.Load() != 2 {
+		t.Fatalf("parallel starts = %#v, maximum concurrency = %d", seen, maximum.Load())
+	}
+	calls := p.recordedCalls()
+	if len(calls) != 3 || calls[2] != "join:worker" {
+		t.Fatalf("actor calls = %v, want two fan-out calls followed by join", calls)
+	}
+	assertSchedulingCompletion(t, e)
+}
+
+func TestV1Alpha2ParallelSchedulerSerializesOverlappingWrites(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-overlap-serialization", []string{"first", "second"}, nil, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"shared/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	for i := range w.Spec.Phases {
+		w.Spec.Phases[i].Writes = []string{"shared/**"}
+	}
+	var concurrent atomic.Int32
+	var maximum atomic.Int32
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		current := concurrent.Add(1)
+		for {
+			observed := maximum.Load()
+			if current <= observed || maximum.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		concurrent.Add(-1)
+		path := filepath.Join(request.Workspace, "shared", request.Metadata["phase"]+".txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("done\n"), 0o644)
+	}}
+	e := newSchedulingEngine(t, w, p)
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if maximum.Load() != 1 {
+		t.Fatalf("maximum concurrency = %d, want overlapping writers serialized", maximum.Load())
+	}
+	assertSchedulingCalls(t, p, "first:worker", "second:worker")
+}
+
+func TestV1Alpha2ParallelSchedulerRecoversDurableBatch(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-durable-recovery", []string{"left", "right", "join"}, map[string][]string{
+		"join": {"left", "right"},
+	}, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"left/**", "right/**", "join/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"left/**"}
+	w.Spec.Phases[1].Writes = []string{"right/**"}
+	w.Spec.Phases[2].Writes = []string{"join/**"}
+
+	var failLeft atomic.Bool
+	failLeft.Store(true)
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		phase := request.Metadata["phase"]
+		if phase == "left" && failLeft.CompareAndSwap(true, false) {
+			return errors.New("simulated parallel actor interruption")
+		}
+		path := filepath.Join(request.Workspace, phase, "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(phase+"\n"), 0o644); err != nil {
+			return err
+		}
+		return nil
+	}}
+	first := newSchedulingEngine(t, w, p)
+	if err := first.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "simulated parallel actor interruption") {
+		t.Fatalf("first run error = %v", err)
+	}
+	if _, ok, err := first.Store.Resolve(parallelBatchRecord); err != nil || !ok {
+		t.Fatalf("durable parallel batch: present=%t err=%v", ok, err)
+	}
+	status, err := first.statusSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.ParallelPhases) != 2 || status.ParallelPhases[0] != "left" || status.ParallelPhases[1] != "right" {
+		t.Fatalf("parallel status = %#v", status.ParallelPhases)
+	}
+
+	restarted := newSchedulingEngine(t, w, p)
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := restarted.Store.Resolve(parallelBatchRecord); err != nil || ok {
+		t.Fatalf("parallel batch after recovery: present=%t err=%v", ok, err)
+	}
+	assertSchedulingCompletion(t, restarted)
+	calls := p.recordedCalls()
+	if calls[len(calls)-1] != "join:worker" {
+		t.Fatalf("actor calls = %v, want fan-in after recovered branches", calls)
+	}
+}
+
+func TestV1Alpha2ParallelSchedulerCancelsSiblingActorsAfterFailure(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-cancellation", []string{"fail", "sibling"}, nil, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"fail/**", "sibling/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"fail/**"}
+	w.Spec.Phases[1].Writes = []string{"sibling/**"}
+
+	started := make(chan struct{}, 2)
+	bothStarted := make(chan struct{})
+	var startCount atomic.Int32
+	var canceled atomic.Bool
+	p := &schedulingProvider{skipPhaseFile: true, action: func(ctx context.Context, request provider.Request) error {
+		started <- struct{}{}
+		if startCount.Add(1) == 2 {
+			close(bothStarted)
+		}
+		select {
+		case <-bothStarted:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if request.Metadata["phase"] == "fail" {
+			return errors.New("parallel branch failed")
+		}
+		<-ctx.Done()
+		canceled.Store(true)
+		return ctx.Err()
+	}}
+	e := newSchedulingEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "parallel branch failed") {
+		t.Fatalf("run error = %v", err)
+	}
+	if !canceled.Load() {
+		t.Fatal("sibling actor did not observe scheduler cancellation")
+	}
+	if err := e.Reset(); err != nil {
+		t.Fatalf("reset interrupted parallel batch: %v", err)
+	}
+}
+
+func TestV1Alpha2ParallelSchedulerReturnsLaterFailureInsteadOfEarlierSiblingCancellation(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-cancellation-cause", []string{"sibling", "fail"}, nil, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"sibling/**", "fail/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"sibling/**"}
+	w.Spec.Phases[1].Writes = []string{"fail/**"}
+
+	bothStarted := make(chan struct{})
+	var startCount atomic.Int32
+	p := &schedulingProvider{skipPhaseFile: true, action: func(ctx context.Context, request provider.Request) error {
+		if startCount.Add(1) == 2 {
+			close(bothStarted)
+		}
+		select {
+		case <-bothStarted:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if request.Metadata["phase"] == "fail" {
+			return errors.New("later parallel branch failed")
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	e := newSchedulingEngine(t, w, p)
+	if err := e.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "later parallel branch failed") {
+		t.Fatalf("run error = %v, want later branch failure", err)
+	}
+	if err := e.Reset(); err != nil {
+		t.Fatalf("reset interrupted parallel batch: %v", err)
+	}
+}
+
+func TestV1Alpha2ParallelSchedulerEnforcesDeclaredWriteScope(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-write-scope", []string{"left", "right"}, nil, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"left/**", "right/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"left/**"}
+	w.Spec.Phases[1].Writes = []string{"right/**"}
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		phase := request.Metadata["phase"]
+		directory := phase
+		if phase == "left" {
+			directory = "right"
+		}
+		path := filepath.Join(request.Workspace, directory, phase+".txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("done\n"), 0o644)
+	}}
+	e := newSchedulingEngine(t, w, p)
+	err := e.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "phase left changed path outside its write scope") {
+		t.Fatalf("run error = %v", err)
+	}
+	assertNoPhaseMarker(t, e, "left")
+	assertNoPhaseMarker(t, e, "right")
+	if err := e.Reset(); err != nil {
+		t.Fatalf("reset safety-failed parallel batch: %v", err)
 	}
 }
 
@@ -619,9 +893,15 @@ func newSchedulingEngineAt(t *testing.T, w *workflow.Workflow, p *schedulingProv
 
 func assertSchedulingCalls(t *testing.T, p *schedulingProvider, want ...string) {
 	t.Helper()
-	if got := strings.Join(p.calls, ","); got != strings.Join(want, ",") {
+	if got := strings.Join(p.recordedCalls(), ","); got != strings.Join(want, ",") {
 		t.Fatalf("actor calls = %q, want %q", got, strings.Join(want, ","))
 	}
+}
+
+func (p *schedulingProvider) recordedCalls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.calls...)
 }
 
 func assertNoPhaseMarker(t *testing.T, e *Engine, phaseID string) {

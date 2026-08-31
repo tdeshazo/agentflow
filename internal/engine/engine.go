@@ -65,6 +65,13 @@ type Engine struct {
 	// impossible after the workflow has changed that state.
 	initializing bool
 	runStage     string
+	// recordScope isolates transient phase/invocation records for one node in a
+	// durable parallel batch. Acceptance markers remain workflow-global.
+	recordScope string
+	// parallelReconcile permits a non-committing quarantine to merge after a
+	// disjoint sibling has advanced the authoritative workspace.
+	parallelReconcile   bool
+	deferReconciliation bool
 	// interruptionHook is a deterministic crash-window seam used by the
 	// conformance suite. It is intentionally unexported: provider contracts
 	// must not depend on test-only interruption behavior.
@@ -118,6 +125,8 @@ type ActivePhase struct {
 	QuarantinePath          string                       `json:"quarantine_path,omitempty"`
 	ValidationPassed        bool                         `json:"validation_passed,omitempty"`
 	IntegrityViolation      *gitstate.IntegrityViolation `json:"integrity_violation,omitempty"`
+	ParallelBatch           string                       `json:"parallel_batch,omitempty"`
+	ActorChangedPaths       []string                     `json:"actor_changed_paths,omitempty"`
 }
 
 const (
@@ -147,10 +156,11 @@ type PendingActorInvocation struct {
 // validation or acceptance evidence.
 type ActorInvocationOutcome struct {
 	PendingActorInvocation
-	Commit     string `json:"commit,omitempty"`
-	HeadMoved  bool   `json:"head_moved"`
-	Authorized bool   `json:"authorized"`
-	Imported   bool   `json:"imported"`
+	Commit       string   `json:"commit,omitempty"`
+	HeadMoved    bool     `json:"head_moved"`
+	Authorized   bool     `json:"authorized"`
+	Imported     bool     `json:"imported"`
+	ChangedPaths []string `json:"changed_paths,omitempty"`
 }
 
 // ProgressItemState is the durable, ordered Markdown progress baseline used
@@ -558,6 +568,11 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		}
 	}
 	if usesDependencySchedule(e.Workflow.APIVersion) {
+		if err := e.recoverParallelBatch(ctx); err != nil {
+			return err
+		}
+	}
+	if usesDependencySchedule(e.Workflow.APIVersion) {
 		e.runStage = "schedule"
 		return e.runV1Alpha2Schedule(ctx)
 	}
@@ -663,13 +678,20 @@ func (e *Engine) branchRecord() string {
 	return configuredRecord(e.Workflow.Spec.State.Records.Branch, "branch")
 }
 func (e *Engine) activeRecord() string {
-	return configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active")
+	return e.scopedRecord(configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active"))
 }
-func (e *Engine) pendingInvocationRecord() string { return "pending-invocation" }
-func (e *Engine) invocationOutcomeRecord() string { return "invocation-outcome" }
+func (e *Engine) pendingInvocationRecord() string { return e.scopedRecord("pending-invocation") }
+func (e *Engine) invocationOutcomeRecord() string { return e.scopedRecord("invocation-outcome") }
 func (e *Engine) integrityRecord() string         { return "integrity" }
 func (e *Engine) runIdentityRecord() string       { return "run-identity" }
 func (e *Engine) lastFailureRecord() string       { return "last-failure" }
+
+func (e *Engine) scopedRecord(name string) string {
+	if e.recordScope == "" {
+		return name
+	}
+	return strings.TrimSuffix(e.recordScope, "/") + "/" + strings.TrimPrefix(name, "/")
+}
 
 func (e *Engine) resumeEnabled() bool {
 	if e.Workflow.Spec.State.Resume.Enabled == nil {

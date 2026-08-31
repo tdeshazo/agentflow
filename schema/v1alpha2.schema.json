@@ -283,6 +283,15 @@
       },
       "type": "object"
     },
+    "V1Alpha2Execution": {
+      "additionalProperties": false,
+      "properties": {
+        "maxParallel": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "V1Alpha2HumanGate": {
       "additionalProperties": false,
       "properties": {
@@ -404,6 +413,12 @@
         },
         "validation": {
           "type": "string"
+        },
+        "writes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -443,6 +458,9 @@
         },
         "completion": {
           "$ref": "#/$defs/V1Alpha2Completion"
+        },
+        "execution": {
+          "$ref": "#/$defs/V1Alpha2Execution"
         },
         "humanGates": {
           "items": {

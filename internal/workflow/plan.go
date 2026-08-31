@@ -26,12 +26,19 @@ type ExpandedPlan struct {
 	TypedContracts             PlannedContracts       `yaml:"typedContracts,omitempty"`
 	Criteria                   PlannedCriteria        `yaml:"criteria,omitempty"`
 	DependencyGraph            PhaseDependencyGraph   `yaml:"dependencyGraph"`
+	Scheduler                  PlannedScheduler       `yaml:"scheduler"`
 	Phases                     []PlannedPhase         `yaml:"phases"`
 	ContextRecipes             []PlannedContextRecipe `yaml:"contextRecipes"`
 	ProgressTransitions        []string               `yaml:"progressTransitions"`
 	CheckpointBehavior         string                 `yaml:"checkpointBehavior"`
 	HumanGates                 []string               `yaml:"humanGates"`
 	CompletionContract         []string               `yaml:"completionContract"`
+}
+
+type PlannedScheduler struct {
+	MaxParallel      int    `yaml:"maxParallel"`
+	ConflictStrategy string `yaml:"conflictStrategy"`
+	Recovery         string `yaml:"recovery"`
 }
 type PlannedValidation struct {
 	Name             string   `yaml:"name"`
@@ -99,6 +106,7 @@ type PlannedPhase struct {
 	Outputs         []string             `yaml:"outputs,omitempty"`
 	IfEvidence      string               `yaml:"ifEvidence,omitempty"`
 	ReadOnly        bool                 `yaml:"readOnly,omitempty"`
+	Writes          []string             `yaml:"writes,omitempty"`
 	WorkItemID      string               `yaml:"workItemID,omitempty"`
 	AdvanceWorkItem bool                 `yaml:"advanceWorkItem,omitempty"`
 	Acceptance      []string             `yaml:"acceptance"`
@@ -147,7 +155,12 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		NormalizedExecution:        normalizedExecutionProjection(w, n.DependencyGraph),
 		WorkspaceMutationAllowlist: append([]string{}, w.Spec.Workspace.MutationPolicy.Allowed...),
 		DependencyGraph:            clonePhaseDependencyGraph(n.DependencyGraph),
-		ResolvedLifecycle:          resolvedLifecycle,
+		Scheduler: PlannedScheduler{
+			MaxParallel:      EffectiveMaxParallel(w.Spec.Execution.MaxParallel),
+			ConflictStrategy: "serialize overlapping or undeclared phase write scopes; read-only and disjoint scopes may run concurrently",
+			Recovery:         "derive readiness from accepted markers and reconcile every durable active batch in authored order",
+		},
+		ResolvedLifecycle: resolvedLifecycle,
 		SafetyEnforcementPoints: []string{
 			"before actor and tool work",
 			"after every actor invocation, including provider errors: enforce may_commit for the invoked actor against observed HEAD",
@@ -256,7 +269,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
 			Bookkeeping: p.Bookkeeping, Inputs: append([]ContractInput(nil), p.Inputs...),
 			Outputs: append([]string(nil), p.Outputs...), IfEvidence: p.IfEvidence,
-			ReadOnly: p.ReadOnly, WorkItemID: p.WorkItemID, AdvanceWorkItem: p.AdvanceWorkItem, Acceptance: acceptance,
+			ReadOnly: p.ReadOnly, Writes: append([]string(nil), p.Writes...), WorkItemID: p.WorkItemID, AdvanceWorkItem: p.AdvanceWorkItem, Acceptance: acceptance,
 		})
 		if p.Actor != "" && !(p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0) {
 			plan.ContextRecipes = append(plan.ContextRecipes,

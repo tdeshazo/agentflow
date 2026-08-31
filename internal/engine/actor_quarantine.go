@@ -17,6 +17,7 @@ type actorQuarantineResult struct {
 	moved      bool
 	authorized bool
 	imported   bool
+	changed    []string
 }
 
 func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent workflow.Agent) (actorQuarantineResult, error) {
@@ -40,6 +41,7 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 				result.moved = outcome.HeadMoved
 				result.authorized = outcome.Authorized
 				result.imported = true
+				result.changed = append([]string(nil), outcome.ChangedPaths...)
 				return result, nil
 			}
 		}
@@ -98,6 +100,7 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	if err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, fmt.Errorf("inspect actor changes: %w", err))
 	}
+	result.changed = append([]string(nil), changed...)
 	if prohibited := actorPrivateChangedPath(pending, changed); prohibited != "" {
 		return result, e.quarantineSafetyViolation(
 			pending.Actor,
@@ -125,7 +128,7 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	}
 	policyEngine := *e
 	policyEngine.Repo = worktree.Repo
-	if err := policyEngine.assertActorChangedPathsAllowed(changed); err != nil {
+	if err := policyEngine.assertActorChangedPathsAllowed(pending.PhaseID, changed); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
 	if err := e.assertActorCumulativeScope(); err != nil {
@@ -135,13 +138,28 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	if err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
-	if primaryHead != pending.StartCommit && (!result.moved || primaryHead != head) {
+	parallelDriftAllowed := e.parallelReconcile && !result.moved
+	if primaryHead != pending.StartCommit && (!result.moved || primaryHead != head) && !parallelDriftAllowed {
 		return result, e.quarantineSafetyViolation(
 			pending.Actor,
 			head,
 			pending.QuarantinePath,
 			fmt.Errorf("repository policy: authoritative HEAD changed during actor %q invocation", pending.Actor),
 		)
+	}
+	if primaryHead != pending.StartCommit && parallelDriftAllowed {
+		current, err := e.Repo.ChangedFilesSince(pending.StartCommit)
+		if err != nil {
+			return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
+		}
+		if conflict := firstSharedPath(e.filterIgnored(current), e.filterIgnored(changed)); conflict != "" {
+			return result, e.quarantineSafetyViolation(
+				pending.Actor,
+				head,
+				pending.QuarantinePath,
+				fmt.Errorf("parallel actor import conflicts with authoritative path %s", conflict),
+			)
+		}
 	}
 	patch, err := worktree.Patch(finalTree)
 	if err != nil {
@@ -150,7 +168,11 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	if _, err := worktree.ImportSubmoduleChanges(); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
-	if _, err := e.Repo.ApplyPatchIdempotent(patch, finalPermissions); err != nil {
+	importPermissions := finalPermissions
+	if parallelDriftAllowed {
+		importPermissions = changedPathPermissions(finalPermissions, changed)
+	}
+	if _, err := e.Repo.ApplyPatchIdempotent(patch, importPermissions); err != nil {
 		return result, e.quarantineSafetyViolation(pending.Actor, head, pending.QuarantinePath, err)
 	}
 	if rootMoved && primaryHead != head {
@@ -163,6 +185,29 @@ func (e *Engine) reconcileActorQuarantine(pending PendingActorInvocation, agent 
 	}
 	result.imported = true
 	return result, nil
+}
+
+func changedPathPermissions(all gitstate.FilePermissions, changed []string) gitstate.FilePermissions {
+	permissions := make(gitstate.FilePermissions, len(changed))
+	for _, path := range changed {
+		if mode, ok := all[path]; ok {
+			permissions[path] = mode
+		}
+	}
+	return permissions
+}
+
+func firstSharedPath(left, right []string) string {
+	seen := make(map[string]struct{}, len(left))
+	for _, path := range left {
+		seen[path] = struct{}{}
+	}
+	for _, path := range right {
+		if _, ok := seen[path]; ok {
+			return path
+		}
+	}
+	return ""
 }
 
 func actorPrivateChangedPath(pending PendingActorInvocation, changed []string) string {
@@ -181,7 +226,7 @@ func actorPrivateChangedPath(pending PendingActorInvocation, changed []string) s
 	return ""
 }
 
-func (e *Engine) assertActorChangedPathsAllowed(changed []string) error {
+func (e *Engine) assertActorChangedPathsAllowed(phaseID string, changed []string) error {
 	if _, ok, err := e.Store.Resolve(e.baseRecord()); err != nil {
 		return err
 	} else if !ok {
@@ -191,6 +236,26 @@ func (e *Engine) assertActorChangedPathsAllowed(changed []string) error {
 	for _, path := range e.filterIgnored(changed) {
 		if !matchesAny(allowed, path) {
 			return &safetyViolation{err: fmt.Errorf("out-of-scope file changed: %s", path)}
+		}
+	}
+	if phaseID == "" {
+		return nil
+	}
+	phase, err := e.phaseByID(phaseID)
+	if err != nil {
+		return err
+	}
+	filtered := e.filterIgnored(changed)
+	if phase.ReadOnly && len(filtered) != 0 {
+		return &safetyViolation{err: fmt.Errorf("read-only audit phase %s changed workspace paths: %v", phaseID, filtered)}
+	}
+	phaseAllowed, err := e.effectivePhaseWrites(phase)
+	if err != nil {
+		return err
+	}
+	for _, path := range filtered {
+		if !matchesAny(phaseAllowed, path) {
+			return &safetyViolation{err: fmt.Errorf("phase %s changed path outside its write scope: %s", phaseID, path)}
 		}
 	}
 	return nil

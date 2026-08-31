@@ -56,6 +56,7 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 	moved := false
 	authorized := true
 	imported := false
+	changed := []string{}
 	var quarantine *gitstate.ActorWorktree
 	var violation *safetyViolation
 	if pending.Version == pendingActorInvocationVersion {
@@ -64,6 +65,7 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 		moved = result.moved
 		authorized = result.authorized
 		imported = result.imported
+		changed = append(changed, result.changed...)
 		quarantine = result.worktree
 		if quarantineErr != nil {
 			if !errors.As(quarantineErr, &violation) {
@@ -107,6 +109,7 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 		HeadMoved:              moved,
 		Authorized:             authorized,
 		Imported:               imported,
+		ChangedPaths:           changed,
 	}); err != nil {
 		return moved, fmt.Errorf("persist actor invocation outcome for %q: %w", pending.Actor, err)
 	}

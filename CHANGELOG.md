@@ -14,6 +14,13 @@
 
 ### Added
 
+- Added Stage 6 bounded dependency scheduling for successor workflows.
+  `execution.maxParallel` opts into concurrent isolated actor work, while
+  enforced phase `writes` scopes, conservative conflict analysis, authored-order
+  reconciliation/acceptance, sibling cancellation, Git-backed active batches,
+  parallel status/reset handling, and restart recovery preserve the existing
+  validation, checkpoint, contract, and safety boundaries. The v1alpha3
+  self-hosting representative now fans out independent read-only audits.
 - Added a deterministic, versioned invocation-context compiler for primary,
   resumed, and validation-repair actors. Provider requests now carry typed
   objectives, workspace/dependency state, declared artifact and evidence

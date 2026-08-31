@@ -353,6 +353,14 @@ to the v1alpha2 contract, where the ready-node scheduler and durable acceptance
 semantics enforce them. A v1alpha1 document that declares `dependsOn` remains
 invalid rather than being silently interpreted as v1alpha2.
 
+Successor workflows are serial by default. Set `spec.execution.maxParallel`
+to a value from 1 through 32 to opt into bounded fan-out, and declare
+`phases[].writes` when a mutable phase uses a narrower subset of
+`workspace.allowWrites`. Omitted phase scopes inherit the full allowlist and
+therefore conflict conservatively. The runtime enforces the narrower scope on
+actual actor changes, serializes ambiguous overlap and commit-capable actors,
+and keeps deterministic validation/checkpoint/acceptance in authored order.
+
 Similarly, concise validation syntax does not add model-decided completion,
 `skip`-on-failure acceptance, or unbounded repair. Those behaviors would weaken
 the deterministic acceptance boundary rather than merely shorten YAML.

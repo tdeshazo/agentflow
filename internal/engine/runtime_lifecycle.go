@@ -248,7 +248,7 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			}
 		}
 		if action.AssertNetRepositoryChangeSincePhaseStart {
-			if err := e.assertNetChange(phase, *active); err != nil {
+			if err := e.assertNetChange(phase, active); err != nil {
 				return err
 			}
 		}
@@ -317,7 +317,21 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 	return nil
 }
 
-func (e *Engine) assertNetChange(phase *workflow.Phase, active ActivePhase) error {
+func (e *Engine) assertNetChange(phase *workflow.Phase, active *ActivePhase) error {
+	if active.ParallelBatch != "" {
+		changed, err := e.parallelPhaseNetChangedPaths(phase, active.StartCommit)
+		if err != nil {
+			return err
+		}
+		active.ActorChangedPaths = changed
+		if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+			return err
+		}
+		if len(changed) == 0 {
+			return fmt.Errorf("phase %s (%s) produced no net repository change", phase.ID, phase.Label)
+		}
+		return nil
+	}
 	changed, err := e.Repo.HasNetChange(active.StartCommit)
 	if err != nil {
 		return err
@@ -326,6 +340,24 @@ func (e *Engine) assertNetChange(phase *workflow.Phase, active ActivePhase) erro
 		return fmt.Errorf("phase %s (%s) produced no net repository change", phase.ID, phase.Label)
 	}
 	return nil
+}
+
+func (e *Engine) parallelPhaseNetChangedPaths(phase *workflow.Phase, baseline string) ([]string, error) {
+	changed, err := e.Repo.ChangedFilesSinceRecursive(baseline)
+	if err != nil {
+		return nil, err
+	}
+	allowed, err := e.effectivePhaseWrites(phase)
+	if err != nil {
+		return nil, err
+	}
+	owned := make([]string, 0, len(changed))
+	for _, path := range e.filterIgnored(changed) {
+		if matchesAny(allowed, path) {
+			owned = append(owned, path)
+		}
+	}
+	return owned, nil
 }
 
 func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePhase) error {
@@ -350,6 +382,12 @@ func (e *Engine) assertAgentCommitPolicy(phase *workflow.Phase, active ActivePha
 		return nil
 	}
 	if e.effectiveActorCommitPermission(agent) {
+		return nil
+	}
+	if active.ParallelBatch != "" && active.CommitActor == "" {
+		// Parallel actors are admitted only when they cannot commit. Their
+		// quarantine reconciliation already proved that HEAD did not move; a
+		// disjoint sibling may legitimately have advanced authoritative HEAD.
 		return nil
 	}
 	if active.CheckpointCommit != "" {

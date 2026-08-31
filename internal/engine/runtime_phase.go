@@ -614,6 +614,9 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		if err := e.runInterruptionHook(interruptionAfterProviderReturn, invocation); err != nil {
 			return false, err
 		}
+		if e.deferReconciliation {
+			return false, providerErr
+		}
 		moved, reconcileErr := e.reconcilePendingInvocation()
 		if reconcileErr != nil {
 			return moved, reconcileErr

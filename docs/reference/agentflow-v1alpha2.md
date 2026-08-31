@@ -6,8 +6,11 @@ implementation strictly decodes the form, validates it against the current
 runtime surface, and normalizes it to AgentFlow's shared authority model
 before planning or execution. A structurally valid workflow that selects an
 unsupported built-in approval policy is reported as unsupported; runner names
-remain provider-neutral for injected Go providers. The runtime uses the
-declared phase dependencies with a deterministic serial scheduler.
+remain provider-neutral for injected Go providers. The runtime uses declared
+phase dependencies with a deterministic bounded scheduler. Execution remains
+serial by default; `execution.maxParallel` enables isolated parallel fan-out
+for read-only phases or phases whose enforced `writes` scopes are provably
+disjoint.
 
 Its exact accepted YAML shape is the checked-in
 [machine-readable executable schema](../../schema/v1alpha2.schema.json),
@@ -39,6 +42,7 @@ AgentFlow's existing executable authority concepts wherever possible:
 | `workspace.allowWrites` | Workspace mutation allowlist/policy |
 | `workspace.integrity` | Protected-resource integrity policy |
 | `workspace.initialization` | Observable clean-workspace and lineage policy |
+| `execution.maxParallel` | Bounded ready-node concurrency; omission preserves serial execution |
 | `parameters` and phase/gate `if` | Typed template context and bounded conditions |
 | `agents.<name>` | Named actor capability |
 | Mapping-valued `phases[].actor` | Phase-local actor capability lowered to an internal named agent |
@@ -47,6 +51,7 @@ AgentFlow's existing executable authority concepts wherever possible:
 | `validation.<name>.repair.once` | One bounded repair attempt followed by the same validation |
 | `phases[].validation` | Phase acceptance validation |
 | `phases[].dependsOn` | Accepted-phase dependency evidence |
+| `phases[].writes` | Phase-local mutation authority and scheduler conflict scope |
 | `humanGates` | Durable human acknowledgement evidence |
 | `completion.assertions` | Shared deterministic completion assertions |
 | `reset` | Explicit reset permission and cleanliness policy |
@@ -76,6 +81,9 @@ metadata:
   name: feature
 
 spec:
+  execution:
+    maxParallel: 2
+
   workspace:
     allowWrites: [src/**, tests/**]
 
@@ -100,6 +108,7 @@ spec:
       actor: coder
       prompt: Implement the feature.
       validation: tests
+      writes: [src/**, tests/**]
 
     - id: review
       actor:
@@ -139,6 +148,27 @@ acceptance boundary.
 selects only observable repository requirements: clean workspace, named
 branch, base ancestry, and same-branch continuity. State-record names, Git ref
 layout, recovery actions, and checkpoint sequencing remain runtime-owned.
+
+### `spec.execution.maxParallel` and `phases[].writes`
+
+`execution.maxParallel` is an integer from 1 through 32. Omission means one,
+preserving the original serial schedule. The bound limits ready actor
+invocations, not deterministic validation or acceptance: actors execute in
+isolated quarantine workspaces, then AgentFlow reconciles, validates,
+checkpoints, and publishes phase markers in authored order.
+
+`phases[].writes` narrows `workspace.allowWrites` for one phase and is enforced
+against its actual quarantine changes. Every entry must be an exact workflow
+allowlist pattern or a lexical descendant of a recursive `path/**` allowlist.
+Omission conservatively inherits the complete workflow allowlist. Consequently
+two ordinary writers with omitted scopes conflict and are serialized. A
+`readOnly` phase has no write scope and must not declare `writes`.
+
+Conflict analysis proves only obvious lexical disjointness. Equal, nested, or
+ambiguous glob scopes are serialized. Provider return, actor prose, or an
+actor-created commit cannot widen a phase scope; actors with effective commit
+authority are serialized because independent commit histories cannot be
+silently merged into authoritative lineage.
 
 ### Parameters, conditions, and preconditions
 
@@ -393,19 +423,27 @@ from the phase dependency graph:
 2. Mark no phase accepted until its own deterministic acceptance contract
    succeeds.
 3. A phase is ready only when every `dependsOn` phase is accepted.
-4. Run ready phases with the deterministic serial scheduler.
-5. When more than one phase is ready, choose declaration order as the stable
-   tie-breaker.
-6. Continue until every phase is accepted or a phase/validation fails.
+4. Select up to `execution.maxParallel` ready phases in declaration order,
+   admitting only read-only or pairwise-disjoint effective resource scopes.
+5. Run admitted actors concurrently in isolated quarantine workspaces.
+6. On the first actor failure, cancel sibling invocations, retain every durable
+   quarantine boundary, and block dependents.
+7. Reconcile actor work, run deterministic validation/checkpointing, and write
+   accepted markers in declaration order.
+8. Recompute readiness; fan-in nodes become ready only after every declared
+   dependency has durable accepted-phase evidence.
 
-The initial v1alpha2 contract does not include parallel phase execution.
-Independent phases may be represented in the graph, but they are still
-executed serially. Future concurrency work must preserve the same dependency
-and acceptance semantics and requires a separate contract/runtime change.
+The scheduler persists an active-batch identity plus phase-scoped active,
+pending-invocation, outcome, and provider-return records. Restart first
+finishes any promoted active phase, then reconstructs the batch from those
+records and accepted markers. A provider return record can prevent replay; an
+invocation interrupted before that record is reconciled as retained work and
+uses the existing safe-resume path. Batch state never substitutes for
+deterministic phase acceptance.
 
 The v1alpha2 core does not include `spec.flow`. The dependency graph is the
-source of its serial schedule; a later scheduling extension must preserve the
-same readiness and acceptance boundary.
+source of both serial and parallel readiness, and declaration order is the
+stable selection and integration tie-breaker.
 
 ## Authority invariants
 
@@ -428,11 +466,12 @@ executes.
 
 ## Current runtime boundary
 
-The v1alpha2 core is executable when it uses the current runtime surface, but
-its initial scheduler is deliberately serial. It does not yet provide:
+The v1alpha2 core is executable with serial-by-default and opt-in bounded
+parallel scheduling. It does not provide:
 
-- parallel execution of independent phases;
-- implicit mutation authority outside `workspace.allowWrites`; or
+- implicit mutation authority outside `workspace.allowWrites` or a phase's
+  narrower `writes` scope;
+- concurrent actor-created commit histories; or
 - acceptance based on actor output, commits, or an unvalidated workspace.
 
 The built-in Codex provider reports approval policies other than `never` as

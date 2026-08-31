@@ -16,6 +16,10 @@ const standaloneFailureRecordPrefix = "validation-failures/"
 func (e *Engine) cleanupRetainedActorQuarantines() error {
 	authorities := map[string]PendingActorInvocation{}
 	retainedPaths := map[string]string{}
+	names, err := e.Store.Names()
+	if err != nil {
+		return fmt.Errorf("list actor quarantine records before reset: %w", err)
+	}
 
 	var pending PendingActorInvocation
 	pendingExists, err := e.Store.GetJSON(e.pendingInvocationRecord(), &pending)
@@ -29,6 +33,26 @@ func (e *Engine) cleanupRetainedActorQuarantines() error {
 		if pending.QuarantinePath != "" {
 			authorities[pending.QuarantinePath] = pending
 			retainedPaths[pending.QuarantinePath] = e.pendingInvocationRecord()
+		}
+	}
+	for _, name := range names {
+		if name == e.pendingInvocationRecord() || !strings.HasSuffix(name, "/pending-invocation") {
+			continue
+		}
+		var scoped PendingActorInvocation
+		ok, err := e.Store.GetJSON(name, &scoped)
+		if err != nil {
+			return fmt.Errorf("inspect pending actor quarantine %q before reset: %w", name, err)
+		}
+		if !ok {
+			continue
+		}
+		if err := validateActorQuarantineCleanupAuthority(scoped); err != nil {
+			return fmt.Errorf("validate pending actor quarantine %q before reset: %w", name, err)
+		}
+		if scoped.QuarantinePath != "" {
+			authorities[scoped.QuarantinePath] = scoped
+			retainedPaths[scoped.QuarantinePath] = name
 		}
 	}
 
@@ -47,20 +71,31 @@ func (e *Engine) cleanupRetainedActorQuarantines() error {
 		}
 	}
 	if len(unresolved) != 0 {
-		var outcome ActorInvocationOutcome
-		outcomeExists, err := e.Store.GetJSON(e.invocationOutcomeRecord(), &outcome)
-		if err != nil {
-			return fmt.Errorf("inspect retained actor quarantine authority before reset: %w", err)
+		outcomeFound := false
+		for _, name := range names {
+			isOutcome := name == e.invocationOutcomeRecord() || strings.HasSuffix(name, "/invocation-outcome")
+			if !isOutcome {
+				continue
+			}
+			var outcome ActorInvocationOutcome
+			outcomeExists, err := e.Store.GetJSON(name, &outcome)
+			if err != nil {
+				return fmt.Errorf("inspect retained actor quarantine authority %q before reset: %w", name, err)
+			}
+			if !outcomeExists {
+				continue
+			}
+			outcomeFound = true
+			if err := validateActorQuarantineCleanupAuthority(outcome.PendingActorInvocation); err != nil {
+				return fmt.Errorf("validate retained actor quarantine authority %q before reset: %w", name, err)
+			}
+			if _, ok := unresolved[outcome.QuarantinePath]; ok {
+				authorities[outcome.QuarantinePath] = outcome.PendingActorInvocation
+				delete(unresolved, outcome.QuarantinePath)
+			}
 		}
-		if !outcomeExists {
+		if !outcomeFound {
 			return fmt.Errorf("retained actor quarantine has no invocation cleanup authority")
-		}
-		if err := validateActorQuarantineCleanupAuthority(outcome.PendingActorInvocation); err != nil {
-			return fmt.Errorf("validate retained actor quarantine authority before reset: %w", err)
-		}
-		if _, ok := unresolved[outcome.QuarantinePath]; ok {
-			authorities[outcome.QuarantinePath] = outcome.PendingActorInvocation
-			delete(unresolved, outcome.QuarantinePath)
 		}
 		if len(unresolved) != 0 {
 			paths := sortedActorQuarantinePaths(unresolved)
@@ -105,6 +140,17 @@ func (e *Engine) terminalActorQuarantinePaths() (map[string]string, error) {
 		return nil, fmt.Errorf("list actor quarantine records before reset: %w", err)
 	}
 	for _, name := range names {
+		activeSuffix := "/" + configuredRecord(e.Workflow.Spec.State.Records.ActivePhase, "active")
+		if strings.HasSuffix(name, activeSuffix) {
+			var scoped ActivePhase
+			ok, err := e.Store.GetJSON(name, &scoped)
+			if err != nil {
+				return nil, fmt.Errorf("inspect active actor quarantine record %q before reset: %w", name, err)
+			}
+			if ok && scoped.QuarantinePath != "" {
+				paths[scoped.QuarantinePath] = name
+			}
+		}
 		if !strings.HasPrefix(name, standaloneFailureRecordPrefix) {
 			continue
 		}

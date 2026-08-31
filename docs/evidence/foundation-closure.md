@@ -458,9 +458,10 @@ this closeout from claiming them as complete.
 - **Stage 5 — Typed contracts, artifacts, and evidence:** machine-checkable
   phase handoffs and acceptance artifacts beyond the current validation and
   runtime evidence are deferred.
-- **Stage 6 — Parallel dependency scheduling:** the current v1alpha2 scheduler
-  is deliberately serial. Bounded concurrency, fan-out/fan-in, conflict
-  detection, and parallel recovery are not implemented by this closeout.
+- **Stage 6 — Parallel dependency scheduling:** this was deliberately deferred
+  by the Stage 1 closeout recorded here. It was implemented later with bounded
+  concurrency, fan-out/fan-in, enforced conflict scopes, and durable parallel
+  recovery; see the current status in [`ROADMAP.md`](../../ROADMAP.md).
 - **Stage 7 — Executor and tool extensibility:** custom provider/tool plugins
   remain outside the executable surface until they use the established
   capability, identity, and typed-contract boundaries.

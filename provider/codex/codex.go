@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/provider"
@@ -23,6 +24,32 @@ type Provider struct {
 	Stdout    io.Writer
 	Stderr    io.Writer
 	OutputTTY func(io.Writer) bool
+}
+
+// providerOutputMu protects configured output sinks across all Provider values.
+// Provider intentionally remains usable as a value, so the lock cannot live on
+// an individual instance: value copies would not share it. A single lock also
+// covers callers that configure stdout and stderr with the same writer.
+var providerOutputMu sync.Mutex
+
+type synchronizedWriter struct {
+	writer io.Writer
+}
+
+func (w synchronizedWriter) Write(p []byte) (int, error) {
+	providerOutputMu.Lock()
+	defer providerOutputMu.Unlock()
+	return w.writer.Write(p)
+}
+
+func synchronizeOutput(writer io.Writer) io.Writer {
+	// Passing an *os.File directly lets the child inherit the descriptor, which
+	// preserves terminal detection and native interactive output. Files are
+	// already safe for concurrent use.
+	if _, ok := writer.(*os.File); ok {
+		return writer
+	}
+	return synchronizedWriter{writer: writer}
 }
 
 const defaultSandbox = "workspace-write"
@@ -68,8 +95,8 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 		return provider.Result{}, err
 	}
 	cmd.Stdin = bytes.NewBufferString(prompt)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	cmd.Stdout = synchronizeOutput(stdout)
+	cmd.Stderr = synchronizeOutput(stderr)
 
 	if err := cmd.Run(); err != nil {
 		return provider.Result{}, fmt.Errorf("codex exec: %w", err)

@@ -33,6 +33,7 @@ type V1Alpha2Metadata struct {
 
 type V1Alpha2Spec struct {
 	Parameters    map[string]Parameter          `yaml:"parameters"`
+	Execution     V1Alpha2Execution             `yaml:"execution"`
 	Workspace     V1Alpha2Workspace             `yaml:"workspace"`
 	Agents        map[string]V1Alpha2Agent      `yaml:"agents"`
 	Tools         map[string]Tool               `yaml:"tools"`
@@ -42,6 +43,10 @@ type V1Alpha2Spec struct {
 	HumanGates    []V1Alpha2HumanGate           `yaml:"humanGates"`
 	Completion    V1Alpha2Completion            `yaml:"completion"`
 	Reset         V1Alpha2Reset                 `yaml:"reset"`
+}
+
+type V1Alpha2Execution struct {
+	MaxParallel *int `yaml:"maxParallel"`
 }
 
 type V1Alpha2Workspace struct {
@@ -362,6 +367,7 @@ type V1Alpha2Phase struct {
 	If             string        `yaml:"if"`
 	Validation     string        `yaml:"validation"`
 	DependsOn      []string      `yaml:"dependsOn"`
+	Writes         []string      `yaml:"writes"`
 }
 
 type V1Alpha2Completion struct {
@@ -403,6 +409,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		},
 		Spec: Spec{
 			Parameters: authored.Spec.Parameters,
+			Execution:  ExecutionSpec{MaxParallel: v1Alpha2MaxParallel(authored.Spec.Execution)},
 			Workspace: WorkspaceSpec{MutationPolicy: MutationPolicy{
 				Allowed:   append([]string(nil), authored.Spec.Workspace.AllowWrites...),
 				Integrity: append([]IntegrityRule(nil), authored.Spec.Workspace.Integrity...),
@@ -479,7 +486,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		if phase.RequiresChange != nil {
 			requiresChange = *phase.RequiresChange
 		}
-		w.Spec.Phases = append(w.Spec.Phases, Phase{ID: phase.ID, Kind: kind, Label: phase.ID, Actor: actorName, Prompt: phase.Prompt, Reasoning: phase.Reasoning, RequiresChange: requiresChange, If: phase.If, Validation: phase.Validation})
+		w.Spec.Phases = append(w.Spec.Phases, Phase{ID: phase.ID, Kind: kind, Label: phase.ID, Actor: actorName, Prompt: phase.Prompt, Reasoning: phase.Reasoning, RequiresChange: requiresChange, If: phase.If, Validation: phase.Validation, Writes: append([]string(nil), phase.Writes...)})
 	}
 	w.DependencyGraph = clonePhaseDependencyGraph(graph)
 	return &Document{
@@ -693,6 +700,9 @@ func (v v1alpha2Validator) roots() {
 	if v.w.Metadata.Name == "" {
 		v.add("metadata.name", "is required")
 	}
+	if configured := v.w.Spec.Execution.MaxParallel; configured != nil && (*configured < 1 || *configured > MaxParallelPhases) {
+		v.add("spec.execution.maxParallel", "must be between 1 and %d when declared", MaxParallelPhases)
+	}
 	if len(v.w.Spec.Workspace.AllowWrites) == 0 {
 		v.add("spec.workspace.allowWrites", "must declare at least one workspace-relative path")
 	}
@@ -764,6 +774,13 @@ func (v v1alpha2Validator) roots() {
 	}
 }
 
+func v1Alpha2MaxParallel(execution V1Alpha2Execution) int {
+	if execution.MaxParallel == nil {
+		return 0
+	}
+	return *execution.MaxParallel
+}
+
 func (v v1alpha2Validator) references() {
 	graph := buildV1Alpha2PhaseDependencyGraph(v.w.Spec.Phases)
 	phaseIndex := graph.phaseIndex()
@@ -799,6 +816,17 @@ func (v v1alpha2Validator) references() {
 		if phase.If != "" {
 			if err := validateTypedExpression(phase.If, StaticContext{Parameters: v.w.Spec.Parameters}); err != nil {
 				v.add(path+".if", "invalid expression: %s", err)
+			}
+		}
+		for writeIndex, value := range phase.Writes {
+			writePath := fmt.Sprintf("%s.writes[%d]", path, writeIndex)
+			cleaned, ok := workspacepath.Clean(value)
+			if !ok {
+				v.add(writePath, "must be workspace-relative")
+				continue
+			}
+			if !pathPatternCoveredByAny(v.w.Spec.Workspace.AllowWrites, cleaned) {
+				v.add(writePath, "must be within workspace.allowWrites")
 			}
 		}
 	}
@@ -1054,4 +1082,27 @@ func (v v1alpha2Validator) dependencyCycles(graph PhaseDependencyGraph, phaseInd
 			visit(index)
 		}
 	}
+}
+
+// pathPatternCoveredByAny is deliberately conservative. Parallel write
+// scopes are authority, so validation accepts only an exact workflow pattern
+// or a lexical descendant of a recursive directory allowlist. More elaborate
+// glob containment is ambiguous and therefore fails closed.
+func pathPatternCoveredByAny(allowed []string, candidate string) bool {
+	for _, authored := range allowed {
+		pattern, ok := workspacepath.Clean(authored)
+		if !ok {
+			continue
+		}
+		if pattern == candidate || pattern == "**" {
+			return true
+		}
+		if strings.HasSuffix(pattern, "/**") {
+			root := strings.TrimSuffix(pattern, "/**")
+			if candidate == root || strings.HasPrefix(candidate, root+"/") {
+				return true
+			}
+		}
+	}
+	return false
 }

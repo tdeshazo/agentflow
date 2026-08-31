@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -203,6 +204,90 @@ func TestReconcilePendingInvocationV2RequiresQuarantineAuthority(t *testing.T) {
 	var persisted PendingActorInvocation
 	if ok, err := e.Store.GetJSON(e.pendingInvocationRecord(), &persisted); err != nil || !ok || persisted.Version != pendingActorInvocationVersion {
 		t.Fatalf("version 2 pending invocation after rejected recovery: %+v ok=%t err=%v", persisted, ok, err)
+	}
+}
+
+func TestParallelRequiresChangeSurvivesIdempotentQuarantineReconciliation(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := schedulingWorkflow(repo, "parallel-idempotent-reconciliation", []string{"left", "right"}, nil, "true")
+	w.Spec.Execution.MaxParallel = 2
+	w.Spec.Workspace.MutationPolicy.Allowed = []string{"left/**", "right/**"}
+	w.Spec.Agents["worker"] = workflow.Agent{Runner: "test", Model: "test-model"}
+	w.Spec.Phases[0].Writes = []string{"left/**"}
+	w.Spec.Phases[1].Writes = []string{"right/**"}
+	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+		path := filepath.Join(request.Workspace, "left", "result.txt")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("left\n"), 0o644)
+	}}
+	e := newSchedulingEngine(t, w, p)
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	phase, err := e.phaseByID("left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeEngine := e.parallelNodeEngine("test-batch", phase.ID)
+	active, err := nodeEngine.newActivePhaseFor(phase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ParallelBatch = "test-batch"
+	if err := nodeEngine.Store.SetJSON(nodeEngine.activeRecord(), active); err != nil {
+		t.Fatal(err)
+	}
+	request := provider.Request{
+		Workspace: repo,
+		Metadata: map[string]string{
+			"actor": "worker",
+			"phase": phase.ID,
+		},
+	}
+	if _, err := nodeEngine.invokeAgent(
+		context.Background(),
+		"worker",
+		w.Spec.Agents["worker"],
+		p,
+		request,
+		PendingActorInvocation{Role: "phase", PhaseID: phase.ID},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nodeEngine.reconcilePendingInvocation(); err != nil {
+		t.Fatal(err)
+	}
+
+	var outcome ActorInvocationOutcome
+	if ok, err := nodeEngine.Store.GetJSON(nodeEngine.invocationOutcomeRecord(), &outcome); err != nil || !ok {
+		t.Fatalf("read imported outcome: ok=%t err=%v", ok, err)
+	}
+	if len(outcome.ChangedPaths) == 0 {
+		t.Fatal("initial reconciliation did not record the actor's changed paths")
+	}
+	wantChangedPaths := append([]string(nil), outcome.ChangedPaths...)
+	if _, err := os.Stat(outcome.QuarantinePath); !os.IsNotExist(err) {
+		t.Fatalf("reconciled quarantine still exists: %v", err)
+	}
+	// Recreate the crash window after the imported outcome and quarantine
+	// cleanup were durable but before the pending record was deleted.
+	if err := nodeEngine.Store.SetJSON(nodeEngine.pendingInvocationRecord(), outcome.PendingActorInvocation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nodeEngine.reconcilePendingInvocation(); err != nil {
+		t.Fatal(err)
+	}
+	var recoveredOutcome ActorInvocationOutcome
+	if ok, err := nodeEngine.Store.GetJSON(nodeEngine.invocationOutcomeRecord(), &recoveredOutcome); err != nil || !ok {
+		t.Fatalf("read recovered outcome: ok=%t err=%v", ok, err)
+	}
+	if !slices.Equal(recoveredOutcome.ChangedPaths, wantChangedPaths) {
+		t.Fatalf("recovered changed paths = %v, want %v", recoveredOutcome.ChangedPaths, wantChangedPaths)
+	}
+	if err := nodeEngine.assertNetChange(phase, &active); err != nil {
+		t.Fatalf("parallel requiresChange rejected the durable actor delta after recovery: %v", err)
 	}
 }
 

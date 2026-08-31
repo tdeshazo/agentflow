@@ -20,6 +20,7 @@ type V1Alpha4Workflow struct {
 
 type V1Alpha4Spec struct {
 	Parameters    map[string]Parameter          `yaml:"parameters"`
+	Execution     V1Alpha2Execution             `yaml:"execution"`
 	Workspace     V1Alpha2Workspace             `yaml:"workspace"`
 	Agents        map[string]V1Alpha2Agent      `yaml:"agents"`
 	Tools         map[string]Tool               `yaml:"tools"`
@@ -60,6 +61,7 @@ type V1Alpha4Phase struct {
 	Inputs          []V1Alpha3ContractInput `yaml:"inputs"`
 	Outputs         []string                `yaml:"outputs"`
 	ReadOnly        bool                    `yaml:"readOnly"`
+	Writes          []string                `yaml:"writes"`
 	WorkItem        string                  `yaml:"workItem"`
 	AdvanceWorkItem bool                    `yaml:"advanceWorkItem"`
 	ForEach         *V1Alpha4ForEach        `yaml:"forEach"`
@@ -88,7 +90,7 @@ func (w *V1Alpha4Workflow) v1alpha3Projection() (*V1Alpha3Workflow, []v1alpha4Ex
 	return &V1Alpha3Workflow{
 		APIVersion: w.APIVersion, Kind: w.Kind, Metadata: w.Metadata,
 		Spec: V1Alpha3Spec{
-			Parameters: w.Spec.Parameters, Workspace: w.Spec.Workspace, Agents: w.Spec.Agents,
+			Parameters: w.Spec.Parameters, Execution: w.Spec.Execution, Workspace: w.Spec.Workspace, Agents: w.Spec.Agents,
 			Tools: w.Spec.Tools, Preconditions: w.Spec.Preconditions, Validation: w.Spec.Validation,
 			Artifacts: w.Spec.Artifacts, Evidence: w.Spec.Evidence, Phases: phases,
 			HumanGates: w.Spec.HumanGates, Completion: w.Spec.Completion, Reset: w.Spec.Reset,
@@ -139,6 +141,7 @@ func (w *V1Alpha4Workflow) expandedPhases() []v1alpha4ExpandedPhase {
 					RequiresChange: phase.RequiresChange, If: phase.If, IfEvidence: phase.IfEvidence,
 					Validation: phase.Validation, DependsOn: dependsOn, Inputs: append([]V1Alpha3ContractInput(nil), phase.Inputs...),
 					Outputs: append([]string(nil), phase.Outputs...), ReadOnly: phase.ReadOnly,
+					Writes: append([]string(nil), phase.Writes...),
 				},
 				workItemID: itemID, advanceItem: phase.AdvanceWorkItem,
 			})
