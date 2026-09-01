@@ -49,19 +49,63 @@ func (s Store) SetCommit(name, commit string) error {
 }
 
 func (s Store) SetJSON(name string, v any) error {
-	b, err := json.Marshal(v)
+	sha, err := s.writeJSON(v)
 	if err != nil {
 		return err
+	}
+	_, err = s.Repo.run(nil, "update-ref", "-m", "agentflow state: "+name, s.ref(name), sha)
+	return err
+}
+
+// SetJSONIf atomically writes v only when name still refers to expected. An
+// empty expected value means the record must not exist. It returns false when
+// another process changed the record before the compare-and-swap completed.
+func (s Store) SetJSONIf(name string, v any, expected string) (bool, error) {
+	sha, err := s.writeJSON(v)
+	if err != nil {
+		return false, err
+	}
+	if expected == "" {
+		expected = strings.Repeat("0", len(sha))
+	}
+	_, err = s.Repo.run(nil, "update-ref", "-m", "agentflow state: "+name, s.ref(name), sha, expected)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "cannot lock ref") {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteIf atomically removes name only when it still refers to expected.
+// This prevents a finishing process from clearing a newer owner's state.
+func (s Store) DeleteIf(name, expected string) (bool, error) {
+	if expected == "" {
+		return false, nil
+	}
+	_, err := s.Repo.run(nil, "update-ref", "-d", s.ref(name), expected)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "cannot lock ref") {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s Store) writeJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
 	}
 	cmd := exec.Command("git", "-C", s.Repo.Root, "hash-object", "-w", "--stdin")
 	cmd.Stdin = bytes.NewReader(b)
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("write state blob: %w", err)
+		return "", fmt.Errorf("write state blob: %w", err)
 	}
-	sha := strings.TrimSpace(string(out))
-	_, err = s.Repo.run(nil, "update-ref", "-m", "agentflow state: "+name, s.ref(name), sha)
-	return err
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (s Store) GetJSON(name string, dst any) (bool, error) {
@@ -112,7 +156,7 @@ func (s Store) Reset() error {
 		if ref == "" {
 			continue
 		}
-		if strings.TrimPrefix(ref, s.Namespace+"/") == DescriptorRecord {
+		if name := strings.TrimPrefix(ref, s.Namespace+"/"); name == DescriptorRecord || name == "owner" {
 			// Observational discovery metadata survives an explicit acceptance
 			// reset so local logs remain addressable and status can report the
 			// namespace as uninitialized. It is rebuilt on the next run.

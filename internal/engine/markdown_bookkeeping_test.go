@@ -19,6 +19,7 @@ type engineOwnedProvider struct {
 
 func (p *engineOwnedProvider) Name() string                     { return "engine-owned-test" }
 func (p *engineOwnedProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *engineOwnedProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *engineOwnedProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++

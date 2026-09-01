@@ -11,6 +11,8 @@ import (
 
 const identifierPatternSource = `^[A-Za-z0-9_][A-Za-z0-9._-]*$`
 
+const runOwnerRecord = "owner"
+
 var identifierPattern = regexp.MustCompile(identifierPatternSource)
 
 // Validate performs document-only checks. It intentionally does not expand
@@ -149,9 +151,7 @@ func (v validator) roots() {
 	for _, name := range sortedKeys(v.w.Spec.Completion) {
 		v.namedIdentifier("spec.completion", "completion", name)
 	}
-	for _, name := range sortedKeys(v.w.Spec.State.Records.Integrity) {
-		v.namedIdentifier("spec.state.records.integrity", "integrity record", name)
-	}
+	v.stateRecords()
 	v.uniqueChecks()
 	v.uniquePhases()
 	v.uniqueCriteria()
@@ -161,6 +161,40 @@ func (v validator) roots() {
 	v.authoringDefaults()
 	if strategy := v.w.Spec.Progress.Selection.Strategy; strategy != "" && strategy != "first-unchecked" {
 		v.add(Invalid, "spec.progress.selection.strategy", "unsupported progress selection strategy %q", strategy)
+	}
+}
+
+func (v validator) stateRecords() {
+	records := v.w.Spec.State.Records
+	configured := []struct {
+		path string
+		name string
+	}{
+		{path: "spec.state.records.base_commit", name: records.BaseCommit},
+		{path: "spec.state.records.branch", name: records.Branch},
+		{path: "spec.state.records.active_phase", name: records.ActivePhase},
+		{path: "spec.state.records.completed_phase_pattern", name: records.CompletedPhasePattern},
+		{path: "spec.state.records.completed_phases", name: records.CompletedPhases},
+		{path: "spec.state.records.manual_confirmation", name: records.ManualConfirmation},
+		{path: "spec.state.records.human_verification", name: records.HumanVerification},
+		{path: "spec.state.records.workflow_complete", name: records.WorkflowComplete},
+	}
+	for _, record := range configured {
+		v.rejectRunOwnerRecord(record.path, record.name)
+	}
+	for _, name := range sortedKeys(records.Integrity) {
+		v.namedIdentifier("spec.state.records.integrity", "integrity record", name)
+		v.rejectRunOwnerRecord("spec.state.records.integrity."+name, records.Integrity[name])
+	}
+}
+
+func (v validator) rejectRunOwnerRecord(path, name string) {
+	// Store record names discard one leading slash, so /owner aliases owner.
+	normalized := strings.TrimPrefix(name, "/")
+	if normalized == runOwnerRecord {
+		v.add(Invalid, path, "record name %q is reserved for runtime ownership", name)
+	} else if strings.HasPrefix(normalized, "runtime/") {
+		v.add(Invalid, path, "record name %q is reserved for runtime controls", name)
 	}
 }
 

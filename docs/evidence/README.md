@@ -10,6 +10,11 @@ authority for field semantics or runtime behavior; use the
 
 Current closure records:
 
+- [Stage 3 run identity and trace foundation](stage-3-run-identity-trace.md)
+  records stable run/node-execution identities, recovery behavior, and the
+  separate versioned execution-trace contract.
+- [Stage 2 runtime security](stage-2-runtime-security.md) records execution
+  ownership, policy, credentials, approval, and resource-budget closure.
 - [Canonical self-hosting migration](canonical-self-hosting-migration.md)
   proves the equal-or-stronger v1alpha4 authority and retained v1alpha1
   compatibility boundary.

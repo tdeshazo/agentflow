@@ -94,6 +94,10 @@ func (e *Engine) phaseParallelEligible(phase *workflow.Phase) bool {
 }
 
 func (e *Engine) runParallelBatch(ctx context.Context, nodes []workflow.PhaseDependencyNode) error {
+	previousNodeID, previousNodeExecutionID, previousNodeAttempt := e.nodeID, e.nodeExecutionID, e.nodeAttempt
+	defer func() {
+		e.nodeID, e.nodeExecutionID, e.nodeAttempt = previousNodeID, previousNodeExecutionID, previousNodeAttempt
+	}()
 	if len(nodes) < 2 {
 		return fmt.Errorf("parallel scheduler requires at least two nodes")
 	}
@@ -190,6 +194,10 @@ func (e *Engine) recoverParallelBatch(ctx context.Context) error {
 }
 
 func (e *Engine) acceptParallelBatch(ctx context.Context, batch parallelBatch, callErrors map[string]error) error {
+	previousNodeID, previousNodeExecutionID, previousNodeAttempt := e.nodeID, e.nodeExecutionID, e.nodeAttempt
+	defer func() {
+		e.nodeID, e.nodeExecutionID, e.nodeAttempt = previousNodeID, previousNodeExecutionID, previousNodeAttempt
+	}()
 	for _, phaseID := range batch.Phases {
 		phase, err := e.phaseByID(phaseID)
 		if err != nil {
@@ -236,6 +244,7 @@ func (e *Engine) acceptParallelBatch(ctx context.Context, batch parallelBatch, c
 			return fmt.Errorf("unsupported parallel scheduler result version %d", result.Version)
 		}
 		active.ActorCompleted = resultOK && result.Succeeded
+		e.nodeID, e.nodeExecutionID, e.nodeAttempt = active.PhaseID, active.NodeExecutionID, active.Attempt
 		if err := nodeEngine.Store.SetJSON(nodeEngine.activeRecord(), active); err != nil {
 			return err
 		}

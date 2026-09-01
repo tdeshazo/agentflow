@@ -25,6 +25,7 @@ type durableProvider struct {
 
 func (p *durableProvider) Name() string                     { return "durable-test" }
 func (p *durableProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *durableProvider) EnforcesExecutionPolicy() bool    { return true }
 func (p *durableProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++
 	if p.action != nil {

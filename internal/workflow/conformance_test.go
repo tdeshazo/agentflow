@@ -19,6 +19,7 @@ func TestConformanceCorpus(t *testing.T) {
 		{name: "valid/v1alpha2-concise.yaml", status: Executable},
 		{name: "valid/v1alpha3-typed-contracts.yaml", status: Executable},
 		{name: "valid/v1alpha4-typed-work-items.yaml", status: Executable},
+		{name: "valid/v1alpha2-execution-policy.yaml", status: Executable},
 		{name: "unsupported/runtime-surface.yaml", status: Unsupported},
 		{name: "unsupported/allowed-semantic-changes.yaml", status: Unsupported},
 		{name: "unsupported/active-phase-recovery.yaml", status: Unsupported},
@@ -129,6 +130,7 @@ func TestConformanceInvalidDiagnostics(t *testing.T) {
 		{name: "v1alpha1-rejects-v1alpha2-dependency.yaml", status: Invalid, contains: "field dependsOn not found"},
 		{name: "v1alpha2-unknown-field.yaml", status: Invalid, contains: "field unknown not found"},
 		{name: "unsafe-identifiers.yaml", path: "spec.agents", status: Invalid, contains: "agent name must not be empty"},
+		{name: "v1alpha2-policy-escalation.yaml", status: Invalid, contains: "broadens inherited network"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

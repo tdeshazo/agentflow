@@ -1,0 +1,39 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: execution-policy
+spec:
+  execution:
+    maxParallel: 1
+    policy:
+      network: allow
+      capabilities: [issues]
+      credentials:
+        - {name: issue-token, env: ISSUE_TOKEN}
+      approvalGate: authorize
+      budgets:
+        modelCalls: 2
+        toolCalls: 3
+        tokens: 2000
+        duration: 10m
+  workspace:
+    allowWrites: [result.txt]
+  agents:
+    worker:
+      runner: codex
+      model: gpt-test
+      approval: never
+      policy:
+        network: deny
+        capabilities: []
+        credentials: []
+        budgets: {modelCalls: 1, tokens: 1000, duration: 5m}
+  validation:
+    result: {run: test -f result.txt}
+  phases:
+    - {id: work, actor: worker, prompt: create result.txt, validation: result}
+  humanGates:
+    - id: authorize
+      instructions: Approve privileged effects.
+      acknowledgement: {type: exact-text, value: approve}
+  completion: {validation: result}

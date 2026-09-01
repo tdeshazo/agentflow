@@ -76,7 +76,35 @@ type Spec struct {
 // ExecutionSpec selects the bounded dependency-scheduler policy. A zero value
 // preserves the historical serial scheduler.
 type ExecutionSpec struct {
-	MaxParallel int `yaml:"maxParallel"`
+	MaxParallel int             `yaml:"maxParallel"`
+	Policy      ExecutionPolicy `yaml:"policy"`
+}
+
+// ExecutionPolicy is the provider-neutral runtime security and resource
+// contract. Its zero value denies privileged effects while leaving counters
+// unbounded for workflows authored before Stage 2.
+type ExecutionPolicy struct {
+	Network      string            `yaml:"network"`
+	Capabilities []string          `yaml:"capabilities"`
+	Credentials  []CredentialScope `yaml:"credentials"`
+	ApprovalGate string            `yaml:"approvalGate"`
+	Budgets      ResourceBudgets   `yaml:"budgets"`
+}
+
+// CredentialScope maps one host environment variable into an actor process.
+// Values are resolved only at invocation time and are never persisted.
+type CredentialScope struct {
+	Name string `yaml:"name"`
+	Env  string `yaml:"env"`
+}
+
+// ResourceBudgets bounds cumulative workflow work. Zero means unbounded.
+type ResourceBudgets struct {
+	ModelCalls int     `yaml:"modelCalls"`
+	ToolCalls  int     `yaml:"toolCalls"`
+	Tokens     int64   `yaml:"tokens"`
+	Duration   string  `yaml:"duration"`
+	CostUSD    float64 `yaml:"costUSD"`
 }
 
 // AuthoringDefaults contains only inherited capability and lifecycle values.
@@ -245,7 +273,10 @@ type Agent struct {
 	Color             string `yaml:"-"` // Internal source compatibility only; not workflow schema.
 	MayCommit         bool   `yaml:"may_commit"`
 	OutputLastMessage bool   `yaml:"output_last_message"`
-	present           map[string]bool
+	// Policy optionally narrows spec.execution.policy for this executor. It is
+	// projected by successor APIs and is not part of frozen v1alpha1 YAML.
+	Policy  *ExecutionPolicy `yaml:"-"`
+	present map[string]bool
 }
 
 func (a *Agent) UnmarshalYAML(n *yaml.Node) error {

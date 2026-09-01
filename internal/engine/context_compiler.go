@@ -20,6 +20,15 @@ const (
 // normalized workflow authority and current durable/workspace state. The
 // result is intentionally not persisted.
 func (e *Engine) compileInvocationContext(actorName, role, objective string, agent workflow.Agent, phase *workflow.Phase, validations []string) (provider.InvocationContext, error) {
+	policy, err := e.effectiveExecutionPolicy(agent)
+	if err != nil {
+		return provider.InvocationContext{}, err
+	}
+	credentialNames := make([]string, 0, len(policy.Credentials))
+	for _, credential := range policy.Credentials {
+		credentialNames = append(credentialNames, credential.Name)
+	}
+	sort.Strings(credentialNames)
 	context := provider.InvocationContext{
 		Version: provider.InvocationContextVersion,
 		Invocation: provider.InvocationIdentity{
@@ -37,7 +46,13 @@ func (e *Engine) compileInvocationContext(actorName, role, objective string, age
 		},
 		Executor: provider.ExecutorCapabilities{
 			Sandbox: agent.Sandbox, Approval: agent.Approval, Ephemeral: agent.Ephemeral,
-			FilesystemBoundary: true,
+			FilesystemBoundary: true, Network: policy.Network,
+			Capabilities: append([]string(nil), policy.Capabilities...), Credentials: credentialNames,
+			ApprovalGate: policy.ApprovalGate,
+			Budgets: provider.ResourceBudgets{
+				ModelCalls: policy.Budgets.ModelCalls, ToolCalls: policy.Budgets.ToolCalls,
+				Tokens: policy.Budgets.Tokens, Duration: policy.Budgets.Duration, CostUSD: policy.Budgets.CostUSD,
+			},
 		},
 		Manifest:    invocationContextManifest(role == invocationRoleRepair),
 		Validations: []provider.ValidationRequirement{},

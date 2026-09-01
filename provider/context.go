@@ -100,10 +100,24 @@ type ResourceAccess struct {
 
 // ExecutorCapabilities records effective capabilities relevant to actor work.
 type ExecutorCapabilities struct {
-	Sandbox            string `json:"sandbox"`
-	Approval           string `json:"approval"`
-	Ephemeral          bool   `json:"ephemeral"`
-	FilesystemBoundary bool   `json:"filesystemBoundary"`
+	Sandbox            string          `json:"sandbox"`
+	Approval           string          `json:"approval"`
+	Ephemeral          bool            `json:"ephemeral"`
+	FilesystemBoundary bool            `json:"filesystemBoundary"`
+	Network            string          `json:"network"`
+	Capabilities       []string        `json:"capabilities,omitempty"`
+	Credentials        []string        `json:"credentials,omitempty"`
+	ApprovalGate       string          `json:"approvalGate,omitempty"`
+	Budgets            ResourceBudgets `json:"budgets"`
+}
+
+// ResourceBudgets exposes limits, never usage values or secret material.
+type ResourceBudgets struct {
+	ModelCalls int     `json:"modelCalls,omitempty"`
+	ToolCalls  int     `json:"toolCalls,omitempty"`
+	Tokens     int64   `json:"tokens,omitempty"`
+	Duration   string  `json:"duration,omitempty"`
+	CostUSD    float64 `json:"costUSD,omitempty"`
 }
 
 // ValidationRequirement names one deterministic validation selected for this

@@ -20,6 +20,13 @@ type FilesystemBoundaryEnforcer interface {
 	EnforcesFilesystemBoundary() bool
 }
 
+// ExecutionPolicyEnforcer is required for actor execution. A provider must
+// translate the engine-owned network, capability, credential, and metering
+// contract into an enforced process boundary or reject the request.
+type ExecutionPolicyEnforcer interface {
+	EnforcesExecutionPolicy() bool
+}
+
 // PresentationIntent describes the runtime's desired human-facing presentation
 // without naming a provider's command-line flags. Providers resolve it against
 // their actual output destination.
@@ -72,6 +79,25 @@ type Request struct {
 	// actor process. Adapters must enforce every rule or reject the request.
 	// It is not advisory prompt content.
 	FilesystemBoundary []FilesystemRule
+	Policy             ExecutionPolicy
+	// Credentials contains only explicitly authorized values. Keys are target
+	// environment names; values must never be logged or rendered into Context.
+	Credentials map[string]string
+	Budget      InvocationBudget
+}
+
+// ExecutionPolicy describes provider-enforced effects for one invocation.
+type ExecutionPolicy struct {
+	Network      string
+	Capabilities []string
+	ApprovalGate string
+}
+
+// InvocationBudget gives the adapter hard remaining limits. Zero is unbounded.
+type InvocationBudget struct {
+	Tokens   int64
+	Duration int64 // nanoseconds
+	CostUSD  float64
 }
 
 // FilesystemAccess is the access granted to one absolute filesystem path.
@@ -94,4 +120,12 @@ type FilesystemRule struct {
 // decides advancement.
 type Result struct {
 	FinalMessage string
+	Usage        Usage
+}
+
+// Usage is provider-reported metering for one invocation.
+type Usage struct {
+	InputTokens  int64
+	OutputTokens int64
+	CostUSD      float64
 }

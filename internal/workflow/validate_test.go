@@ -51,6 +51,51 @@ func TestValidateExecutableWithoutRepository(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsReservedRunOwnerRecord(t *testing.T) {
+	tests := []struct {
+		name       string
+		record     string
+		wantPath   string
+		wantRecord string
+	}{
+		{name: "base commit", record: "base_commit: owner", wantPath: "spec.state.records.base_commit", wantRecord: "owner"},
+		{name: "branch", record: "branch: owner", wantPath: "spec.state.records.branch", wantRecord: "owner"},
+		{name: "active phase", record: "active_phase: owner", wantPath: "spec.state.records.active_phase", wantRecord: "owner"},
+		{name: "completed phase pattern", record: "completed_phase_pattern: owner", wantPath: "spec.state.records.completed_phase_pattern", wantRecord: "owner"},
+		{name: "completed phases", record: "completed_phases: owner", wantPath: "spec.state.records.completed_phases", wantRecord: "owner"},
+		{name: "manual confirmation", record: "manual_confirmation: owner", wantPath: "spec.state.records.manual_confirmation", wantRecord: "owner"},
+		{name: "human verification", record: "human_verification: owner", wantPath: "spec.state.records.human_verification", wantRecord: "owner"},
+		{name: "workflow complete", record: "workflow_complete: owner", wantPath: "spec.state.records.workflow_complete", wantRecord: "owner"},
+		{name: "integrity value", record: "integrity:\n        protected: owner", wantPath: "spec.state.records.integrity.protected", wantRecord: "owner"},
+		{name: "leading slash alias", record: "base_commit: /owner", wantPath: "spec.state.records.base_commit", wantRecord: "/owner"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(executableFixture, "  agents:", "  state:\n    records:\n      "+tt.record+"\n  agents:", 1)
+			result := ValidateFile(writeWorkflow(t, body))
+			if result.Status != Invalid {
+				t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+			}
+			if !diagnosticsContain(result.Diagnostics, tt.wantPath, "record name \""+tt.wantRecord+"\" is reserved") {
+				t.Fatalf("diagnostics = %#v", result.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestValidateAllowsOwnerAsPartOfRecordName(t *testing.T) {
+	body := strings.Replace(executableFixture, "  agents:", `  state:
+    records:
+      base_commit: owner-base
+      integrity:
+        protected: owner-snapshot
+  agents:`, 1)
+	result := ValidateFile(writeWorkflow(t, body))
+	if result.Status != Executable {
+		t.Fatalf("status = %s, diagnostics = %#v", result.Status, result.Diagnostics)
+	}
+}
+
 func TestValidateRuntimeOwnedLifecyclePolicy(t *testing.T) {
 	valid := strings.Replace(executableFixture, "  phases:", `  lifecycle:
     policy: safe-resume

@@ -122,6 +122,45 @@
       },
       "type": "object"
     },
+    "CredentialScope": {
+      "additionalProperties": false,
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ExecutionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalGate": {
+          "type": "string"
+        },
+        "budgets": {
+          "$ref": "#/$defs/ResourceBudgets"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "credentials": {
+          "items": {
+            "$ref": "#/$defs/CredentialScope"
+          },
+          "type": "array"
+        },
+        "network": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "IntegrityRule": {
       "additionalProperties": false,
       "properties": {
@@ -180,6 +219,27 @@
         },
         "type": {
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ResourceBudgets": {
+      "additionalProperties": false,
+      "properties": {
+        "costUSD": {
+          "type": "number"
+        },
+        "duration": {
+          "type": "string"
+        },
+        "modelCalls": {
+          "type": "integer"
+        },
+        "tokens": {
+          "type": "integer"
+        },
+        "toolCalls": {
+          "type": "integer"
         }
       },
       "type": "object"
@@ -259,6 +319,9 @@
         "output_last_message": {
           "type": "boolean"
         },
+        "policy": {
+          "$ref": "#/$defs/ExecutionPolicy"
+        },
         "runner": {
           "type": "string"
         },
@@ -273,6 +336,9 @@
       "properties": {
         "maxParallel": {
           "type": "integer"
+        },
+        "policy": {
+          "$ref": "#/$defs/ExecutionPolicy"
         }
       },
       "type": "object"

@@ -14,6 +14,17 @@
 
 ### Added
 
+- Added stable opaque run and node-execution identities with recovery-preserved
+  attempts, provider attribution metadata, status projection, compatible legacy
+  migration, and a separate versioned append-only execution trace under the
+  repository's private Git directory.
+- Completed Stage 2 runtime security and resource control with fail-closed
+  execution-policy inheritance, provider-enforced network/capability scopes,
+  explicit credential injection and output redaction, human approval for
+  privileged effects, durable model/tool/token/time/cost budgets, cancellation,
+  and deterministic exhaustion state.
+- Enforced a process-identity-backed exclusive workflow owner lease for runtime
+  execution and reset, with safe stale-owner recovery.
 - Added a non-fatal `agentflow validate` warning when a workflow uses the
   grammar-frozen `agentflow.dev/v1alpha1` API. Existing v1alpha1 workflows
   remain valid and executable; the warning directs new authoring to v1alpha4

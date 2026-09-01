@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/executiontrace"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
@@ -14,23 +16,34 @@ import (
 // LastError is bounded and redacts environment-shaped diagnostics before it is
 // persisted; it remains diagnostic only and never authorizes recovery.
 type StatusSnapshot struct {
-	SchemaVersion    int      `json:"schema_version"`
-	Workflow         string   `json:"workflow"`
-	Repo             string   `json:"repo"`
-	Initialized      bool     `json:"initialized"`
-	State            string   `json:"state"`
-	HumanGate        string   `json:"human_gate,omitempty"`
-	Base             string   `json:"base,omitempty"`
-	Branch           string   `json:"branch,omitempty"`
-	ActivePhase      string   `json:"active_phase,omitempty"`
-	ParallelPhases   []string `json:"parallel_phases,omitempty"`
-	PhaseStartCommit string   `json:"phase_start_commit,omitempty"`
-	ActorCompleted   bool     `json:"actor_completed"`
-	FailureKind      string   `json:"failure_kind,omitempty"`
-	ValidationFailed string   `json:"validation_failed,omitempty"`
-	FailureStage     string   `json:"failure_stage,omitempty"`
-	LastError        string   `json:"last_error,omitempty"`
-	QuarantinePath   string   `json:"quarantine_path,omitempty"`
+	SchemaVersion      int      `json:"schema_version"`
+	RunID              string   `json:"run_id,omitempty"`
+	TraceSchemaVersion int      `json:"trace_schema_version,omitempty"`
+	TracePath          string   `json:"trace_path,omitempty"`
+	Workflow           string   `json:"workflow"`
+	Repo               string   `json:"repo"`
+	Initialized        bool     `json:"initialized"`
+	State              string   `json:"state"`
+	HumanGate          string   `json:"human_gate,omitempty"`
+	Base               string   `json:"base,omitempty"`
+	Branch             string   `json:"branch,omitempty"`
+	ActivePhase        string   `json:"active_phase,omitempty"`
+	NodeExecutionID    string   `json:"node_execution_id,omitempty"`
+	NodeAttempt        int      `json:"node_attempt,omitempty"`
+	ParallelPhases     []string `json:"parallel_phases,omitempty"`
+	PhaseStartCommit   string   `json:"phase_start_commit,omitempty"`
+	ActorCompleted     bool     `json:"actor_completed"`
+	FailureKind        string   `json:"failure_kind,omitempty"`
+	ValidationFailed   string   `json:"validation_failed,omitempty"`
+	FailureStage       string   `json:"failure_stage,omitempty"`
+	LastError          string   `json:"last_error,omitempty"`
+	QuarantinePath     string   `json:"quarantine_path,omitempty"`
+	BudgetStartedAt    string   `json:"budget_started_at,omitempty"`
+	ModelCalls         int      `json:"model_calls,omitempty"`
+	ToolCalls          int      `json:"tool_calls,omitempty"`
+	Tokens             int64    `json:"tokens,omitempty"`
+	CostUSD            float64  `json:"cost_usd,omitempty"`
+	BudgetExhausted    string   `json:"budget_exhausted,omitempty"`
 	// Recovery and NextAction are stable, non-secret classifications. They
 	// describe how the existing runtime will evaluate a later run; they never
 	// authorize recovery or expose validation command output.
@@ -98,6 +111,26 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	if err := gitstate.ValidateQuarantinePath(e.Repo, lastFailure.QuarantinePath); err != nil {
 		return StatusSnapshot{}, fmt.Errorf("last failure quarantine diagnostic: %w", err)
 	}
+	var resourceUsage ResourceUsage
+	usageExists, err := e.Store.GetJSON(resourceUsageRecord, &resourceUsage)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	if usageExists && resourceUsage.Version != 1 {
+		return StatusSnapshot{}, fmt.Errorf("unsupported resource usage version %d", resourceUsage.Version)
+	}
+	var runIdentity RunIdentity
+	identityExists, err := e.Store.GetJSON(e.runIdentityRecord(), &runIdentity)
+	if err != nil {
+		return StatusSnapshot{}, err
+	}
+	tracePath := ""
+	if identityExists && runIdentity.RunID != "" {
+		tracePath, err = executiontrace.Path(e.Repo, runIdentity.RunID)
+		if err != nil {
+			return StatusSnapshot{}, err
+		}
+	}
 
 	state := "uninitialized"
 	if initialized {
@@ -134,6 +167,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	if initialized && !completed && !activeExists && failureExists {
 		state = "failed/retryable"
 	}
+	if initialized && !completed && resourceUsage.Exhausted != "" {
+		state = "budget-exhausted/terminal"
+	}
 
 	pendingGate := ""
 	if initialized && !completed && !activeExists && !batchExists {
@@ -147,6 +183,9 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 
 	snapshot := StatusSnapshot{
 		SchemaVersion:      1,
+		RunID:              runIdentity.RunID,
+		TraceSchemaVersion: executiontrace.SchemaVersion,
+		TracePath:          tracePath,
 		Workflow:           e.Workflow.Metadata.Name,
 		Repo:               e.Repo.Root,
 		Initialized:        initialized,
@@ -162,9 +201,19 @@ func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 		QuarantinePath:     lastFailure.QuarantinePath,
 		IntegrityViolation: lastFailure.IntegrityViolation,
 		ParallelPhases:     append([]string(nil), batch.Phases...),
+		ModelCalls:         resourceUsage.ModelCalls,
+		ToolCalls:          resourceUsage.ToolCalls,
+		Tokens:             resourceUsage.Tokens,
+		CostUSD:            resourceUsage.CostUSD,
+		BudgetExhausted:    resourceUsage.Exhausted,
+	}
+	if !resourceUsage.StartedAt.IsZero() {
+		snapshot.BudgetStartedAt = resourceUsage.StartedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if activeExists {
 		snapshot.ActivePhase = active.PhaseID
+		snapshot.NodeExecutionID = active.NodeExecutionID
+		snapshot.NodeAttempt = active.Attempt
 		snapshot.PhaseStartCommit = active.StartCommit
 		snapshot.ActorCompleted = active.ActorCompleted
 		snapshot.FailureKind = string(active.FailureKind)
@@ -186,6 +235,9 @@ func setRecoveryMetadata(snapshot *StatusSnapshot) {
 		snapshot.Recovery = "automatic-on-rerun"
 		snapshot.NextAction = "rerun"
 	case "safety-failed/terminal":
+		snapshot.Recovery = "operator-action-required"
+		snapshot.NextAction = "reset-or-abandon"
+	case "budget-exhausted/terminal":
 		snapshot.Recovery = "operator-action-required"
 		snapshot.NextAction = "reset-or-abandon"
 	case "failed/retryable":
@@ -225,6 +277,8 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 		p.MetadataStyled("human_gate", snapshot.HumanGate, clioutput.RoleWarning)
 	}
 	if snapshot.Initialized {
+		p.Metadata("run_id", snapshot.RunID)
+		p.Metadata("trace", p.Hyperlink(snapshot.TracePath, clioutput.FileURL(snapshot.TracePath)))
 		p.Metadata("base", snapshot.Base)
 		p.Metadata("branch", snapshot.Branch)
 	}
@@ -235,6 +289,10 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 			clioutput.RoleAccent,
 		)
 		p.Metadata("actor_completed", fmt.Sprint(snapshot.ActorCompleted))
+		if snapshot.NodeExecutionID != "" {
+			p.Metadata("node_execution_id", snapshot.NodeExecutionID)
+			p.Metadata("node_attempt", fmt.Sprint(snapshot.NodeAttempt))
+		}
 		if snapshot.ValidationFailed != "" {
 			if snapshot.FailureKind != "" {
 				p.MetadataStyled("failure_kind", snapshot.FailureKind, clioutput.StateRole(snapshot.FailureKind))
@@ -247,6 +305,18 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	}
 	if len(snapshot.ParallelPhases) != 0 {
 		p.MetadataStyled("parallel_phases", strings.Join(snapshot.ParallelPhases, ", "), clioutput.RoleAccent)
+	}
+	if snapshot.BudgetStartedAt != "" {
+		p.Metadata("budget_started_at", snapshot.BudgetStartedAt)
+		p.Metadata("model_calls", fmt.Sprint(snapshot.ModelCalls))
+		p.Metadata("tool_calls", fmt.Sprint(snapshot.ToolCalls))
+		p.Metadata("tokens", fmt.Sprint(snapshot.Tokens))
+		if snapshot.CostUSD != 0 {
+			p.Metadata("cost_usd", fmt.Sprintf("%.6f", snapshot.CostUSD))
+		}
+	}
+	if snapshot.BudgetExhausted != "" {
+		p.MetadataStyled("budget_exhausted", snapshot.BudgetExhausted, clioutput.RoleError)
 	}
 	if snapshot.FailureStage != "" {
 		p.MetadataStyled("failure_stage", snapshot.FailureStage, clioutput.RoleWarning)

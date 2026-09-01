@@ -145,6 +145,10 @@ func mergeAgent(base, local Agent) Agent {
 	if local.present["output_last_message"] {
 		out.OutputLastMessage = local.OutputLastMessage
 	}
+	if local.Policy != nil {
+		policy := *local.Policy
+		out.Policy = &policy
+	}
 	out.present = nil
 	return out
 }

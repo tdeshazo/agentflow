@@ -29,6 +29,7 @@ func (p *canonicalSelfHostingProvider) Name() string { return "canonical-self-ho
 func (p *canonicalSelfHostingProvider) EnforcesFilesystemBoundary() bool {
 	return true
 }
+func (p *canonicalSelfHostingProvider) EnforcesExecutionPolicy() bool { return true }
 
 func (p *canonicalSelfHostingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	phase := request.Metadata["phase"]
@@ -248,6 +249,7 @@ func TestCanonicalSelfHostingWorkflowResumesAfterDurableActorCompletion(t *testi
 
 func (p *referenceWorkflowProvider) Name() string                     { return "reference-workflow" }
 func (p *referenceWorkflowProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *referenceWorkflowProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *referenceWorkflowProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	phase := request.Metadata["phase"]

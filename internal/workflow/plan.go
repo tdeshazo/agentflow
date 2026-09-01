@@ -81,15 +81,16 @@ type PlannedEvidence struct {
 // PlannedAgent is the resolved executor contract. It exposes inherited
 // defaults without exposing provider output or prompt contents.
 type PlannedAgent struct {
-	Name              string `yaml:"name"`
-	Runner            string `yaml:"runner"`
-	Model             string `yaml:"model,omitempty"`
-	Sandbox           string `yaml:"sandbox,omitempty"`
-	Approval          string `yaml:"approval,omitempty"`
-	Ephemeral         bool   `yaml:"ephemeral"`
-	Color             string `yaml:"color,omitempty"`
-	MayCommit         bool   `yaml:"mayCommit"`
-	OutputLastMessage bool   `yaml:"outputLastMessage"`
+	Name              string          `yaml:"name"`
+	Runner            string          `yaml:"runner"`
+	Model             string          `yaml:"model,omitempty"`
+	Sandbox           string          `yaml:"sandbox,omitempty"`
+	Approval          string          `yaml:"approval,omitempty"`
+	Ephemeral         bool            `yaml:"ephemeral"`
+	Color             string          `yaml:"color,omitempty"`
+	MayCommit         bool            `yaml:"mayCommit"`
+	OutputLastMessage bool            `yaml:"outputLastMessage"`
+	Policy            ExecutionPolicy `yaml:"policy"`
 }
 type PlannedPhase struct {
 	ID              string               `yaml:"id"`
@@ -184,10 +185,15 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 	}
 	for _, name := range sortedKeys(w.Spec.Agents) {
 		a := w.Spec.Agents[name]
+		policy, err := EffectiveExecutionPolicy(w.Spec.Execution.Policy, a.Policy)
+		if err != nil {
+			return ExpandedPlan{}, fmt.Errorf("agent %s execution policy: %w", name, err)
+		}
 		plan.ResolvedAgents = append(plan.ResolvedAgents, PlannedAgent{
 			Name: name, Runner: a.Runner, Model: a.Model, Sandbox: a.Sandbox,
 			Approval: a.Approval, Ephemeral: a.Ephemeral, Color: a.Color,
 			MayCommit: a.MayCommit, OutputLastMessage: a.OutputLastMessage,
+			Policy: policy,
 		})
 	}
 	for _, name := range sortedKeys(w.Spec.Validation) {

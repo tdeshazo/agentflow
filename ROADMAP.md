@@ -180,23 +180,35 @@ met. Work may overlap when its prerequisites are already satisfied, while
 correctness and security repairs to delivered behavior always preempt new
 feature work.
 
-| Stage | Execution focus | Required outcome before advancement |
-| --- | --- | --- |
-| 1 | Foundation closure | Reconcile the executable schema, v1alpha1 runtime parity, and runtime-owned orchestration with implemented behavior; close or explicitly defer every residual gap and record durable evidence. |
-| 2 | Runtime security and execution ownership | Enforce actor isolation, private controls, one live workflow owner, cancellation, capability boundaries, and safe stale-owner recovery. |
-| 3 | Run identity, supervised sessions, and trace foundation | Establish stable run/node identities, explainable state transitions, exclusive attach/detach handoff, and lossless operational output. |
-| 4 | v1alpha1 maintenance and successor migration | Freeze v1alpha1 authoring, migrate the canonical self-hosting path and guidance, and provide deterministic migration diagnostics before deprecation. |
-| 5 | Typed contracts, artifacts, and evidence | Make phase handoffs and acceptance evidence machine-checkable before introducing parallel execution. |
-| 5.5 | Invocation context compilation (complete; budgeting deferred) | Compile deterministic, inspectable per-node execution context from typed dependencies, authority, and workspace state before bounded parallel execution. Token and resource-budget enforcement is deferred to separate resource-control work. |
-| 6 | Parallel dependency scheduling (complete) | Extend the implemented serial dependency scheduler with bounded concurrency, fan-out/fan-in, conflict detection, and durable parallel recovery. |
-| 7 | Executor and tool extensibility | Add providers and tools only through the established capability, identity, and typed-contract boundaries. |
-| 8 | Reusable workflows and composition | Add pinned, trust-aware composition without creating an alternate authority path. |
-| 9 | Developer tooling and observability completion | Complete authoring/review tooling, observability exports, metrics, semantic comparison, and documentation drift checks not already required by earlier stages. |
-| 10 | v1beta1 stabilization | Freeze the proven semantics, publish normative artifacts and conformance, and provide supported migration and release paths. |
+The active queue is ordered by current product risk and dependency value. Stage
+identifiers remain stable for specifications, evidence, and historical links;
+priority is represented by table order rather than by renumbering stages.
+
+| Priority | Stage | Active focus | Required outcome before the next priority |
+| --- | --- | --- | --- |
+| 1 | 3 | Run identity, trace, and supervised sessions | Establish stable run/node identities and a versioned explainable trace before adding attach/detach supervision and interactive session handoff. |
+| 2 | 5 | Typed-contract closure | Audit the typed handoff, artifact, and evidence behavior already used by later delivered stages; close any conformance or self-hosting gaps and record durable completion evidence before extending the executor surface. Stage 5 remains active until it is explicitly marked complete. |
+| 3 | 7 | Executor and tool extensibility | Stabilize capability-aware provider and tool contracts, prove them with a second provider implementation, and fail unsupported requirements before execution. |
+| 4 | 8 | Reusable workflows and composition | Add typed, pinned, trust-aware local and remote composition only after executor capabilities and execution identity are stable. |
+| 5 | 9 | Developer tooling and observability completion | Finish formatting, linting, graph and editor support, semantic comparison, documentation drift checks, and structured operational exports after the executable semantics settle. |
+| 6 | 10 | `v1beta1` stabilization | Freeze only the semantics proven by the preceding priorities, then publish normative artifacts, migration paths, releases, and the intended license. |
+
+The following dependency stages are complete and no longer compete for active
+priority. Correctness or security regressions in them still preempt the queue.
+
+| Stage | Delivered foundation |
+| --- | --- |
+| 1 | Executable schema, v1alpha1 runtime parity, and runtime-owned orchestration foundation closure. |
+| 2 | Exclusive execution ownership, isolated actor workspaces, enforced effect scopes, explicit/redacted credentials, privileged-effect approval, and durable resource budgets. |
+| 4 | v1alpha1 maintenance policy and canonical successor migration. |
+| 5.5 | Deterministic invocation-context compilation; its deferred resource-budget enforcement was delivered by Stage 2. |
+| 6 | Bounded parallel dependency scheduling and durable recovery. |
 
 Security is a continuous release gate across every stage. Developer tooling is
 incremental: a tool needed to satisfy an earlier exit criterion belongs to that
-earlier stage rather than waiting for stage 9.
+earlier stage rather than waiting for stage 9. The active order changes only
+when a stage records durable completion evidence or a newly discovered
+correctness or security issue requires preemption.
 
 ---
 
@@ -342,11 +354,13 @@ topology.
 
 **Goal:** Establish one enforceable execution owner and move security and resource control out of prompt promises and into runtime-enforced policy.
 
+- [x] Stage 2 exit criteria are satisfied and linked to durable evidence.
+
 This stage is a prerequisite for supervised sessions, successor migration, parallel scheduling, and executor extensibility. Correctness and security defects in an existing boundary preempt feature work in later stages.
 
 ### Scope
 
-- Independent actor repositories that exclude authoritative Git history, runtime-private controls, and workflow definitions.
+- Independent actor repositories that exclude authoritative Git history and runtime-private workflow definitions and controls.
 - An exclusive active-run lease tied to stable process identity, with deterministic rejection of concurrent owners.
 - Observable stale-owner recovery that cannot confuse PID reuse with a live workflow.
 - Per-executor tool capabilities.
@@ -358,6 +372,18 @@ This stage is a prerequisite for supervised sessions, successor migration, paral
 - Cancellation and budget-exhaustion semantics.
 - Policy inheritance and narrowing rules.
 - Security-focused conformance fixtures, including prompt-injection-style attempts to exceed authority.
+
+### Implementation status
+
+**Complete (2026-09-01).** `run` and `reset` use an exclusive PID/start-token
+lease with fail-closed stale-owner recovery. Actors execute in independent
+depth-one repositories without authoritative Git history or runtime-private
+paths. Successor policies enforce network and external capability scopes,
+explicit credential injection and output redaction, durable human approval for
+privileged effects before any affected actor or repair can run, narrowing-only
+executor overrides, context cancellation,
+and Git-backed model/tool/token/time/cost exhaustion. See the
+[Stage 2 closure evidence](docs/evidence/stage-2-runtime-security.md).
 
 ### Exit criteria
 
@@ -374,12 +400,26 @@ This stage is a prerequisite for supervised sessions, successor migration, paral
 
 **Goal:** Make a run explainable independently of the reusable workflow definition.
 
+### Implementation status
+
+**Identity and trace foundation complete (2026-09-01).** Every initialized run
+has an opaque durable run ID bound to its compatibility digests. Every phase
+attempt has a distinct node-execution ID and monotonic per-node attempt number;
+interrupted recovery retains both. The runtime writes a separate v1 JSONL trace
+with monotonic sequence numbers under the repository's private Git directory,
+and exposes its schema, path, and current identities through status. Existing
+digest-only run and active-phase records migrate without replaying work. See the
+[Stage 3 identity and trace evidence](docs/evidence/stage-3-run-identity-trace.md).
+
+Supervised attach/detach sessions, expanded transition coverage, status detail,
+and `explain` remain open Stage 3 work.
+
 This stage builds on the exclusive ownership boundary from stage 2. Stable run identity and lossless session supervision are required before migration broadens the preferred workflow surface or parallel execution increases runtime complexity.
 
 ### Scope
 
-- Define a versioned execution-trace schema distinct from the workflow SDL.
-- Assign stable run and node-execution identities.
+- [x] Define a versioned execution-trace schema distinct from the workflow SDL.
+- [x] Assign stable run and node-execution identities.
 - Record state transitions, attempts, validations, repairs, checkpoints, human gates, and completion evidence.
 - Capture provider/tool metadata without requiring private model reasoning.
 - Add `agentflow status` detail suitable for both humans and automation.

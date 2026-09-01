@@ -27,6 +27,7 @@ type schedulingProvider struct {
 
 func (p *schedulingProvider) Name() string                     { return "scheduler-test" }
 func (p *schedulingProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *schedulingProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *schedulingProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	phase := request.Metadata["phase"]

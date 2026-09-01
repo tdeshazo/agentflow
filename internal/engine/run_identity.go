@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,13 +12,17 @@ import (
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
 
-const runIdentityVersion = 1
+const (
+	legacyRunIdentityVersion = 1
+	runIdentityVersion       = 2
+)
 
 // RunIdentity is the durable, non-secret binding between a state namespace and
-// the workflow invocation that initialized it. It contains only digests: never
-// add resolved parameter values to this record.
+// the workflow invocation that initialized it. Besides its opaque ID it
+// contains only digests; never add resolved parameter values to this record.
 type RunIdentity struct {
 	Version          int    `json:"version"`
+	RunID            string `json:"run_id,omitempty"`
 	Algorithm        string `json:"algorithm"`
 	WorkflowDigest   string `json:"workflow_digest"`
 	ParametersDigest string `json:"parameters_digest"`
@@ -126,26 +131,27 @@ type legacyRecoveryAction struct {
 // convenience does not invalidate an active workflow that does not use it.
 // Defaults is included only when it has executable content.
 type runWorkflowSpec struct {
-	Parameters    map[string]workflow.Parameter  `json:"Parameters"`
-	Paths         map[string]string              `json:"Paths"`
-	State         workflow.StateSpec             `json:"State"`
-	Workspace     workflow.WorkspaceSpec         `json:"Workspace"`
-	Agents        map[string]workflow.Agent      `json:"Agents"`
-	Tools         map[string]workflow.Tool       `json:"Tools"`
-	Temp          workflow.TempSpec              `json:"Temp"`
-	Preconditions []workflow.Check               `json:"Preconditions"`
-	Progress      workflow.ProgressSpec          `json:"Progress"`
-	Validation    map[string]workflow.Validation `json:"Validation"`
-	Lifecycle     *workflow.LifecyclePolicy      `json:"Lifecycle,omitempty"`
-	PhaseDefaults workflow.PhaseDefaults         `json:"PhaseDefaults"`
-	Phases        []workflow.Phase               `json:"Phases"`
-	HumanGates    []workflow.HumanGate           `json:"HumanGates"`
-	Recovery      workflow.Recovery              `json:"Recovery"`
-	Flow          []workflow.FlowStep            `json:"Flow"`
-	Completion    map[string]workflow.Completion `json:"Completion"`
-	Contracts     workflow.ContractSpec          `json:"Contracts"`
-	Criteria      workflow.CriteriaSpec          `json:"Criteria"`
-	Defaults      *workflow.AuthoringDefaults    `json:"Defaults,omitempty"`
+	Parameters      map[string]workflow.Parameter  `json:"Parameters"`
+	Paths           map[string]string              `json:"Paths"`
+	State           workflow.StateSpec             `json:"State"`
+	Workspace       workflow.WorkspaceSpec         `json:"Workspace"`
+	Agents          map[string]workflow.Agent      `json:"Agents"`
+	Tools           map[string]workflow.Tool       `json:"Tools"`
+	Temp            workflow.TempSpec              `json:"Temp"`
+	Preconditions   []workflow.Check               `json:"Preconditions"`
+	Progress        workflow.ProgressSpec          `json:"Progress"`
+	Validation      map[string]workflow.Validation `json:"Validation"`
+	Lifecycle       *workflow.LifecyclePolicy      `json:"Lifecycle,omitempty"`
+	PhaseDefaults   workflow.PhaseDefaults         `json:"PhaseDefaults"`
+	Phases          []workflow.Phase               `json:"Phases"`
+	HumanGates      []workflow.HumanGate           `json:"HumanGates"`
+	Recovery        workflow.Recovery              `json:"Recovery"`
+	Flow            []workflow.FlowStep            `json:"Flow"`
+	Completion      map[string]workflow.Completion `json:"Completion"`
+	Contracts       workflow.ContractSpec          `json:"Contracts"`
+	Criteria        workflow.CriteriaSpec          `json:"Criteria"`
+	Defaults        *workflow.AuthoringDefaults    `json:"Defaults,omitempty"`
+	ExecutionPolicy *workflow.ExecutionPolicy      `json:"ExecutionPolicy,omitempty"`
 }
 
 func runIdentitySpec(spec workflow.Spec) any {
@@ -180,11 +186,15 @@ func runIdentitySpec(spec workflow.Spec) any {
 		defaults := spec.Defaults
 		identity.Defaults = &defaults
 	}
+	if !reflect.DeepEqual(spec.Execution.Policy, workflow.ExecutionPolicy{}) {
+		policy := spec.Execution.Policy
+		identity.ExecutionPolicy = &policy
+	}
 	return identity
 }
 
 func usesLegacyIdentityShape(spec workflow.Spec) bool {
-	if !reflect.DeepEqual(spec.Lifecycle, workflow.LifecyclePolicy{}) || !reflect.DeepEqual(spec.Defaults, workflow.AuthoringDefaults{}) {
+	if !reflect.DeepEqual(spec.Lifecycle, workflow.LifecyclePolicy{}) || !reflect.DeepEqual(spec.Defaults, workflow.AuthoringDefaults{}) || !reflect.DeepEqual(spec.Execution.Policy, workflow.ExecutionPolicy{}) {
 		return false
 	}
 	for _, validation := range spec.Validation {
@@ -383,6 +393,17 @@ func (e *Engine) externalEnvironmentInputs() map[string]runEnvironmentValue {
 	for name := range expressionEnvironmentReferences(e.Workflow.Spec) {
 		names[name] = struct{}{}
 	}
+	for _, credential := range e.Workflow.Spec.Execution.Policy.Credentials {
+		names[credential.Env] = struct{}{}
+	}
+	for _, agent := range e.Workflow.Spec.Agents {
+		if agent.Policy == nil {
+			continue
+		}
+		for _, credential := range agent.Policy.Credentials {
+			names[credential.Env] = struct{}{}
+		}
+	}
 	values := make(map[string]runEnvironmentValue, len(names))
 	for name := range names {
 		value, present := os.LookupEnv(name)
@@ -528,7 +549,7 @@ func (e *Engine) verifyStoredRunIdentity() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if saved.Version != expected.Version || saved.Algorithm != expected.Algorithm {
+	if (saved.Version != legacyRunIdentityVersion && saved.Version != expected.Version) || saved.Algorithm != expected.Algorithm {
 		return false, fmt.Errorf("durable run identity is incompatible with this runtime; reset workflow state before starting a new run")
 	}
 	if saved.WorkflowDigest != expected.WorkflowDigest {
@@ -540,5 +561,39 @@ func (e *Engine) verifyStoredRunIdentity() (bool, error) {
 	if saved.ExecutionDigest != expected.ExecutionDigest {
 		return false, fmt.Errorf("durable run identity differs: resolved execution environment changed; reset workflow state before starting a new run")
 	}
+	if saved.Version == legacyRunIdentityVersion {
+		saved.Version = runIdentityVersion
+		saved.RunID, err = newStableID("run")
+		if err != nil {
+			return false, err
+		}
+		if err := e.Store.SetJSON(e.runIdentityRecord(), saved); err != nil {
+			return false, fmt.Errorf("migrate durable run identity: %w", err)
+		}
+	}
+	if saved.RunID == "" {
+		return false, fmt.Errorf("durable run identity has no stable run id; reset workflow state before starting a new run")
+	}
+	if !validStableID(saved.RunID, "run") {
+		return false, fmt.Errorf("durable run identity has an invalid stable run id; reset workflow state before starting a new run")
+	}
+	e.runID = saved.RunID
 	return true, nil
+}
+
+func newStableID(kind string) (string, error) {
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", fmt.Errorf("generate stable %s identity: %w", kind, err)
+	}
+	return kind + "_" + hex.EncodeToString(entropy[:]), nil
+}
+
+func validStableID(value, kind string) bool {
+	prefix := kind + "_"
+	if len(value) != len(prefix)+32 || value[:len(prefix)] != prefix {
+		return false
+	}
+	decoded, err := hex.DecodeString(value[len(prefix):])
+	return err == nil && len(decoded) == 16
 }

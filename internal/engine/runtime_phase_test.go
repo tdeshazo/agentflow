@@ -23,6 +23,7 @@ type presentationRecordingProvider struct {
 
 func (p *presentationRecordingProvider) Name() string                     { return "presentation-test" }
 func (p *presentationRecordingProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *presentationRecordingProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *presentationRecordingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.request = request
@@ -651,6 +652,7 @@ type capabilityRecordingProvider struct {
 
 func (p *capabilityRecordingProvider) Name() string                     { return "capability-test" }
 func (p *capabilityRecordingProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *capabilityRecordingProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *capabilityRecordingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
 	p.request = request
@@ -665,6 +667,7 @@ type capabilityActionProvider struct {
 
 func (p *capabilityActionProvider) Name() string                     { return "capability-action-test" }
 func (p *capabilityActionProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *capabilityActionProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *capabilityActionProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++

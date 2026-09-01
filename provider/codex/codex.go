@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,6 +61,8 @@ func (p Provider) Name() string { return "codex" }
 
 func (p Provider) EnforcesFilesystemBoundary() bool { return true }
 
+func (p Provider) EnforcesExecutionPolicy() bool { return true }
+
 func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Result, error) {
 	bin := p.Binary
 	if bin == "" {
@@ -95,20 +98,34 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 		return provider.Result{}, err
 	}
 	cmd.Stdin = bytes.NewBufferString(prompt)
-	cmd.Stdout = synchronizeOutput(stdout)
-	cmd.Stderr = synchronizeOutput(stderr)
+	secrets := credentialValues(req.Credentials)
+	redactedStdout := newRedactingWriter(synchronizeOutput(stdout), secrets)
+	redactedStderr := newRedactingWriter(synchronizeOutput(stderr), secrets)
+	var meteredOutput bytes.Buffer
+	cmd.Stdout = redactedStdout
+	if req.Budget.Tokens > 0 {
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, &meteredOutput)
+	}
+	cmd.Stderr = redactedStderr
+	cmd.Env = codexEnvironment(req)
 
-	if err := cmd.Run(); err != nil {
-		return provider.Result{}, fmt.Errorf("codex exec: %w", err)
+	runErr := cmd.Run()
+	closeErr := errors.Join(redactedStdout.Close(), redactedStderr.Close())
+	if runErr != nil || closeErr != nil {
+		return provider.Result{}, fmt.Errorf("codex exec: %w", errors.Join(runErr, closeErr))
+	}
+	usage, err := codexUsage(meteredOutput.Bytes())
+	if err != nil {
+		return provider.Result{}, err
 	}
 	if !req.OutputLastMessage {
-		return provider.Result{}, nil
+		return provider.Result{Usage: usage}, nil
 	}
 	b, err := os.ReadFile(last)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("read codex final message: %w", err)
 	}
-	return provider.Result{FinalMessage: string(b)}, nil
+	return provider.Result{FinalMessage: redactString(string(b), secrets), Usage: usage}, nil
 }
 
 func buildArgs(req provider.Request, lastMessage string) []string {
@@ -132,7 +149,11 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 			"-c", fmt.Sprintf("default_permissions=%q", isolatedPermissionsProfile),
 			"-c", fmt.Sprintf("permissions.%s.extends=%q", isolatedPermissionsProfile, codexPermissionsBase(req.Sandbox)),
 			"-c", fmt.Sprintf("permissions.%s.filesystem=%s", isolatedPermissionsProfile, codexFilesystemBoundary(req.FilesystemBoundary)),
+			"-c", fmt.Sprintf("permissions.%s.network=%t", isolatedPermissionsProfile, req.Policy.Network == "allow"),
 		)
+	}
+	if req.Budget.Tokens > 0 {
+		args = append(args, "--json")
 	}
 	if req.Ephemeral {
 		args = append(args, "--ephemeral")
@@ -158,6 +179,15 @@ func validateRequest(req provider.Request) error {
 	if req.Approval != "" && req.Approval != "never" {
 		return fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
 	}
+	if req.Policy.Network != "" && req.Policy.Network != "deny" && req.Policy.Network != "allow" {
+		return fmt.Errorf("codex provider cannot enforce network policy %q", req.Policy.Network)
+	}
+	if len(req.Policy.Capabilities) != 0 {
+		return fmt.Errorf("codex provider does not support external capabilities %q", req.Policy.Capabilities)
+	}
+	if req.Budget.CostUSD > 0 {
+		return fmt.Errorf("codex provider cannot enforce a monetary budget")
+	}
 	if len(req.FilesystemBoundary) == 0 {
 		return nil
 	}
@@ -182,6 +212,170 @@ func validateRequest(req provider.Request) error {
 		seen[rule.Path] = rule.Access
 	}
 	return nil
+}
+
+func codexEnvironment(req provider.Request) []string {
+	allowed := []string{"PATH", "HOME", "CODEX_HOME", "TMPDIR", "TERM", "COLORTERM", "NO_COLOR", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+	environment := make([]string, 0, len(allowed)+len(req.Credentials))
+	seen := make(map[string]bool, len(allowed)+len(req.Credentials))
+	for _, name := range allowed {
+		if value, ok := os.LookupEnv(name); ok {
+			environment = append(environment, name+"="+value)
+			seen[name] = true
+		}
+	}
+	names := make([]string, 0, len(req.Credentials))
+	for name := range req.Credentials {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !seen[name] {
+			environment = append(environment, name+"="+req.Credentials[name])
+		}
+	}
+	return environment
+}
+
+func codexUsage(output []byte) (provider.Usage, error) {
+	if len(output) == 0 {
+		return provider.Usage{}, nil
+	}
+	var usage provider.Usage
+	for _, line := range bytes.Split(output, []byte{'\n'}) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal(line, &event); err != nil {
+			return provider.Usage{}, fmt.Errorf("decode codex metering event: %w", err)
+		}
+		collectCodexUsage(event, &usage)
+	}
+	return usage, nil
+}
+
+func collectCodexUsage(value any, usage *provider.Usage) {
+	switch value := value.(type) {
+	case map[string]any:
+		if raw, ok := value["usage"].(map[string]any); ok {
+			candidate := provider.Usage{
+				InputTokens: int64(number(raw["input_tokens"])), OutputTokens: int64(number(raw["output_tokens"])),
+				CostUSD: number(raw["cost_usd"]),
+			}
+			if candidate.InputTokens+candidate.OutputTokens > usage.InputTokens+usage.OutputTokens {
+				*usage = candidate
+			}
+		}
+		for _, child := range value {
+			collectCodexUsage(child, usage)
+		}
+	case []any:
+		for _, child := range value {
+			collectCodexUsage(child, usage)
+		}
+	}
+}
+
+func number(value any) float64 {
+	if number, ok := value.(float64); ok {
+		return number
+	}
+	return 0
+}
+
+type redactingWriter struct {
+	mu      sync.Mutex
+	writer  io.Writer
+	secrets [][]byte
+	pending []byte
+	max     int
+}
+
+func newRedactingWriter(writer io.Writer, secrets [][]byte) *redactingWriter {
+	redactor := &redactingWriter{writer: writer, secrets: secrets}
+	for _, secret := range secrets {
+		if len(secret) > redactor.max {
+			redactor.max = len(secret)
+		}
+	}
+	return redactor
+}
+
+func (w *redactingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pending = append(w.pending, p...)
+	keep := w.max - 1
+	if keep < 0 {
+		keep = 0
+	}
+	limit := len(w.pending) - keep
+	if limit <= 0 {
+		return len(p), nil
+	}
+	consumed, err := w.flush(limit)
+	w.pending = append(w.pending[:0], w.pending[consumed:]...)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (w *redactingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	consumed, err := w.flush(len(w.pending))
+	w.pending = append(w.pending[:0], w.pending[consumed:]...)
+	return err
+}
+
+func (w *redactingWriter) flush(limit int) (int, error) {
+	index := 0
+	var output bytes.Buffer
+	for index < limit {
+		matched := 0
+		for _, secret := range w.secrets {
+			if len(secret) > matched && len(w.pending)-index >= len(secret) && bytes.Equal(w.pending[index:index+len(secret)], secret) {
+				matched = len(secret)
+			}
+		}
+		if matched > 0 {
+			output.WriteString("[REDACTED]")
+			index += matched
+			continue
+		}
+		output.WriteByte(w.pending[index])
+		index++
+	}
+	written, err := w.writer.Write(output.Bytes())
+	if err != nil {
+		return 0, err
+	}
+	if written != output.Len() {
+		return 0, io.ErrShortWrite
+	}
+	return index, nil
+}
+
+func credentialValues(credentials map[string]string) [][]byte {
+	values := make([][]byte, 0, len(credentials))
+	seen := map[string]bool{}
+	for _, value := range credentials {
+		if value != "" && !seen[value] {
+			values = append(values, []byte(value))
+			seen[value] = true
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+	return values
+}
+
+func redactString(value string, secrets [][]byte) string {
+	for _, secret := range secrets {
+		value = strings.ReplaceAll(value, string(secret), "[REDACTED]")
+	}
+	return value
 }
 
 // RenderInvocationContext validates and renders the provider-neutral context

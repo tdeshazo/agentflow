@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
@@ -60,8 +61,10 @@ type standaloneRepairState struct {
 
 func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 	previousStage := e.runStage
+	previousNodeID, previousNodeExecutionID, previousNodeAttempt := e.nodeID, e.nodeExecutionID, e.nodeAttempt
 	e.runStage = "phase/" + id
 	defer func() {
+		e.nodeID, e.nodeExecutionID, e.nodeAttempt = previousNodeID, previousNodeExecutionID, previousNodeAttempt
 		if runErr == nil {
 			e.runStage = previousStage
 		}
@@ -81,6 +84,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("phase %s typed evidence condition: %w", id, err)
 		}
 		if !available {
+			if err := e.traceSkippedNode(p, "typed evidence condition is false"); err != nil {
+				return err
+			}
 			e.presenter().PhaseSkip(id, "typed evidence condition is false")
 			head, err := e.Repo.Head()
 			if err != nil {
@@ -98,6 +104,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("phase %s condition: %w", id, err)
 		}
 		if !ok {
+			if err := e.traceSkippedNode(p, "condition is false"); err != nil {
+				return err
+			}
 			e.presenter().PhaseSkip(id, "condition is false")
 			head, err := e.Repo.Head()
 			if err != nil {
@@ -302,6 +311,19 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 	if a.FailureKind == PhaseFailureSafety {
 		return safetyViolationFromActive(a)
 	}
+	if a.NodeExecutionID == "" || a.Attempt < 1 {
+		a.NodeExecutionID, a.Attempt, err = e.nextNodeExecutionIdentity(a.PhaseID)
+		if err != nil {
+			return err
+		}
+		if err := e.Store.SetJSON(e.activeRecord(), a); err != nil {
+			return fmt.Errorf("migrate active node identity: %w", err)
+		}
+	}
+	if !validStableID(a.NodeExecutionID, "node") {
+		return fmt.Errorf("active phase %s has an invalid node execution identity", a.PhaseID)
+	}
+	e.nodeID, e.nodeExecutionID, e.nodeAttempt = a.PhaseID, a.NodeExecutionID, a.Attempt
 	p, err := e.phaseByID(a.PhaseID)
 	if err != nil {
 		return err
@@ -425,6 +447,11 @@ func (e *Engine) runRepairAgent(ctx context.Context, actorName, reasoning, promp
 }
 
 func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasoning, objective, role string, p *workflow.Phase, invocation PendingActorInvocation, validations []string) error {
+	if p != nil && e.runID != "" {
+		if err := e.bindActiveNodeIdentity(p.ID); err != nil {
+			return err
+		}
+	}
 	a, ok := e.Workflow.Spec.Agents[actorName]
 	if !ok {
 		return fmt.Errorf("unknown actor %q", actorName)
@@ -432,6 +459,17 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	prov, ok := e.Providers[a.Runner]
 	if !ok {
 		return fmt.Errorf("no provider registered for runner %q", a.Runner)
+	}
+	policy, err := e.effectiveExecutionPolicy(a)
+	if err != nil {
+		return fmt.Errorf("actor %q execution policy: %w", actorName, err)
+	}
+	if err := e.authorizeExecutionPolicy(policy); err != nil {
+		return err
+	}
+	credentials, err := e.resolveCredentials(policy)
+	if err != nil {
+		return err
 	}
 	x := e.context(p)
 	model, err := x.Expand(a.Model)
@@ -447,6 +485,10 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		return err
 	}
 	metadata := map[string]string{"actor": actorName}
+	metadata["run_id"] = e.runID
+	if e.nodeExecutionID != "" {
+		metadata["node_execution_id"] = e.nodeExecutionID
+	}
 	if p != nil {
 		metadata["phase"] = p.ID
 		metadata["phase_kind"] = p.Kind
@@ -478,7 +520,10 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		OutputLastMessage: a.OutputLastMessage,
 		Presentation:      presentation,
 		Metadata:          metadata,
+		Policy:            providerExecutionPolicy(policy),
+		Credentials:       credentials,
 	}, invocation)
+	err = redactExecutionError(err, credentials)
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
 		var safetyErr *safetyViolation
@@ -490,6 +535,41 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
 	}
 	e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "success"})
+	return nil
+}
+
+func (e *Engine) traceSkippedNode(phase *workflow.Phase, reason string) error {
+	identity, attempt, err := e.nextNodeExecutionIdentity(phase.ID)
+	if err != nil {
+		return err
+	}
+	e.nodeID, e.nodeExecutionID, e.nodeAttempt = phase.ID, identity, attempt
+	e.traceEvent("node_skipped", map[string]string{"phase": phase.ID, "reason": reason})
+	return nil
+}
+
+func (e *Engine) bindActiveNodeIdentity(phaseID string) error {
+	var active ActivePhase
+	ok, err := e.Store.GetJSON(e.activeRecord(), &active)
+	if err != nil {
+		return err
+	}
+	if !ok || active.PhaseID != phaseID {
+		return fmt.Errorf("active node identity is unavailable for phase %s", phaseID)
+	}
+	if active.NodeExecutionID == "" || active.Attempt < 1 {
+		active.NodeExecutionID, active.Attempt, err = e.nextNodeExecutionIdentity(phaseID)
+		if err != nil {
+			return err
+		}
+		if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
+			return fmt.Errorf("migrate active node identity: %w", err)
+		}
+	}
+	if !validStableID(active.NodeExecutionID, "node") {
+		return fmt.Errorf("active phase %s has an invalid node execution identity", phaseID)
+	}
+	e.nodeID, e.nodeExecutionID, e.nodeAttempt = phaseID, active.NodeExecutionID, active.Attempt
 	return nil
 }
 
@@ -586,7 +666,31 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		_ = quarantine.Remove()
 		return false, fmt.Errorf("provider %q cannot enforce the actor filesystem boundary", prov.Name())
 	}
+	policyEnforcer, ok := prov.(provider.ExecutionPolicyEnforcer)
+	if !ok || !policyEnforcer.EnforcesExecutionPolicy() {
+		_ = quarantine.Remove()
+		return false, fmt.Errorf("provider %q cannot enforce the actor execution policy", prov.Name())
+	}
+	policy, err := e.effectiveExecutionPolicy(agent)
+	if err != nil {
+		_ = quarantine.Remove()
+		return false, err
+	}
+	request.Budget, err = e.reserveModelCall(actorName, policy)
+	if err != nil {
+		_ = quarantine.Remove()
+		return false, err
+	}
+	invocationStarted := time.Now()
+	if request.Budget.Duration > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(request.Budget.Duration))
+		defer cancel()
+	}
 	invocation.Version = pendingActorInvocationVersion
+	invocation.RunID = e.runID
+	invocation.NodeExecutionID = e.nodeExecutionID
+	invocation.Attempt = e.nodeAttempt
 	invocation.Actor = actorName
 	invocation.StartCommit = before
 	invocation.QuarantinePath = quarantine.Repo.Root
@@ -609,7 +713,25 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		}
 	}
 
-	_, providerErr := prov.Run(ctx, request)
+	providerResult, providerErr := prov.Run(ctx, request)
+	if usageErr := e.recordModelUsage(actorName, policy, providerResult.Usage); usageErr != nil {
+		providerErr = errors.Join(providerErr, usageErr)
+	}
+	policyTimedOut := request.Budget.Duration > 0 && time.Since(invocationStarted) >= time.Duration(request.Budget.Duration)
+	workflowTimedOut := e.workflowDurationBudgetExpired()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && (policyTimedOut || workflowTimedOut) {
+		resource := "duration"
+		if policyTimedOut && !workflowTimedOut && e.actorDurationLimit(actorName) > 0 {
+			resource = "duration/" + actorName
+		}
+		e.resourceMu.Lock()
+		usage, usageErr := e.loadResourceUsage()
+		if usageErr == nil {
+			usageErr = e.exhaustBudgetLocked(&usage, resource)
+		}
+		e.resourceMu.Unlock()
+		providerErr = errors.Join(providerErr, &budgetExhaustedError{resource: resource}, usageErr)
+	}
 	if e.invocationStateAvailable() {
 		if err := e.runInterruptionHook(interruptionAfterProviderReturn, invocation); err != nil {
 			return false, err
@@ -1264,6 +1386,9 @@ func (e *Engine) runTool(ctx context.Context, name string, p *workflow.Phase) er
 }
 func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workflow.Phase) (runErr error) {
 	name := use.Uses
+	if err := e.consumeToolCall(name); err != nil {
+		return err
+	}
 	e.logEvent("tool_start", map[string]string{"tool": name})
 	defer func() {
 		result := "success"

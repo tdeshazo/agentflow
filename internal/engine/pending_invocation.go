@@ -47,6 +47,17 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 	if pending.Actor == "" || pending.StartCommit == "" || pending.Role == "" {
 		return false, errors.New("pending actor invocation is incomplete")
 	}
+	if pending.RunID != "" && e.runID != "" && pending.RunID != e.runID {
+		return false, errors.New("pending actor invocation belongs to a different run identity")
+	}
+	if pending.NodeExecutionID != "" {
+		if !validStableID(pending.NodeExecutionID, "node") || pending.Attempt < 1 {
+			return false, errors.New("pending actor invocation has an invalid node execution identity")
+		}
+		e.nodeID = pending.PhaseID
+		e.nodeExecutionID = pending.NodeExecutionID
+		e.nodeAttempt = pending.Attempt
+	}
 
 	agent, knownActor := e.Workflow.Spec.Agents[pending.Actor]
 	if !knownActor {

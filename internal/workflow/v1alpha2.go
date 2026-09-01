@@ -46,7 +46,8 @@ type V1Alpha2Spec struct {
 }
 
 type V1Alpha2Execution struct {
-	MaxParallel *int `yaml:"maxParallel"`
+	MaxParallel *int            `yaml:"maxParallel"`
+	Policy      ExecutionPolicy `yaml:"policy"`
 }
 
 type V1Alpha2Workspace struct {
@@ -118,13 +119,14 @@ func (r *V1Alpha2Reset) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type V1Alpha2Agent struct {
-	Runner            string `yaml:"runner"`
-	Model             string `yaml:"model"`
-	Sandbox           string `yaml:"sandbox"`
-	Approval          string `yaml:"approval"`
-	Ephemeral         bool   `yaml:"ephemeral"`
-	MayCommit         bool   `yaml:"may_commit"`
-	OutputLastMessage bool   `yaml:"output_last_message"`
+	Runner            string           `yaml:"runner"`
+	Model             string           `yaml:"model"`
+	Sandbox           string           `yaml:"sandbox"`
+	Approval          string           `yaml:"approval"`
+	Ephemeral         bool             `yaml:"ephemeral"`
+	MayCommit         bool             `yaml:"may_commit"`
+	OutputLastMessage bool             `yaml:"output_last_message"`
+	Policy            *ExecutionPolicy `yaml:"policy"`
 }
 
 // UnmarshalYAML keeps named and inline v1alpha2 agents on exactly the same
@@ -170,6 +172,10 @@ func (a *V1Alpha2Agent) UnmarshalYAML(n *yaml.Node) error {
 			out.MayCommit, err = v1Alpha2AgentBool(value, key)
 		case "output_last_message":
 			out.OutputLastMessage, err = v1Alpha2AgentBool(value, key)
+		case "policy":
+			var policy ExecutionPolicy
+			err = decodeKnownNode(value, &policy)
+			out.Policy = &policy
 		default:
 			return fmt.Errorf("line %d: field %s not found in type workflow.V1Alpha2Agent", keyNode.Line, key)
 		}
@@ -409,7 +415,10 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		},
 		Spec: Spec{
 			Parameters: authored.Spec.Parameters,
-			Execution:  ExecutionSpec{MaxParallel: v1Alpha2MaxParallel(authored.Spec.Execution)},
+			Execution: ExecutionSpec{
+				MaxParallel: v1Alpha2MaxParallel(authored.Spec.Execution),
+				Policy:      authored.Spec.Execution.Policy,
+			},
 			Workspace: WorkspaceSpec{MutationPolicy: MutationPolicy{
 				Allowed:   append([]string(nil), authored.Spec.Workspace.AllowWrites...),
 				Integrity: append([]IntegrityRule(nil), authored.Spec.Workspace.Integrity...),
@@ -523,6 +532,7 @@ func normalizeV1Alpha2Agent(agent V1Alpha2Agent) Agent {
 		Ephemeral:         agent.Ephemeral,
 		MayCommit:         agent.MayCommit,
 		OutputLastMessage: agent.OutputLastMessage,
+		Policy:            agent.Policy,
 	}
 }
 
@@ -702,6 +712,12 @@ func (v v1alpha2Validator) roots() {
 	}
 	if configured := v.w.Spec.Execution.MaxParallel; configured != nil && (*configured < 1 || *configured > MaxParallelPhases) {
 		v.add("spec.execution.maxParallel", "must be between 1 and %d when declared", MaxParallelPhases)
+	}
+	projected, err := normalizeV1Alpha2(v.w, v.locations)
+	if err == nil {
+		if err := ValidateExecutionPolicy(projected.Workflow); err != nil {
+			v.add("spec.execution.policy", "%v", err)
+		}
 	}
 	if len(v.w.Spec.Workspace.AllowWrites) == 0 {
 		v.add("spec.workspace.allowWrites", "must declare at least one workspace-relative path")

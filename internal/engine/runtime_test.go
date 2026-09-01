@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -19,6 +20,7 @@ type writeProvider struct {
 
 func (p *writeProvider) Name() string                     { return "test" }
 func (p *writeProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *writeProvider) EnforcesExecutionPolicy() bool    { return true }
 func (p *writeProvider) Run(_ context.Context, req provider.Request) (provider.Result, error) {
 	p.calls++
 	return provider.Result{}, os.WriteFile(filepath.Join(req.Workspace, "work.txt"), []byte("done\n"), 0o644)
@@ -128,6 +130,39 @@ func TestRunPersistsCompletionInGitRefs(t *testing.T) {
 	}
 	if p.calls != 1 {
 		t.Fatalf("provider reran after persisted completion; calls = %d", p.calls)
+	}
+}
+
+func TestRunCompletedWorkflowDoesNotExpireDurationBudget(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "completed-duration-budget")
+	w.Spec.Execution.Policy.Budgets.Duration = "1h"
+	p := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}}
+	e := newDurableEngine(t, w, p)
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var usage ResourceUsage
+	if ok, err := e.Store.GetJSON(resourceUsageRecord, &usage); err != nil || !ok {
+		t.Fatalf("resource usage after completion: ok=%t err=%v", ok, err)
+	}
+	usage.StartedAt = time.Now().UTC().Add(-2 * time.Hour)
+	if err := e.Store.SetJSON(resourceUsageRecord, usage); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newDurableEngine(t, w, p)
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatalf("completed workflow restart: %v", err)
+	}
+	if ok, err := restarted.Store.GetJSON(resourceUsageRecord, &usage); err != nil || !ok || usage.Exhausted != "" {
+		t.Fatalf("resource usage after completed restart: %+v ok=%t err=%v", usage, ok, err)
+	}
+	if p.calls != 1 {
+		t.Fatalf("completed workflow replayed provider: calls=%d", p.calls)
 	}
 }
 

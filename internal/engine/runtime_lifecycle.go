@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,7 +69,50 @@ func (e *Engine) newActivePhaseFor(p *workflow.Phase) (ActivePhase, error) {
 			return ActivePhase{}, err
 		}
 	}
+	active.NodeExecutionID, active.Attempt, err = e.nextNodeExecutionIdentity(p.ID)
+	if err != nil {
+		return ActivePhase{}, err
+	}
+	e.nodeID, e.nodeExecutionID, e.nodeAttempt = p.ID, active.NodeExecutionID, active.Attempt
 	return active, nil
+}
+
+type nodeAttemptState struct {
+	Version int `json:"version"`
+	Attempt int `json:"attempt"`
+}
+
+func (e *Engine) nextNodeExecutionIdentity(nodeID string) (string, int, error) {
+	if e.runID == "" {
+		var identity RunIdentity
+		ok, err := e.Store.GetJSON(e.runIdentityRecord(), &identity)
+		if err != nil {
+			return "", 0, err
+		}
+		if !ok || identity.RunID == "" {
+			return "", 0, fmt.Errorf("run identity is unavailable while starting node %s", nodeID)
+		}
+		e.runID = identity.RunID
+	}
+	record := "runtime/node-attempts/" + hex.EncodeToString([]byte(nodeID))
+	var state nodeAttemptState
+	ok, err := e.Store.GetJSON(record, &state)
+	if err != nil {
+		return "", 0, err
+	}
+	if ok && (state.Version != 1 || state.Attempt < 1) {
+		return "", 0, fmt.Errorf("node %s has incompatible attempt state", nodeID)
+	}
+	state.Version = 1
+	state.Attempt++
+	identity, err := newStableID("node")
+	if err != nil {
+		return "", 0, err
+	}
+	if err := e.Store.SetJSON(record, state); err != nil {
+		return "", 0, fmt.Errorf("persist node %s attempt: %w", nodeID, err)
+	}
+	return identity, state.Attempt, nil
 }
 
 func (e *Engine) runtimePhaseActions(p *workflow.Phase) ([]workflow.PhaseAction, error) {

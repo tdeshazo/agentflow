@@ -14,9 +14,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/tdeshazo/agentflow/internal/clioutput"
+	"github.com/tdeshazo/agentflow/internal/executiontrace"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/observability"
 	"github.com/tdeshazo/agentflow/internal/workflow"
@@ -46,6 +48,7 @@ type Engine struct {
 	tempDirectory      string
 	parametersResolved bool
 	logStore           *observability.LogStore
+	traceStore         *executiontrace.Store
 	outputBridge       *observability.OutputBridge
 	outputRestore      func()
 	// completionValidation scopes the validation evidence and bounded repair
@@ -72,6 +75,12 @@ type Engine struct {
 	// disjoint sibling has advanced the authoritative workspace.
 	parallelReconcile   bool
 	deferReconciliation bool
+	runLease            string
+	runID               string
+	nodeExecutionID     string
+	nodeID              string
+	nodeAttempt         int
+	resourceMu          *sync.Mutex
 	// interruptionHook is a deterministic crash-window seam used by the
 	// conformance suite. It is intentionally unexported: provider contracts
 	// must not depend on test-only interruption behavior.
@@ -91,8 +100,10 @@ const (
 // ActivePhase is the durable record of a phase's current execution state,
 // including checkpoints, validation status, and repair attempts.
 type ActivePhase struct {
-	PhaseID     string `json:"phase_id"`
-	StartCommit string `json:"phase_start_commit"`
+	PhaseID         string `json:"phase_id"`
+	NodeExecutionID string `json:"node_execution_id,omitempty"`
+	Attempt         int    `json:"attempt,omitempty"`
+	StartCommit     string `json:"phase_start_commit"`
 	// CommitActor records the actor invocation that most recently moved HEAD
 	// during this phase. Acceptance uses this invocation-scoped authority rather
 	// than re-evaluating the primary phase actor after a validation repair.
@@ -140,6 +151,9 @@ const (
 // environment values are execution inputs, not recovery authority.
 type PendingActorInvocation struct {
 	Version             int                               `json:"version"`
+	RunID               string                            `json:"run_id,omitempty"`
+	NodeExecutionID     string                            `json:"node_execution_id,omitempty"`
+	Attempt             int                               `json:"attempt,omitempty"`
 	Actor               string                            `json:"actor"`
 	StartCommit         string                            `json:"start_commit"`
 	Role                string                            `json:"role"`
@@ -230,6 +244,12 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	w = normalized.Workflow
+	if err := workflow.ValidateExecutionPolicy(w); err != nil {
+		return nil, fmt.Errorf("execution policy: %w", err)
+	}
+	if err := workflow.ValidateRuntimeRecordNames(w); err != nil {
+		return nil, err
+	}
 	params := map[string]any{}
 	parametersResolved := false
 	if !opts.StateOnly {
@@ -269,7 +289,7 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved, detached: opts.Detached}
+	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved, detached: opts.Detached, resourceMu: &sync.Mutex{}}
 	if !opts.StateOnly && w.Spec.Temp.Directory != "" {
 		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
 		if err != nil {
@@ -421,6 +441,12 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
 	}
+	if err := workflow.ValidateExecutionPolicy(e.Workflow); err != nil {
+		return err
+	}
+	if err := workflow.ValidateRuntimeRecordNames(e.Workflow); err != nil {
+		return err
+	}
 	if usesDependencySchedule(e.Workflow.APIVersion) {
 		// Decode intentionally does not perform semantic validation, and the Go
 		// API accepts normalized workflows directly. Establish the complete
@@ -429,6 +455,15 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			return err
 		}
 	}
+	lease, err := e.acquireRunLease()
+	if err != nil {
+		return err
+	}
+	e.runLease = lease
+	defer func() {
+		e.releaseRunLease(lease)
+		e.runLease = ""
+	}()
 	if err := e.startObservation(); err != nil {
 		return err
 	}
@@ -456,6 +491,7 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 				_ = e.Store.Delete(e.lastFailureRecord())
 			}
 			_ = e.logStore.Event("workflow_end", fields)
+			e.traceEvent("run_finished", fields)
 			if e.outputRestore != nil {
 				e.outputRestore()
 				e.outputRestore = nil
@@ -466,6 +502,10 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			}
 			_ = e.logStore.Close()
 			e.logStore = nil
+		}
+		if e.traceStore != nil {
+			_ = e.traceStore.Close()
+			e.traceStore = nil
 		}
 		_ = e.finishObservation()
 	}()
@@ -522,6 +562,14 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if err := e.initializeOrResumeState(); err != nil {
 		return err
 	}
+	if err := e.startExecutionTrace(); err != nil {
+		return err
+	}
+	resumed := false
+	if _, active, err := e.Store.Resolve(e.activeRecord()); err == nil {
+		resumed = active
+	}
+	e.traceEvent("run_started", map[string]string{"workflow": e.Workflow.Metadata.Name, "resumed": fmt.Sprint(resumed)})
 	// A pending record may have been created by an invocation that initialized
 	// state in this same process. The earlier identity-gated reconciliation is
 	// normally sufficient; this second idempotent check covers that case.
@@ -548,6 +596,16 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		}
 		e.presenter().WorkflowAlreadyComplete(e.Workflow.Metadata.Name, completeSHA)
 		return nil
+	}
+	ctx, cancelBudget, err := e.prepareResourceContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancelBudget()
+	if usesDependencySchedule(e.Workflow.APIVersion) {
+		if err := e.ensureExecutionPolicyApprovals(ctx); err != nil {
+			return err
+		}
 	}
 	var active ActivePhase
 	activeExists, err := e.Store.GetJSON(e.activeRecord(), &active)
@@ -655,6 +713,63 @@ func (e *Engine) logEvent(kind string, fields map[string]string) {
 	if e.logStore != nil {
 		_ = e.logStore.Event(kind, fields)
 	}
+	e.traceEvent(kind, fields)
+}
+
+func (e *Engine) startExecutionTrace() error {
+	if e.runID == "" {
+		var identity RunIdentity
+		ok, err := e.Store.GetJSON(e.runIdentityRecord(), &identity)
+		if err != nil {
+			return err
+		}
+		if !ok || identity.Version != runIdentityVersion || identity.RunID == "" {
+			return fmt.Errorf("durable run identity is unavailable for execution tracing")
+		}
+		e.runID = identity.RunID
+	}
+	store, err := executiontrace.Open(e.Repo, e.runID)
+	if err != nil {
+		return err
+	}
+	e.traceStore = store
+	return nil
+}
+
+func (e *Engine) traceEvent(kind string, fields map[string]string) {
+	if e.traceStore == nil {
+		return
+	}
+	nodeID := e.nodeID
+	if nodeID == "" && e.phase != nil {
+		nodeID = e.phase.ID
+	}
+	_ = e.traceStore.Append(executiontrace.Event{
+		Event:           kind,
+		NodeID:          nodeID,
+		NodeExecutionID: e.nodeExecutionID,
+		Attempt:         e.nodeAttempt,
+		Fields:          traceFields(fields),
+	})
+}
+
+func traceFields(fields map[string]string) map[string]string {
+	allowed := map[string]bool{
+		"actor": true, "completion": true, "gate": true, "label": true,
+		"phase": true, "provider": true, "reason": true, "result": true,
+		"resumed": true, "stage": true, "tool": true, "validation": true,
+		"workflow": true,
+	}
+	safe := make(map[string]string, len(fields))
+	for key, value := range fields {
+		if allowed[key] {
+			safe[key] = value
+		}
+	}
+	if len(safe) == 0 {
+		return nil
+	}
+	return safe
 }
 
 func (e *Engine) workflowCompleteMarker() string {
@@ -784,6 +899,17 @@ func (e *Engine) presenter() clioutput.Presenter {
 func (e *Engine) Reset() error {
 	if !e.Repo.IsRepository() {
 		return fmt.Errorf("%s is not a Git repository", e.Repo.Root)
+	}
+	if e.runLease == "" {
+		lease, err := e.acquireRunLease()
+		if err != nil {
+			return err
+		}
+		e.runLease = lease
+		defer func() {
+			e.releaseRunLease(lease)
+			e.runLease = ""
+		}()
 	}
 	if allowed := e.Workflow.Spec.State.Reset.Allowed; allowed != nil && !*allowed {
 		return fmt.Errorf("reset is disabled by this workflow's v1alpha2 reset policy")
@@ -1053,11 +1179,16 @@ func (e *Engine) initializeState() error {
 	if err != nil {
 		return err
 	}
+	identity.RunID, err = newStableID("run")
+	if err != nil {
+		return err
+	}
 	// Write this last. Until then a restart treats the records as an
 	// interrupted initialization rather than trusting a partially captured run.
 	if err := e.Store.SetJSON(e.runIdentityRecord(), identity); err != nil {
 		return fmt.Errorf("persist run identity: %w", err)
 	}
+	e.runID = identity.RunID
 	return nil
 }
 
@@ -1066,7 +1197,7 @@ func (e *Engine) resetInterruptedInitialization() error {
 	if err != nil {
 		return err
 	}
-	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true, e.runIdentityRecord(): true, gitstate.DescriptorRecord: true}
+	allowed := map[string]bool{e.baseRecord(): true, e.branchRecord(): true, e.integrityRecord(): true, e.runIdentityRecord(): true, runLeaseRecord: true, gitstate.DescriptorRecord: true}
 	for _, record := range e.Workflow.Spec.State.Records.Integrity {
 		allowed[record] = true
 	}

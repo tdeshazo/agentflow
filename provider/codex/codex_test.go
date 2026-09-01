@@ -234,6 +234,7 @@ done
 		Approval:          "never",
 		OutputLastMessage: true,
 		Presentation:      provider.PresentationAlways,
+		Credentials:       map[string]string{"ARGS_FILE": argsFile},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -304,6 +305,7 @@ func TestRunPreservesProviderStreamsWithoutAgentFlowANSI(t *testing.T) {
 		Approval:          "never",
 		OutputLastMessage: true,
 		Presentation:      provider.PresentationAlways,
+		Credentials:       map[string]string{"ARGS_FILE": argsFile},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -363,6 +365,7 @@ func TestRunAttachedTTYLeavesNativeProviderStylingUntouched(t *testing.T) {
 		Approval:          "never",
 		OutputLastMessage: true,
 		Presentation:      provider.PresentationAuto,
+		Credentials:       map[string]string{"ARGS_FILE": argsFile},
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -451,7 +454,10 @@ printf '%s\n' "$@" > "$ARGS_FILE"
 	t.Setenv("ARGS_FILE", argsFile)
 
 	p := Provider{Binary: fake, Stdout: io.Discard, Stderr: io.Discard}
-	result, err := p.Run(context.Background(), provider.Request{Workspace: workspace, Approval: "never", Context: testInvocationContext("perform the task")})
+	result, err := p.Run(context.Background(), provider.Request{
+		Workspace: workspace, Approval: "never", Context: testInvocationContext("perform the task"),
+		Credentials: map[string]string{"ARGS_FILE": argsFile},
+	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -547,5 +553,69 @@ func TestValidateRequestRejectsMissingOrUnsupportedContextVersion(t *testing.T) 
 				t.Fatalf("validateRequest() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildArgsEnforcesNetworkAndMeteringPolicy(t *testing.T) {
+	args := buildArgs(provider.Request{
+		Workspace: "/quarantine", Context: testInvocationContext("work"),
+		Policy: provider.ExecutionPolicy{Network: "deny"}, Budget: provider.InvocationBudget{Tokens: 100},
+		FilesystemBoundary: []provider.FilesystemRule{{Path: "/authoritative", Access: provider.FilesystemDeny}},
+	}, "")
+	for _, required := range []string{`permissions.actor_isolated.network=false`, "--json"} {
+		if !contains(args, required) {
+			t.Fatalf("args missing %q: %#v", required, args)
+		}
+	}
+}
+
+func TestCodexEnvironmentInjectsOnlyAuthorizedCredentials(t *testing.T) {
+	t.Setenv("UNDECLARED_SECRET", "must-not-leak")
+	t.Setenv("AUTHORIZED_SECRET", "host-value")
+	environment := codexEnvironment(provider.Request{Credentials: map[string]string{"AUTHORIZED_SECRET": "authorized-value"}})
+	joined := strings.Join(environment, "\n")
+	if strings.Contains(joined, "UNDECLARED_SECRET") || strings.Contains(joined, "must-not-leak") {
+		t.Fatalf("undeclared environment leaked: %q", joined)
+	}
+	if !strings.Contains(joined, "AUTHORIZED_SECRET=authorized-value") || strings.Contains(joined, "host-value") {
+		t.Fatalf("authorized environment not isolated: %q", joined)
+	}
+}
+
+func TestCodexUsageReadsLatestCumulativeEvent(t *testing.T) {
+	usage, err := codexUsage([]byte("{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.InputTokens != 7 || usage.OutputTokens != 3 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
+func TestValidateRequestRejectsUnsupportedExecutionAuthority(t *testing.T) {
+	for _, request := range []provider.Request{
+		{Context: testInvocationContext("work"), Policy: provider.ExecutionPolicy{Network: "sometimes"}},
+		{Context: testInvocationContext("work"), Policy: provider.ExecutionPolicy{Capabilities: []string{"deploy"}}},
+		{Context: testInvocationContext("work"), Budget: provider.InvocationBudget{CostUSD: 1}},
+	} {
+		if err := validateRequest(request); err == nil {
+			t.Fatalf("request unexpectedly accepted: %#v", request)
+		}
+	}
+}
+
+func TestRedactingWriterCoversChunkBoundaries(t *testing.T) {
+	var output bytes.Buffer
+	redactor := newRedactingWriter(&output, [][]byte{[]byte("top-secret")})
+	for _, chunk := range []string{"before top-", "sec", "ret after"} {
+		if _, err := redactor.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := redactor.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "before [REDACTED] after"; got != want {
+		t.Fatalf("redacted output = %q, want %q", got, want)
 	}
 }

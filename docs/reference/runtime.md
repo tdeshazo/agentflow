@@ -182,6 +182,7 @@ refs/agentflow/workflow-<hex-encoded-workflow-name>/branch
 refs/agentflow/workflow-<hex-encoded-workflow-name>/active
 refs/agentflow/workflow-<hex-encoded-workflow-name>/integrity
 refs/agentflow/workflow-<hex-encoded-workflow-name>/run-identity
+refs/agentflow/workflow-<hex-encoded-workflow-name>/owner
 refs/agentflow/workflow-<hex-encoded-workflow-name>/pending-invocation
 refs/agentflow/workflow-<hex-encoded-workflow-name>/phases/<phase-id>
 refs/agentflow/workflow-<hex-encoded-workflow-name>/human/<gate-id>
@@ -214,6 +215,16 @@ workflow-controlled reset) to intentionally abandon that history. An exact
 restart continues normally. `status` and explicit `reset` only inspect or
 discard state, so they do not require repeating the original task or secret
 parameters.
+
+Before a workflow can initialize, resume, advance, or reset durable state, the
+runtime atomically claims the fixed `owner` record. The lease binds the owner
+to a PID and kernel process-start token, so a second live process is rejected
+and PID reuse cannot be mistaken for the prior owner. A later invocation may
+replace the record only after it verifies that the recorded PID/start-token
+pair is no longer live; unavailable or malformed identity metadata fails
+closed. Lease release is compare-and-delete, so a finishing process cannot
+erase a replacement owner. The owner record is runtime-private and survives an
+in-run reset until its holder exits.
 An active-phase record also carries `actor_completed`: it becomes true only
 after the primary phase provider returns successfully. A green deterministic
 gate is not a substitute for that evidence, so recovery reruns an actor whose
@@ -444,6 +455,10 @@ to discard that terminal state and begin a new run.
 Pass `--json` for one machine-readable object instead of the default text. It
 contains `schema_version`, `workflow`, `repo`, `state`, `initialized`, and
 `complete`, plus available `base`, `branch`, phase, gate, and commit context.
+Initialized runs also expose an opaque `run_id`, `trace_schema_version`, and
+`trace_path`. An active phase exposes its durable `node_execution_id` and
+`node_attempt`; process recovery retains those values, while a genuinely new
+attempt receives new identity.
 Validation failure output is represented by its non-secret validation name and
 failure kind; prompts, reasoning, parameter values, environment values, and
 command output are not included. When stdout is an interactive terminal, the
@@ -458,6 +473,21 @@ lists contain bounded, safe repository-relative paths and are available in
 both single-workflow and repository-wide text and JSON status.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
+
+## Execution traces
+
+AgentFlow writes a run-specific execution trace separately from the workflow
+definition, operational logs, and Git acceptance records. Trace schema v1 is an
+append-only JSON Lines stream at `.git/agentflow/traces/<run_id>.jsonl`. Every
+event contains `schema_version`, a monotonic `sequence`, a UTC `time`, `run_id`,
+and `event`. Node-scoped events also contain `node_id`, `node_execution_id`, and
+`attempt`; `fields` contains only runtime-allowlisted orchestration metadata.
+
+The trace intentionally excludes prompts, resolved parameters, environment and
+credential values, provider output, command output, and private model reasoning.
+On resume, AgentFlow validates the existing schema, run binding, and sequence
+continuity before appending. The trace is diagnostic evidence and never grants
+phase acceptance, dependency release, recovery authority, or completion.
 
 Human-readable status, validation results, usage text, errors, and detached-run
 confirmations use restrained ANSI styling only when their actual output writer
@@ -546,10 +576,35 @@ effective phase writes (none for a read-only phase), and lists
 protected/runtime-owned exclusions. The Stage 6 scheduler consumes this same
 metadata: omitted phase scopes inherit the workflow allowlist, ambiguous or
 overlapping scopes serialize, and actual actor changes are checked against the
-selected phase scope before import. It does not enforce token, byte,
-file-count, monetary, or other budgets. Budget enforcement is explicitly
-deferred to separate resource-control work and is not a Stage 5.5 exit
-criterion.
+selected phase scope before import.
+
+### Execution policy and durable budgets
+
+`spec.execution.policy` is normalized before execution and carried through the
+provider request as enforced authority, not prompt advice. Network is denied by
+default. External capabilities, network access, and credential injection are
+privileged effects and require a named human gate whose commit-valued evidence
+is still valid at the current `HEAD`. Per-agent policies may only narrow the
+workflow policy. Providers must implement both filesystem-boundary and
+execution-policy enforcement interfaces; a missing or unsupported capability
+fails before the provider runs.
+
+Credential values are read from their declared environment variables only for
+the authorized invocation. Invocation context and expanded plans contain names
+and limits but never values. The built-in Codex adapter starts from a minimal
+bootstrap environment, adds only authorized credentials, and redacts those
+values from stdout, stderr, and final-message capture, including values split
+across output writes.
+
+Cumulative model-call, tool-call, token, duration, and optional monetary usage
+is stored in the runtime-private `runtime/resource-usage` Git record. Calls are
+consumed before execution so a crash cannot refund an attempt. Provider-reported
+tokens and cost are added afterward; missing metering for a declared usage
+limit fails closed. Exhaustion writes the resource name to that record before
+returning an error. Restarts therefore return the same terminal budget state
+until explicit reset removes it. Caller cancellation propagates through the
+existing context; a policy deadline also cancels the provider and records
+duration exhaustion.
 
 ## Parallel dependency scheduling
 
@@ -676,6 +731,15 @@ is present. Custom providers receive the same provider-neutral filesystem rules.
 The engine invokes one only when it implements `FilesystemBoundaryEnforcer` and
 explicitly reports that it enforces the boundary; the adapter must then enforce
 every rule or reject the request.
+
+The same fail-closed handshake applies to `ExecutionPolicyEnforcer`. The Codex
+adapter uses the strict actor profile for network policy, rejects unsupported
+external capability names and monetary limits, and does not inherit the parent
+process's general environment. Custom providers must enforce every declared
+effect and report token/cost usage whenever those budgets are bounded.
+Privileged successor policies additionally name a dedicated, unconditional
+human preauthorization gate. Its canonical evidence is recorded before phase
+recovery or scheduling and checked again at the provider boundary.
 
 The adapter supports the workflow's `never`
 approval policy and fails closed for other approval policies rather than silently

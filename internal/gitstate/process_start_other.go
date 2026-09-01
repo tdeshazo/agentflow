@@ -2,8 +2,8 @@
 
 package gitstate
 
-func processStartToken(int) (string, bool) {
+func processStartToken(int) (string, processInspection) {
 	// Without a portable process-start identity, reporting a PID as live would
 	// risk confusing a reused PID with the detached workflow.
-	return "", false
+	return "", processInspectionUnavailable
 }

@@ -450,6 +450,7 @@ type completionRegressionProvider struct {
 
 func (p *completionRegressionProvider) Name() string                     { return "completion-regression" }
 func (p *completionRegressionProvider) EnforcesFilesystemBoundary() bool { return true }
+func (p *completionRegressionProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *completionRegressionProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	p.calls = append(p.calls, request.Metadata["actor"])

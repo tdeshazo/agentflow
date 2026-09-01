@@ -184,6 +184,52 @@ execution. The portable types are `git-repository`, `commands-exist`,
 `scope: initialization` runs only while establishing new workflow state;
 `always` (or omission) runs for each execution attempt.
 
+### `spec.execution.policy`
+
+Successor workflows may place an optional runtime policy beside
+`execution.maxParallel`:
+
+```yaml
+execution:
+  policy:
+    network: deny
+    capabilities: []
+    credentials: []
+    budgets:
+      modelCalls: 4
+      toolCalls: 12
+      tokens: 100000
+      duration: 30m
+```
+
+`network` is `deny` by default and may be `allow` only when `approvalGate`
+names a declared human gate. `capabilities` contains provider-neutral external
+capability names; an adapter must enforce every name or reject the invocation.
+Each credential has a stable `name` and an `env` source/target. The runtime
+resolves its value immediately before an authorized invocation and never puts
+the value in workflow identity, invocation context, Git state, or logs.
+Network access, external capabilities, and credentials are privileged effects
+and therefore require durable evidence from `approvalGate`. A policy approval
+gate is a dedicated preauthorization gate: it must be unconditional, cannot
+run phase or validation actions, cannot depend on completed phases, and must
+use its canonical `human/<gate>` evidence record. The runtime executes these
+gates before interrupted-phase recovery or dependency scheduling can invoke an
+affected phase or repair actor.
+
+`budgets` supports cumulative `modelCalls`, `toolCalls`, `tokens`, `duration`,
+and optional `costUSD`; zero or omission means unbounded. Repair attempts keep
+their existing validation-scoped `repair.once` limit. Model calls are reserved
+durably before provider execution, and tool calls are consumed before tool
+execution. Token and cost usage is recorded from provider results. An adapter
+that cannot meter a declared limit must reject it.
+
+An agent's optional `policy` narrows the workflow policy. It may change
+`network: allow` to `deny`, remove capabilities or credentials, add an approval
+gate, or lower model/token/time/cost limits. It cannot add inherited authority,
+replace an inherited approval gate, increase a bounded limit, or override the
+workflow-scoped tool-call budget. `plan --expanded` shows the effective policy
+for every agent without resolving credential values.
+
 ### `spec.agents`
 
 `agents` is a map of named actor capabilities. A phase may select one by name,
@@ -484,6 +530,13 @@ explicit safe provider default `workspace-write`; it must not silently inherit
 arbitrary user Codex configuration. An explicitly authored sandbox value is
 passed through. This provider-specific default does not apply to injected or
 custom providers, which define their own handling of an omitted value.
+
+The adapter enforces `network` in its strict actor permissions profile, rejects
+external capability names it cannot enforce, and constructs a minimal child
+environment plus only declared credentials. Provider output and final-message
+capture are redacted against injected credential values. Token budgets enable
+Codex JSON metering; `costUSD` is rejected by this adapter because the Codex CLI
+does not provide an enforceable price signal.
 
 `v1alpha1` compatibility remains a separate contract and regression coverage
 continues to ensure that v1alpha2 fields such as `dependsOn` are not accepted
