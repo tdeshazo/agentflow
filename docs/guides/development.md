@@ -63,6 +63,15 @@ go run . validate -f internal/workflow/testdata/conformance/valid/v1alpha2-conci
 go run . plan --expanded -f examples/feature.agent-workflow.yaml
 ```
 
+For the canonical v1alpha4 self-hosting workflow and retained compatibility
+source:
+
+```sh
+go run . validate -f spec/agent-workflow.yaml
+go run . plan --expanded -f spec/agent-workflow.yaml
+go run . migrate --check -f spec/agent-workflow-v1alpha1.yaml
+```
+
 Use the expanded plan when reviewing concise authoring defaults. It shows the
 normalized executable lifecycle and safety/repair/completion contract without
 calling an actor or a mutable tool.

@@ -1,0 +1,298 @@
+apiVersion: agentflow.dev/v1alpha4
+kind: AgentWorkflow
+metadata:
+  name: agentflow-skill-iteration
+
+spec:
+  parameters:
+    require_human_verification:
+      type: boolean
+      default: true
+    author_model:
+      type: string
+      default: "{{ env.AUTHOR_MODEL | default('gpt-5.6-terra') }}"
+    evaluator_model:
+      type: string
+      default: "{{ env.EVALUATOR_MODEL | default('gpt-5.6-luna') }}"
+
+  workspace:
+    allowWrites:
+      - skills/agentflow-spec/**
+      - evaluation/baseline.md
+      - evaluation/forward-test.md
+      - evaluation/audit.md
+    integrity:
+      - id: isolation-boundary
+        mode: exact-hash
+        paths:
+          - ISOLATED_SKILL_EVALUATION_WORKSPACE
+          - scripts/check-skill-fixture.sh
+          - .agentflow/workflows/agentflow-skill-iteration.yaml
+      - id: evaluation-cases
+        mode: exact-hash
+        paths: [cases/baseline.md, cases/forward-test.md]
+      - id: public-agentflow-contract
+        mode: exact-hash
+        paths:
+          - docs/reference/agentflow-v1alpha4.md
+          - schema/v1alpha4.schema.json
+    initialization:
+      requireCleanWorkspace: true
+      requireNamedBranch: true
+      requireBaseAncestor: true
+      requireSameBranch: true
+
+  tools:
+    scope:
+      type: workspace-policy
+      policy: spec.workspace.mutationPolicy
+    isolation:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh isolation
+    public-contract:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh contract
+    baseline-report:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh baseline
+    final-report:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh forward-test
+    audit-report:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh audit
+    fixture-quality:
+      type: shell
+      command: sh scripts/check-skill-fixture.sh all
+
+  preconditions:
+    - id: git-repository
+      type: git-repository
+      scope: initialization
+    - id: required-commands
+      type: commands-exist
+      commands: [git, codex, sh, rg, sed, find]
+    - id: isolated-workspace-marker
+      type: file-contains
+      path: ISOLATED_SKILL_EVALUATION_WORKSPACE
+      text: AgentFlow source code is intentionally absent from this workspace.
+    - id: required-public-fixture
+      type: files-exist
+      paths:
+        - ISOLATED_SKILL_EVALUATION_WORKSPACE
+        - .agentflow/workflows/agentflow-skill-iteration.yaml
+        - scripts/check-skill-fixture.sh
+        - cases/baseline.md
+        - cases/forward-test.md
+        - skills/agentflow-spec/SKILL.md
+        - docs/reference/agentflow-v1alpha4.md
+        - schema/v1alpha4.schema.json
+
+  agents:
+    author:
+      runner: codex
+      model: "{{ parameters.author_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: true
+      output_last_message: true
+    evaluator:
+      runner: codex
+      model: "{{ parameters.evaluator_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: false
+      output_last_message: true
+    reviewer:
+      runner: codex
+      model: "{{ parameters.evaluator_model }}"
+      sandbox: workspace-write
+      approval: never
+      ephemeral: true
+      may_commit: false
+      output_last_message: true
+
+  validation:
+    baseline-evaluation:
+      steps: [{uses: scope}, {uses: isolation}, {uses: public-contract}, {uses: baseline-report}]
+      dependencies: ["**"]
+      repair: {once: evaluator}
+      produces: [baseline-evaluation-accepted]
+    skill-revision:
+      steps: [{uses: scope}, {uses: isolation}, {uses: public-contract}]
+      dependencies: ["**"]
+      repair: {once: author}
+      produces: [skill-revision-accepted]
+    final-evaluation:
+      steps: [{uses: scope}, {uses: isolation}, {uses: public-contract}, {uses: final-report}]
+      dependencies: ["**"]
+      hard: true
+      produces: [final-evaluation-accepted]
+    independent-audit:
+      steps: [{uses: scope}, {uses: fixture-quality}, {uses: audit-report}]
+      dependencies: ["**"]
+      hard: true
+      produces: [skill-audit-accepted]
+    final-quality:
+      steps: [{uses: scope}, {uses: fixture-quality}]
+      dependencies: ["**"]
+      hard: true
+
+  artifacts:
+    baseline-report:
+      type: files
+      paths: [evaluation/baseline.md]
+      persistence: workspace
+    revised-skill:
+      type: files
+      paths: [skills/agentflow-spec/**]
+      persistence: workspace
+    final-report:
+      type: files
+      paths: [evaluation/forward-test.md]
+      persistence: workspace
+    audit-report:
+      type: files
+      paths: [evaluation/audit.md]
+      persistence: workspace
+
+  evidence:
+    baseline-evaluation-accepted: {type: validation}
+    skill-revision-accepted: {type: validation}
+    final-evaluation-accepted: {type: validation}
+    skill-audit-accepted: {type: validation}
+
+  criteria:
+    items:
+      - id: baseline-forward-test
+        description: Exercise the current public skill against bounded v1alpha4 authoring, review, and recovery cases.
+      - id: improve-skill
+        description: Revise the skill only where the baseline demonstrates a generalizable failure.
+      - id: independent-forward-test
+        description: Re-test the revised skill with fresh cases and record a fail-closed verdict.
+
+  phases:
+    - id: baseline-forward-test
+      kind: implementation
+      actor: evaluator
+      prompt: >-
+        Work only in this isolated public-contract fixture. Confirm the marker
+        ISOLATED_SKILL_EVALUATION_WORKSPACE and do not search for or request the
+        AgentFlow implementation repository. Use skills/agentflow-spec/SKILL.md
+        to answer every request in cases/baseline.md. Do not edit the skill.
+        Write only evaluation/baseline.md with the exact headings
+        '# Baseline forward test', '## Scenario: author',
+        '## Scenario: review', '## Scenario: recover', '## Findings', and
+        '## Recommended skill changes'. Include the result or finding for each
+        scenario and recommend changes only for demonstrated, generalizable
+        failures.
+      reasoning: medium
+      requiresChange: false
+      validation: baseline-evaluation
+      writes: [evaluation/baseline.md]
+      outputs: [baseline-report]
+      workItem: baseline-forward-test
+      advanceWorkItem: true
+
+    - id: improve-skill
+      kind: implementation
+      actor: author
+      dependsOn: [baseline-forward-test]
+      inputs: [{artifact: baseline-report}, {evidence: baseline-evaluation-accepted}]
+      prompt: >-
+        Work only in this isolated public-contract fixture. Read
+        evaluation/baseline.md and revise only skills/agentflow-spec/**. Fix
+        demonstrated generalizable failures while preserving user intent,
+        v1alpha4-only syntax, fail-closed authority boundaries, and progressive
+        disclosure. Do not encode case-specific answers, modify evaluation
+        reports, broaden the skill's trigger description, or weaken existing
+        safety and validation rules.
+        The revision must pass scripts/check-skill-fixture.sh contract.
+      reasoning: high
+      requiresChange: false
+      validation: skill-revision
+      writes: [skills/agentflow-spec/**]
+      outputs: [revised-skill]
+      workItem: improve-skill
+      advanceWorkItem: true
+
+    - id: independent-forward-test
+      kind: implementation
+      actor: evaluator
+      dependsOn: [improve-skill]
+      inputs: [{artifact: revised-skill}, {evidence: skill-revision-accepted}]
+      prompt: >-
+        Work only in this isolated public-contract fixture. Use the revised
+        skills/agentflow-spec/SKILL.md to answer every request in
+        cases/forward-test.md without consulting evaluation/baseline.md before
+        scoring. Write only evaluation/forward-test.md with the exact headings
+        '# Independent forward test', '## Scenario: author',
+        '## Scenario: review', '## Scenario: work-items', and '## Findings'. End
+        with exactly 'Verdict: PASS' only if all results preserve the public
+        contract and authority boundaries; otherwise end with exactly
+        'Verdict: FAIL' and explain every failure.
+      reasoning: medium
+      requiresChange: false
+      validation: final-evaluation
+      writes: [evaluation/forward-test.md]
+      outputs: [final-report]
+      workItem: independent-forward-test
+      advanceWorkItem: true
+
+    - id: independent-audit
+      kind: implementation
+      actor: reviewer
+      dependsOn: [baseline-forward-test, improve-skill, independent-forward-test]
+      inputs:
+        - {artifact: baseline-report}
+        - {artifact: revised-skill}
+        - {artifact: final-report}
+        - {evidence: baseline-evaluation-accepted}
+        - {evidence: skill-revision-accepted}
+        - {evidence: final-evaluation-accepted}
+      prompt: >-
+        Work only in this isolated public-contract fixture. Audit the baseline
+        report, revised skill, and independent forward-test report. Confirm
+        that changes respond to observed failures, remain general rather than
+        overfit, keep the description discriminating, preserve v1alpha4-only
+        scope, and do not weaken deterministic acceptance or independent-review
+        boundaries. Write only evaluation/audit.md with the
+        exact headings '# AgentFlow skill iteration audit',
+        '## Authority and scope', '## Forward-test assessment', and
+        '## Residual risks'. End with exactly 'Verdict: PASS' only if no
+        blocking issue remains; otherwise end with exactly 'Verdict: FAIL' and
+        explain every blocking issue.
+      reasoning: high
+      requiresChange: false
+      validation: independent-audit
+      writes: [evaluation/audit.md]
+      outputs: [audit-report]
+
+  humanGates:
+    - id: skill-owner-confirmation
+      requires: [independent-audit]
+      if: "{{ parameters.require_human_verification }}"
+      instructions: Review the isolated workspace's baseline, forward-test, and audit reports together with the skill diff before the trusted host launcher promotes any accepted change to the source repository.
+      checklist:
+        - Confirm the fixture contains no AgentFlow implementation source.
+        - Confirm the revision addresses demonstrated failures rather than hypothetical preferences.
+        - Confirm fresh forward tests did not reuse case-specific answers from the baseline.
+        - Confirm the skill remains concise, discoverable, and scoped to AgentFlow workflow work.
+        - Confirm the skill emits and recommends only v1alpha4 syntax.
+      acknowledgement:
+        type: exact-text
+        value: "yes"
+      skip:
+        allowed_when: "{{ not parameters.require_human_verification }}"
+        warning: Skipping human review accepts the isolated evaluator and deterministic fixture gates as sufficient evidence.
+
+  completion:
+    validation: final-quality
+    assertions: [{type: workspace-integrity}, {type: implementation-workspace-clean}]
+    evidence: [final-evaluation-accepted, skill-audit-accepted]
+
+  reset:
+    allow: true
+    requireCleanWorkspace: true

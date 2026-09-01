@@ -406,12 +406,13 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
 
 ## Execution stage 4 — `v1alpha1` maintenance and successor migration
 
-**Implementation status (2026-08-30): partially complete.** Successor examples,
-the human-gated representative, and a v1alpha3 portable self-hosting
-representative are checked in. The canonical workflow under `spec/` remains
-v1alpha1, and the representative intentionally omits its criterion progress and
-Markdown bookkeeping semantics. Canonical successor migration with equivalent
-authority therefore remains an open exit criterion.
+**Implementation status (2026-08-31): migration complete.** The canonical
+[`spec/agent-workflow.yaml`](spec/agent-workflow.yaml) self-hosting workflow
+uses v1alpha4 typed work items and typed handoffs. Expanded-plan comparison and
+runtime repair, resume, audit-evidence, and completion tests prove
+equal-or-stronger authority. The unchanged v1alpha1 source remains executable
+for compatibility; see the
+[migration closure evidence](docs/evidence/canonical-self-hosting-migration.md).
 
 **Goal:** Evolve the portable authority semantics proven in v1alpha1 into the
 concise successor contract without carrying forward procedural runtime plumbing
@@ -424,9 +425,10 @@ This stage begins after foundation closeout and the minimum security/run-identit
 - Put `agentflow.dev/v1alpha1` into supported maintenance mode: freeze its
   authoring grammar, retain decoding/validation/execution compatibility, and
   continue correctness, safety, durability, and security fixes.
-- Prefer `agentflow.dev/v1alpha2` for new workflows that fit its concise
-  contract, but do not claim that v1alpha2 already replaces the full v1alpha1
-  surface.
+- Prefer the smallest sufficient successor API for new workflows: v1alpha2 for
+  the concise core, v1alpha3 for typed handoffs, and v1alpha4 for typed work
+  items. Do not claim that one successor mechanically replaces every
+  compatibility-only v1alpha1 construct.
 - Add new portable product semantics to the successor contract rather than
   extending v1alpha1 convenience syntax.
 - If the capabilities needed for general self-hosting materially reshape the
@@ -514,6 +516,10 @@ not automatically earn one-for-one successor syntax.
 7. **Formally deprecate v1alpha1 only after the gates below are met.**
 
 ### Deprecation gates
+
+Migration readiness satisfied these gates on 2026-08-31. v1alpha1 remains in
+grammar-frozen compatibility and maintenance mode; a user-facing deprecation
+warning or removal is a separate release decision.
 
 Formal v1alpha1 deprecation requires all of the following:
 
@@ -668,7 +674,7 @@ prerequisite or a Stage 5.5 exit gap.
   work from durable Git state.
 - [x] Equal, nested, ambiguous, undeclared, and actor-commit mutation scopes
   are serialized; actual changes outside a declared phase scope fail closed.
-- [x] The v1alpha3 self-hosting representative fans out two independent
+- [x] The canonical v1alpha4 self-hosting workflow fans out two independent
   read-only audits and joins them before human verification/completion.
 
 ---

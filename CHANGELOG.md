@@ -19,8 +19,8 @@
   enforced phase `writes` scopes, conservative conflict analysis, authored-order
   reconciliation/acceptance, sibling cancellation, Git-backed active batches,
   parallel status/reset handling, and restart recovery preserve the existing
-  validation, checkpoint, contract, and safety boundaries. The v1alpha3
-  self-hosting representative now fans out independent read-only audits.
+  validation, checkpoint, contract, and safety boundaries. The canonical
+  v1alpha4 self-hosting workflow fans out independent read-only audits.
 - Added a deterministic, versioned invocation-context compiler for primary,
   resumed, and validation-repair actors. Provider requests now carry typed
   objectives, workspace/dependency state, declared artifact and evidence
@@ -30,13 +30,13 @@
   `plan --expanded` reports secret-free context recipes. Token and resource
   budget enforcement is explicitly deferred to separate resource-control work
   and does not block Stage 5.5 completion.
-- Advanced Phase 3 successor migration: the art-portfolio and human-gated
-  release workflows now default to v1alpha2 with validated v1alpha1
-  compatibility copies, and a v1alpha3 self-hosting representative covers the
-  portable safety/control subset plus typed handoffs. The canonical workflow
-  under `spec/` remains v1alpha1; its criterion progress and Markdown
-  bookkeeping are intentionally absent from that representative, so canonical
-  migration and the Phase 3 semantic-equivalence exit condition remain open.
+- Completed Phase 3 canonical migration. `spec/agent-workflow.yaml` is the
+  v1alpha4 self-hosting workflow with typed handoffs, exact durable work items,
+  runtime-owned checklist presentation, independent parallel audits, bounded
+  repair, and fail-closed completion. Expanded-plan and runtime tests prove
+  equal-or-stronger mutation, integrity, validation, repair, resume,
+  human-evidence, and completion authority. The unchanged
+  `spec/agent-workflow-v1alpha1.yaml` remains executable for compatibility.
 - Added Phase 2 portable v1alpha2 authority: typed parameters and bounded
   conditions; integrity, initialization, and lineage policy; deterministic
   preconditions; reusable multi-step tools and hard validations; phase intent,

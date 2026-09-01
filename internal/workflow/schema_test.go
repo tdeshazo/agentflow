@@ -147,15 +147,17 @@ func TestReferenceDocumentsPointToGeneratedSchemas(t *testing.T) {
 	}
 }
 
-func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
+func TestPublicAuthoringContractAndCompatibilityDocumentation(t *testing.T) {
 	cases := []struct {
 		path      string
 		fragments []string
+		forbidden []string
 	}{
 		{
 			path: filepath.Join("..", "..", "README.md"),
 			fragments: []string{
 				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3", "agentflow.dev/v1alpha4",
+				"spec/agent-workflow.yaml", "spec/agent-workflow-v1alpha1.yaml",
 				"every checked-in executable workflow definition under `spec/` and `examples/`",
 				"does not make live model calls",
 			},
@@ -170,8 +172,16 @@ func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
 		{
 			path: filepath.Join("..", "..", "skills", "agentflow-spec", "SKILL.md"),
 			fragments: []string{
-				"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3", "agentflow.dev/v1alpha4",
-				"../../docs/reference/agentflow-v1alpha4.md", "normalizedExecution",
+				"agentflow.dev/v1alpha4", "../../docs/reference/agentflow-v1alpha4.md",
+				"../../schema/v1alpha4.schema.json", "Produce v1alpha4 syntax only", "expanded plan",
+			},
+			forbidden: []string{"agentflow.dev/v1alpha1", "agentflow.dev/v1alpha2", "agentflow.dev/v1alpha3"},
+		},
+		{
+			path: filepath.Join("..", "..", "docs", "guides", "migrating-v1alpha1-to-v1alpha2.md"),
+			fragments: []string{
+				"spec/agent-workflow.yaml", "spec/agent-workflow-v1alpha1.yaml",
+				"Canonical self-hosting migration is complete", "closure evidence",
 			},
 		},
 		{
@@ -190,6 +200,11 @@ func TestPublicAuthoringContractCoversBothExecutableVersions(t *testing.T) {
 			for _, fragment := range tc.fragments {
 				if !strings.Contains(string(contents), fragment) {
 					t.Fatalf("%s must contain %q", tc.path, fragment)
+				}
+			}
+			for _, fragment := range tc.forbidden {
+				if strings.Contains(string(contents), fragment) {
+					t.Fatalf("%s must not contain %q", tc.path, fragment)
 				}
 			}
 		})

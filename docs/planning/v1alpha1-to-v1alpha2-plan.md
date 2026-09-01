@@ -108,15 +108,14 @@ Exit condition: the self-hosting workflow can be represented without lifecycle, 
 
 ### Phase 3: Migrate real workflows
 
-Status: partially complete. Shipped examples and the human-gated
-representative default to v1alpha2, and a v1alpha3 self-hosting representative
-demonstrates the portable safety/control subset with typed handoffs. The
-canonical workflow at `spec/agent-workflow-v1alpha1.yaml` remains v1alpha1.
-The representative intentionally omits its criterion progress and Markdown
-bookkeeping semantics; v1alpha4 supplies generalized typed work-item building
-blocks, but they have not yet been applied to the canonical workflow and
-verified as an equivalent migration. The exit condition below therefore
-remains open.
+Status: complete on 2026-08-31. Shipped examples and the human-gated
+representative default to successor APIs. Canonical self-hosting now uses
+`spec/agent-workflow.yaml` with v1alpha4 typed work items, typed handoffs, and a
+runtime-owned Markdown presentation adapter. The unchanged
+`spec/agent-workflow-v1alpha1.yaml` remains executable for compatibility.
+Expanded-plan comparison and runtime repair/resume/completion tests establish
+equal-or-stronger portable authority; see the
+[migration closure evidence](../evidence/canonical-self-hosting-migration.md).
 
 - Migrate self-hosting first.
 - Compare expanded normalized plans, not YAML fields.
@@ -125,6 +124,10 @@ remains open.
 - Keep v1alpha1 versions during a compatibility period.
 
 Exit condition: mutation, integrity, validation, repair, resume, human evidence, and completion authority are equal or stronger after migration.
+
+Exit result: satisfied. The legacy status-line and planning-index transitions
+remain compatibility presentation only; durable acceptance is represented by
+exact v1alpha4 work items and typed audit evidence.
 
 ### Phase 4: Add typed contracts
 
@@ -198,6 +201,11 @@ v1alpha1 should be deprecated for new authoring only when:
 - migration diagnostics cover every supported construct;
 - compatibility tests continue protecting existing v1alpha1 workflows;
 - the authoring skill and primary examples prefer the successor.
+
+Migration-readiness result (2026-08-31): all five conditions are satisfied.
+v1alpha1 remains readable, validatable, plannable, executable, and covered by
+the repository gate. A user-facing deprecation warning or removal remains a
+separate release decision, not part of this source migration.
 
 ## Recommended first implementation slice
 

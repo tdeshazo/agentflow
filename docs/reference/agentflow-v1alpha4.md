@@ -1,7 +1,7 @@
 # AgentFlow v1alpha4 work-item authoring contract
 
-`agentflow.dev/v1alpha4` preserves v1alpha3 typed handoffs and adds typed,
-runtime-owned work-item completion. Use it when a workflow must advance a
+`agentflow.dev/v1alpha4` provides typed handoffs and runtime-owned work-item
+completion. Use it when a workflow must advance a
 finite set of criteria without making a Markdown file, actor message, or
 procedural loop the source of truth.
 

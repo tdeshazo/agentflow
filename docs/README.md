@@ -22,6 +22,10 @@ the section that matches the question you are trying to answer:
   [Execution authority](architecture/execution-authority.md).
 - To author or audit a workflow with typed handoffs or typed work items, start
   with the [AgentWorkflow v1alpha4 work-item authoring contract](reference/agentflow-v1alpha4.md).
+  The repository-scale example is the
+  [canonical v1alpha4 self-hosting workflow](../spec/agent-workflow.yaml), with
+  its authority proof retained in
+  [migration evidence](evidence/canonical-self-hosting-migration.md).
   The [AgentWorkflow v1alpha3 authoring contract](reference/agentflow-v1alpha3.md)
   remains the typed-handoff contract.
   The [AgentWorkflow v1alpha2 authoring contract](reference/agentflow-v1alpha2.md)

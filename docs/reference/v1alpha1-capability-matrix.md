@@ -41,19 +41,19 @@ The five representative workflows establish the Phase 1 baseline:
 | --- | --- | --- |
 | [Simple implementation](../../examples/representative/simple-implementation.agent-workflow.yaml) | v1alpha2 | Successor core |
 | [Implementation plus independent audit](../../examples/representative/implementation-independent-audit.agent-workflow.yaml) | v1alpha2 | Successor core |
-| [AgentFlow self-hosting](../../examples/representative/agentflow-self-hosting.agent-workflow.yaml) | v1alpha3 | Partial successor representative for portable safety/control and typed handoffs; canonical v1alpha1 criterion/progress and bookkeeping semantics are not included |
+| [AgentFlow self-hosting](../../spec/agent-workflow.yaml) | v1alpha4 | Canonical successor with typed handoffs, exact durable work items, runtime-owned checklist presentation, bounded parallel audits, and a retained [v1alpha1 compatibility definition](../../spec/agent-workflow-v1alpha1.yaml) |
 | [Human-gated release](../../examples/representative/human-gated-release.agent-workflow.yaml) | v1alpha2 | Phase 3 default successor; [v1alpha1 compatibility copy](../../examples/representative/human-gated-release-v1alpha1.agent-workflow.yaml) retained |
 | [Criterion-driven multi-item workflow](../../examples/representative/criterion-driven-multi-item.agent-workflow.yaml) | v1alpha4 | Phase 5 typed work-item successor with Markdown retained only as a presentation adapter |
 
-These are migration representatives. The self-hosting workflow demonstrates
-Phase 3 portable safety/control and Phase 4 typed handoffs without lifecycle,
-recovery, state-record, or explicit-flow plumbing; it does not establish an
-equivalent migration of the canonical v1alpha1 workflow, which retains
-criterion progress and Markdown bookkeeping semantics. The criterion-driven
-workflow demonstrates the Phase 5 generalized replacement: typed engine-owned
-work items with Markdown as an optional presentation adapter. Those semantics
-have not yet been applied to the canonical self-hosting workflow. The shipped
-art-portfolio workflow also defaults to v1alpha2, with its
+These are migration representatives. The canonical self-hosting workflow now
+combines the portable safety/control contract, typed handoffs, exact
+engine-owned work items, and Markdown as an optional presentation adapter
+without lifecycle, recovery, state-record, or explicit-flow plumbing. Its
+expanded plan and runtime behavior establish the migration closure documented
+in [canonical self-hosting migration evidence](../evidence/canonical-self-hosting-migration.md).
+Dynamic discovery and specialized status/index bookkeeping remain available
+in the v1alpha1 compatibility source. The shipped art-portfolio workflow also
+defaults to v1alpha2, with its
 [v1alpha1 compatibility copy](../../examples/art-portfolio-v1alpha1.agent-workflow.yaml)
 retained. Follow the
 [convergence plan](../planning/v1alpha1-to-v1alpha2-plan.md) and

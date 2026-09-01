@@ -1,0 +1,5 @@
+AgentFlow source code is intentionally absent from this workspace.
+
+This fixture contains only the public AgentFlow skill, public authoring
+contracts, fixed evaluation cases, schemas, example specifications, and the
+deterministic fixture harness.

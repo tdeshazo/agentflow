@@ -189,6 +189,6 @@ func namedMapField(owner, field string) bool {
 	return false
 }
 
-const allowedSemanticChangesUnsupportedReason = "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution"
+const allowedSemanticChangesUnsupportedReason = "allowed_semantic_changes is retained for source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution"
 
 const activePhaseRecoveryUnsupportedReason = "recovery.activePhase is retained for v1alpha1 source compatibility but the runtime derives recovery from durable state; its use is reported as unsupported before execution"

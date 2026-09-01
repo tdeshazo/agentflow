@@ -535,7 +535,7 @@
               "type": "array"
             }
           ],
-          "description": "allowed_semantic_changes is retained for v1alpha1 source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution",
+          "description": "allowed_semantic_changes is retained for source compatibility but is not enforced by this runtime; its use is reported as unsupported before execution",
           "x-agentflow-runtime-status": "unsupported"
         },
         "exclude": {

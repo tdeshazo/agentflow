@@ -1,266 +1,186 @@
 ---
 name: agentflow-spec
-description: Create, modify, explain, review, validate, or compare AgentFlow `agentflow.dev/v1alpha1` through `v1alpha4` `AgentWorkflow` YAML specifications. Use when turning a task or process into an AgentFlow workflow; changing an existing workflow; explaining, auditing, or comparing workflow behavior; or diagnosing specification validation, safety, resumability, typed handoff, or typed work-item problems.
+description: Create, modify, explain, review, validate, or compare `agentflow.dev/v1alpha4` `AgentWorkflow` YAML specifications. Use for AgentFlow workflow authoring, authority review, deterministic validation, recovery, typed handoffs, and typed work items. Produce v1alpha4 syntax only.
 ---
 
-# AgentFlow specifications
+# AgentFlow v1alpha4 specifications
 
-Produce executable specifications from the public AgentFlow contract. Keep agent intent, deterministic acceptance, workspace authority, human evidence, and durable completion distinct.
+Produce executable `agentflow.dev/v1alpha4` specifications from the public
+contract. Keep actor intent, deterministic acceptance, workspace authority,
+human evidence, work-item progress, and durable completion distinct.
 
-## Use the contract
+## Contract boundary
 
-- Treat the workflow YAML and bundled references as the specification surface.
-- Do not inspect `internal/`, `provider/`, tests, or other implementation source to discover fields or runtime behavior, unless the user explicitly asks to debug or change AgentFlow itself.
-- Never invent fields, tool types, expressions, phase kinds, or acceptance semantics.
-- If a documented construct is rejected, report the specification/documentation drift rather than reverse-engineering a workaround.
-
-Read resources progressively:
-
-- For new workflows with typed work items or a Markdown checklist adapter, read the checked-in [v1alpha4 authoring contract](../../docs/reference/agentflow-v1alpha4.md). For typed handoffs without work items, read the [v1alpha3 authoring contract](../../docs/reference/agentflow-v1alpha3.md). Read the [v1alpha2 authoring contract](../../docs/reference/agentflow-v1alpha2.md) for the concise sequential subset.
-- Read [the authoring guide](references/authoring-agentflow-v1alpha1.md) and [field guide](references/agentflow-v1alpha1.md) only when maintaining, comparing, or diagnosing a v1alpha1 compatibility workflow.
+- Author only `apiVersion: agentflow.dev/v1alpha4` with
+  `kind: AgentWorkflow`.
+- Read the checked-in [v1alpha4 authoring contract](../../docs/reference/agentflow-v1alpha4.md)
+  and consult the [executable schema](../../schema/v1alpha4.schema.json) when
+  exact field structure matters.
+- Do not author, quote, preserve, or recommend syntax from earlier API
+  versions. When an input uses older syntax, translate its intended behavior
+  into v1alpha4 and identify behavior that requires redesign.
+- Treat the public contract and schema as the specification surface. Do not
+  inspect `internal/`, `provider/`, tests, or other implementation source to
+  invent fields or runtime behavior.
+- If a documented construct is rejected, report contract/runtime drift rather
+  than reverse-engineering a workaround.
 
 ## Modes
 
-Choose the requested mode:
+- **Author or modify:** Produce valid executable YAML. Deterministic workflow
+  logic—not actor prose—decides acceptance and advancement.
+- **Describe:** Report only authority and behavior declared by the YAML.
+- **Review:** Check reference integrity, mutation authority, deterministic
+  acceptance, typed handoffs, work-item progress, recovery, human evidence,
+  and completion ordering.
+- **Compare:** Compare v1alpha4 semantics rather than formatting or declaration
+  order.
 
-- **Author or modify:** Create valid, executable YAML. Let deterministic workflow logic—not an agent’s success message—decide advancement.
-- **Describe:** Treat YAML as the source of truth. Do not infer undeclared capability, mutation authority, retry, or completion behavior.
-- **Review:** Check reference integrity, authority boundaries, deterministic acceptance, recovery, human evidence, and completion ordering.
-- **Compare:** Compare semantics, not formatting or declaration order.
+## Author or modify
 
-## Author or modify a workflow
-
-1. Define the bounded outcome, workspace/repository, allowed and protected paths, acceptance command, human evidence (if any), and durable completion condition. Parameterize unavailable repository facts instead of inventing them.
-2. Default new authoring to `agentflow.dev/v1alpha4` when a finite set of work items needs exact engine-owned advancement, bounded collection expansion, or a Markdown checklist mirror. Use `agentflow.dev/v1alpha3` for typed artifacts/evidence without work items; otherwise use the smaller `agentflow.dev/v1alpha2` contract. `agentflow.dev/v1alpha1` is grammar-frozen compatibility: do not add new v1alpha1 syntax. Dynamic collection discovery, custom state layout, and other matrix exceptions remain compatibility-only. Before migrating, run `agentflow migrate --check` and compare `plan --expanded` output.
-3. For v1alpha2/v1alpha3/v1alpha4, declare sections in dependency order: metadata; parameters; workspace; agents; tools; preconditions; validation; artifacts/evidence (v1alpha3+); criteria (v1alpha4 only); phases; human gates; completion; reset. Use stable IDs. Use the legacy section order only for v1alpha1 compatibility documents.
-4. Separate authority: agents attempt work; workspace policy controls mutations; deterministic validations accept phases; humans provide only necessary human evidence; completion owns terminal state.
-   Require a concrete actor or engine-owned transition for every allowlisted
-   path; remove copied template paths that no phase needs.
-5. Bound each prompt to its outcome, scope, local checks, exclusions, and whether a diff is required. Keep acceptance authority outside the prompt, but make every actor-produced exact literal enforced by validation actor-visible: enumerate required filenames, headings, symbols, labels, or other fixed strings in the prompt (or point to an actor-readable contract that contains them). Do not use opaque directions such as "use the gate-required headings" when the prompt does not state those headings.
-6. Allocate model capability and reasoning effort by irreducible task risk,
-   ambiguity, and breadth—not phase importance labels. Reserve the strongest
-   model/highest effort for genuinely difficult judgment or adversarial review;
-   use proportionate capability for bounded work backed by deterministic gates.
-   Keep an independent final reviewer separate from implementers and routine
-   repair actors. Ephemeral invocations do not make reviewing one's own authored
-   repair independent.
-7. Give every mutable AI phase a resolved deterministic validation gate. Give
-   every validation at least one deterministic step. Use no repair for hard
-   gates or a bounded `repair: once`; rerun the gate after repair. A post-review
-   repair must be followed by another independent review; otherwise make the
-   review/final gate hard. Design one-shot repair for the validation runner's
-   first reported failure: the repair invocation must be able to discover and
-   fix every violation in the full gate, rather than depend on successive
-   fail-fix-rerun cycles. Put the complete relevant contract in the repair
-   prompt or provide one deterministic preflight that reports all mismatches.
-8. In v1alpha4, declare criteria with stable IDs and exactly one `advanceWorkItem` phase per item. Use `forEach` only for statically declared work items and set `maxItems` to that exact count. Use `markdownChecklist` only as the runtime-owned mirror; do not ask an actor to edit it. Keep dynamic criterion loops and Markdown bookkeeping transitions in v1alpha1 compatibility workflows.
-9. Add human gates only where automation cannot establish the evidence. Specify timing, procedure, acknowledgement, and intentional skip behavior. In v1alpha2 and later, rely on the runtime-owned durable evidence identity; do not declare record names or procedural gate actions.
-10. Treat completion as a separate transition. When durable completion is required, prefer `assertions → finalValidation → checkpoint → afterCheckpointAssertions → writeMarker → summary`, writing the marker last.
-11. Design the same document for fresh initialization, active-phase recovery,
-    accepted-phase resume, completion retry, already-complete invocation, and
-    reset. Unconditional preconditions must remain true in every state that can
-    safely resume. Use `scope: initialization` for mutable facts required only
-    when establishing fresh durable state. Let completed-phase evidence handle
-    ordinary resume; do not let an ambient progress checkbox skip required
-    phases. If already-satisfied reconciliation is required, make it an
-    explicit operator-selected mode with complementary deterministic starting
+1. Define the bounded outcome, workspace, allowed and protected paths,
+   deterministic acceptance commands, human evidence, finite work items, and
+   durable completion condition. Parameterize unavailable repository facts.
+2. Declare sections in dependency order: metadata; parameters; workspace;
+   execution; agents; tools; preconditions; validation; artifacts; evidence;
+   criteria; phases; human gates; completion; reset. Omit unused optional
+   sections and use stable IDs.
+3. Separate authority: actors attempt work; workspace policy limits mutations;
+   validation accepts phases; the runtime advances exact work items; humans
+   provide only necessary evidence; completion owns terminal state. Every
+   allowlisted path needs an actor outcome or engine-owned transition.
+4. Bound each prompt to its outcome, write scope, exclusions, local checks, and
+   whether a diff is required. Put every gate-enforced filename, heading,
+   symbol, label, or literal in the prompt or an actor-readable contract.
+5. Allocate model capability and reasoning by task risk and ambiguity. Keep an
+   independent final reviewer separate from implementation and repair actors;
+   ephemeral execution does not erase authorship.
+6. Give every mutable AI phase a deterministic validation with at least one
+   step. Use hard gates where repair is unsafe or a bounded `repair: once` and
+   rerun the gate after repair. A repair after review requires another
+   independent review.
+7. Declare typed artifacts and evidence explicitly. Consumers receive only
+   declared direct inputs; do not rely on transcripts, final messages, or broad
+   run history as authority.
+8. Declare finite criteria with stable IDs and exactly one
+   `advanceWorkItem: true` phase per item. Use `forEach` only for a statically
+   declared collection and set `maxItems` to its exact size. A
+   `markdownChecklist` is a runtime-owned mirror; actors never edit it.
+9. Add human gates only where automation cannot establish the evidence.
+   Specify timing, procedure, acknowledgement, and intentional skip behavior.
+10. Treat completion as a separate transition. Author only `assertions`,
+    `validation`, and `evidence` under `completion`. The runtime owns the
+    subsequent checkpoint, post-checks, durable completion marker, and summary;
+    inspect those generated transitions in the expanded plan rather than
+    declaring lifecycle fields in the workflow.
+11. Design fresh initialization, active-phase recovery, accepted-phase resume,
+    completion retry, already-complete invocation, and reset together.
+    Initialization-only mutable facts must not become unconditional resume
     preconditions.
-12. Preserve unrelated semantics when modifying a workflow and state assumptions that materially affect scope, validation, human verification, or completion.
+12. Preserve unrelated semantics when modifying a workflow and state any
+    assumption that changes scope, validation, human verification, or
+    completion.
 
-For protected content, declare `spec.workspace.integrity` in v1alpha2/v1alpha3/v1alpha4 (or
-`spec.workspace.mutationPolicy.integrity` in v1alpha1) as a list of named
-rules. Each rule has `id`, `mode`, and non-empty `paths`; the allowlist and
-integrity rules are separate boundaries.
+Use `spec.workspace.allowWrites` for workflow-wide mutation authority and
+`phases[].writes` to narrow individual phases. Protect content separately with
+named `spec.workspace.integrity` rules using a supported hash mode and nonempty
+paths.
 
 ## Store and select workflows
 
-To make a workflow selectable by name, save its `.yaml` or `.yml` file in one
-of these directories:
-
-- `<repository>/.agentflow/workflows/` for a workflow owned by one repository.
-- `~/.agentflow/workflows/` for a workflow available across the current user's
-  repositories.
-
-Repository-local workflows take precedence when the two directories contain
-the same filename. From the target repository, use the filename without its
-extension as the positional selector, for example:
+Store repository-owned workflows under `<repository>/.agentflow/workflows/`
+and user-wide workflows under `~/.agentflow/workflows/`. Repository-local names
+take precedence. Select a stored workflow by filename without its extension:
 
 ```sh
 agentflow validate release-check
 agentflow plan --expanded release-check
 ```
 
-Use `-f path/to/workflow.yaml` when the workflow is intentionally outside
-these directories. Do not combine `-f` with a positional workflow name.
+Use `-f path/to/workflow.yaml` for an intentionally external document. Do not
+combine `-f` with a positional selector.
 
-## Validate an executable specification
+## Validate
 
-When the AgentFlow CLI is available, author iteratively:
+Validate without running actors:
 
 ```sh
 agentflow validate -f workflow.yaml
 agentflow plan --expanded -f workflow.yaml
 ```
 
-Inside this repository, the equivalent development commands are:
+Inside the AgentFlow source repository, use:
 
 ```sh
 go run . validate -f workflow.yaml
 go run . plan --expanded -f workflow.yaml
 ```
 
-Fix every `invalid` diagnostic. If the document is valid but `unsupported`, remove or replace the unsupported runtime construct unless the user explicitly wants a descriptive/non-executable specification.
-
-Inspect the expanded plan's `normalizedExecution` object and summary for resolved:
-
-- agent models, phase/repair reasoning, and reviewer/repair independence;
-- lifecycle and phase validation;
-- repair actor and retry budget;
-- mutation/progress behavior;
-- checkpoint behavior;
-- human gates;
-- completion ordering.
-
-Also inspect each unconditional precondition against the resume states above.
-Confirm that every named tool use is executable in its specific context;
-successful reference resolution alone does not establish completion-assertion
-support.
+Fix every `invalid` diagnostic. Replace unsupported constructs unless the user
+explicitly requested a non-executable design. Inspect the expanded plan for
+resolved models and reasoning, phase and repair independence, mutation scope,
+validation and retry budget, typed inputs, exact work-item transitions,
+runtime-owned checkpoint behavior, human gates, and completion transitions.
+Confirm every unconditional precondition remains true across safe resume states
+and every named tool is executable in its invocation context.
 
 Do not run a workflow merely to learn whether its YAML is valid.
 
-## Authoring output expectations
+## Output expectations
 
-When asked to create a workflow:
-
-- Return or write one complete AgentWorkflow YAML document unless the user asks for fragments. For named discovery, `workflow-name.yaml` or `workflow-name.yml` is sufficient.
-- Use `agentflow.dev/v1alpha4` with `kind: AgentWorkflow` when work items need typed progress; use `v1alpha3` when handoffs need typed artifacts/evidence; otherwise use `v1alpha2`. Use v1alpha1 only for an explicit compatibility copy or a documented successor exception.
+- Return or write one complete v1alpha4 `AgentWorkflow` unless fragments were
+  requested.
 - Prefer concise defaults and runtime-owned safe resume.
-- Include comments only where they explain a non-obvious safety or authority decision.
-- Keep prompts shorter than orchestration logic.
-- If repository facts are unavailable, parameterize them rather than fabricating file paths or commands.
-- State any assumptions that materially affect mutation scope, validation, human verification, or completion.
+- Keep comments for non-obvious safety or authority decisions.
+- Keep actor prompts shorter than orchestration logic.
+- Parameterize unknown repository facts instead of fabricating paths or
+  commands.
 
-When asked to modify a workflow, preserve existing semantics outside the requested change and rerun the validation loop.
+## Describe
 
-## Describe a workflow
+Read control fields before prompts. Explain in this order: owned outcome and
+completion; mutation and integrity boundaries; actors and deterministic tools;
+phase order and exact work-item advancement; failure and recovery; human
+verification; terminal completion.
 
-Read control fields before prompts: `metadata`, parameters, workspace, agents, validation, defaults/lifecycle (or legacy phase defaults), phases, human gates, recovery, flow, and completion. Read state, preconditions, progress, and tools only when relevant.
+For each phase, report only its ID, kind, actor/reasoning, work item, change
+requirement, and one-sentence intent. Describe the resolved acceptance pipeline
+in execution order, typically:
 
-Explain in this order: owned outcome/completion; mutation and integrity boundaries; actors and deterministic tools; execution order; advancement; failure/recovery; human verification; terminal completion. Prioritize control semantics over repeating prompts.
+`actor → scope/integrity → deterministic gate → bounded repair → progress/net-change → checkpoint → phase evidence`
 
-Always distinguish agent, workspace, and validation authority. State that committing does not grant acceptance authority. For each phase, report only its ID, kind, label, actor/reasoning, criterion (if any), change requirement, and one-sentence intent. Describe the resolved acceptance pipeline in execution order—typically `agent run → scope/integrity checks → deterministic gate → bounded repair → progress/net-change assertions → checkpoint → completed-phase evidence` for safe-resume—and distinguish hard failure, bounded repair, exhausted repair, integrity failure, and interruption recovery.
+Distinguish provider failure, gate failure, bounded repair, exhausted repair,
+integrity failure, interruption recovery, and completion retry.
 
-## Default description format
-
-Use this structure unless the user requests another format:
-
-### Purpose
-
-Two or three sentences describing the owned outcome and orchestration model.
-
-### Safety and authority
-
-A short paragraph covering mutation scope, protected content, clean-state rules, and who owns acceptance.
-
-### Execution
-
-A compact table:
-
-`Phase | Kind | Actor | Effort | Intent | Change required`
-
-Follow it with the deterministic phase acceptance pipeline.
-
-### Failure and recovery
-
-Explain gate-specific repair behavior and interrupted-phase recovery.
-
-### Human verification
-
-Summarize manual checks, skip behavior, acknowledgement, and recorded evidence.
-
-### Completion
-
-State the exact conditions required before durable workflow completion.
-
-## Ultra-compact description mode
-
-If the user asks for a brief description, produce exactly five bullets:
-
-1. Outcome.
-2. Mutation/protection boundary.
-3. Phase sequence and actors.
-4. Validation/recovery policy.
-5. Human/completion boundary.
-
-## Review or compare workflows
+## Review checklist
 
 Check for:
 
-- unknown or undocumented fields/types;
-- unresolved or dangling named references;
-- mutable paths that bypass `mutationPolicy.allowed`;
-- allowlisted paths with no declared actor outcome or engine-owned transition,
-  which grant unnecessary mutation authority;
-- protected content not covered by an integrity boundary;
-- ignored local control files (including the selected workflow, repository
-  instructions, and authoring skills) that affect execution without an
-  explicit integrity rule, or rules that zero-match; symlink rules protect the
-  link object, not external target contents;
-- mutable initial facts left as unconditional preconditions instead of
-  `scope: initialization`, causing accepted-phase or completion retries to
-  fail;
-- required implementation or review phases all guarded by an ambient
-  `not progress.is_checked(...)` condition, allowing an externally or
-  prematurely checked item to bypass missing phase evidence; use durable phase
-  markers for ordinary resume and an explicit, deterministically gated
-  reconciliation mode when needed;
-- named completion assertions whose referenced tool type is not documented as
-  executable in assertion context;
-- agent-controlled success without deterministic validation;
-- mutable phases without a resolved validation gate;
-- exact filenames, headings, symbols, labels, or strings enforced by a gate but
-  omitted from the responsible actor's prompt and actor-readable inputs;
-- one-shot repair for a multi-step gate that can reveal only the first mismatch
-  and gives the repair actor no way to inspect the complete validation contract;
-- validation commands that are vacuous at their execution point, such as a
-  worktree-only diff check after the lifecycle has checkpointed a clean tree;
-- repair policies that accidentally apply to hard/safety gates;
-- uniform maximal reasoning without task-specific justification, or a weaker
-  model/effort assigned to the phase carrying the hardest irreducible judgment;
-- a claimed independent reviewer reused as an earlier implementation-gate
-  repair actor; ephemeral execution does not erase code authorship;
-- a repairable adversarial/final gate whose repair can change accepted code
-  without another independent review;
-- criterion phases without stable criteria or progress invariants;
-- workflows claiming the "next" roadmap criterion without deterministic
-  preconditions for stable roadmap order/dependencies and an
-  initialization-scoped exact-pending eligibility check, unless an explicit
-  reconciliation mode instead proves the exact already-checked target;
-- actor edits to engine-owned progress;
-- single-criterion completion without deterministic evidence that its exact
-  target is checked (when `progress-empty` would incorrectly require later
-  criteria too);
-- completion markers written before final validation/checkpoint/post-checks;
-- completion failures after a successful phase checkpoint that cannot be
-  retried without rerunning actors or violating a now-stale precondition;
-- terminal validation that proves only scope, formatting, cleanliness, or an
-  empty diff instead of re-running the canonical semantic acceptance gate;
-- human gates without durable evidence;
-- bookkeeping before required implementation/audit/human prerequisites;
-- `requiresChange: false` phases incorrectly treated as requiring a diff;
-- legacy lifecycle/recovery actions that bypass the runtime-owned safe contract;
-- expressions or runtime constructs outside the documented supported surface.
+- any API version other than `agentflow.dev/v1alpha4`;
+- unknown fields, unsupported tools, malformed expressions, or dangling IDs;
+- mutable paths outside `workspace.allowWrites` or `phases[].writes`;
+- allowlisted paths with no actor or runtime-owned outcome;
+- protected paths missing named integrity rules, including private local
+  control files that affect execution;
+- mutable initialization facts imposed on every resume;
+- actor-controlled acceptance, progress, checklist state, or completion;
+- mutable AI phases without deterministic validation;
+- gate-enforced literals hidden from the responsible actor;
+- one-shot repair that cannot discover the gate's complete failure set;
+- repairable final review without a subsequent independent review;
+- a reviewer reused as an implementation or repair author;
+- artifacts or evidence consumed without declared typed inputs;
+- work items without exactly one advancing phase;
+- unbounded or dynamically discovered `forEach` collections;
+- actor edits to runtime-owned checklist presentation;
+- phase scopes that overlap unnecessarily under parallel execution;
+- completion entries with fields other than `assertions`, `validation`, or
+  `evidence`, including attempts to author runtime-owned checkpoint, marker, or
+  summary transitions;
+- terminal validation that proves only formatting, cleanliness, or an empty
+  diff rather than semantic acceptance;
+- `requiresChange: false` phases treated as requiring a diff;
+- resume paths that rerun accepted actors or invalidate mutable preconditions.
 
-Report only issues supported by YAML and the bundled contract; label inferences. For comparisons, cover state/resume, mutation and integrity rules, agent/model allocation, phase granularity, deterministic gates, repair budget, progress invariants, checkpoint strategy, human verification, and completion contract. Call out semantic differences even when field layout differs.
-
-## Efficiency rules
-
-- In authoring mode, read the authoring reference before the long field guide.
-- In description mode, read control fields before prompts.
-- Do not restate defaults repeatedly for every phase.
-- Distill prompts to one sentence per phase.
-- Prefer execution order over YAML declaration order.
-- Expand only the section relevant to the user's question.
-- Preserve exact declared terminology when precision matters.
-- Do not infer undocumented engine behavior.
-- Do not inspect AgentFlow source code as a substitute for the bundled public contract.
+Report only defects supported by the YAML and public v1alpha4 contract. Label
+inferences and preserve exact declared terminology.

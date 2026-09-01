@@ -6,7 +6,8 @@ verification, and completion.
 
 This repository contains:
 
-- a reference `agentflow.dev/v1alpha1` `AgentWorkflow` definition;
+- a canonical `agentflow.dev/v1alpha4` self-hosting workflow and a retained
+  `agentflow.dev/v1alpha1` compatibility definition;
 - a field-level specification reference;
 - an agent skill for authoring, describing, reviewing, and comparing workflow
   specifications without requiring AgentFlow implementation source;
@@ -67,6 +68,8 @@ organizes the documentation by purpose:
 ├── scripts/
 │   └── check.sh
 ├── spec/
+│   ├── agent-workflow.yaml
+│   ├── agent-workflow-progress.md
 │   └── agent-workflow-v1alpha1.yaml
 ├── docs/
 │   ├── architecture/
@@ -115,11 +118,11 @@ workflow logic.
 
 ## Current interpreter
 
-The experimental Go interpreter executes the supported cores of `v1alpha1` and
-the concise `v1alpha2` contract against Git workspaces, stores durable
-workflow state in namespaced Git refs, and uses the public [provider
-interface](provider/provider.go) for AI execution. v1alpha2 derives a
-deterministic serial schedule from `dependsOn`; the initial adapter uses
+The experimental Go interpreter executes the supported `v1alpha1` through
+`v1alpha4` contracts against Git workspaces, stores durable workflow state in
+namespaced Git refs, and uses the public [provider interface](provider/provider.go)
+for AI execution. Successor workflows derive scheduling from `dependsOn` and
+may opt into bounded parallel execution; the initial adapter uses
 non-interactive Codex CLI execution.
 
 See the [runtime reference](docs/reference/runtime.md) for CLI usage, state
@@ -133,6 +136,13 @@ v1alpha2 conformance example. It shows the shared agent capability fields
 (`sandbox`, `approval`, `ephemeral`, `may_commit`, and `output_last_message`)
 on both a named agent and an inline phase actor; this capability parity does
 not imply full v1alpha1 schema or defaults parity.
+
+AgentFlow develops itself through the canonical
+[`spec/agent-workflow.yaml`](spec/agent-workflow.yaml) v1alpha4 workflow. Its
+[`spec/agent-workflow-v1alpha1.yaml`](spec/agent-workflow-v1alpha1.yaml)
+predecessor remains checked in and executable for compatibility. The
+[migration closure evidence](docs/evidence/canonical-self-hosting-migration.md)
+records the equal-or-stronger authority comparison and runtime proof.
 
 ## Validation
 
