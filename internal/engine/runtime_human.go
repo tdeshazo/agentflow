@@ -74,9 +74,12 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 			return err
 		}
 	}
-	if ok, _, err := e.validCommitMarker(record); err != nil {
+	if ok, commit, err := e.validCommitMarker(record); err != nil {
 		return err
 	} else if ok {
+		e.traceEvent("human_gate_evidence", map[string]string{
+			"commit": commit, "decision": "reused", "gate": id, "record": opaqueTraceRecord(record),
+		})
 		presenter.HumanGateAlreadyRecorded(id)
 		return nil
 	}
@@ -149,7 +152,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 				record = resolved
 			}
 		}
-		return e.persistHumanEvidence(gate, record, head)
+		return e.persistHumanEvidence(gate, record, head, "skipped")
 	}
 
 	presenter.Separator()
@@ -205,7 +208,7 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 			record = evidence
 		}
 	}
-	if err := e.persistHumanEvidence(gate, record, head); err != nil {
+	if err := e.persistHumanEvidence(gate, record, head, "confirmed"); err != nil {
 		return err
 	}
 	if presenter.TTY {
@@ -230,17 +233,25 @@ func readHumanLine(reader *bufio.Reader) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func (e *Engine) persistHumanEvidence(gate *workflow.HumanGate, record, head string) error {
+func (e *Engine) persistHumanEvidence(gate *workflow.HumanGate, record, head, decision string) error {
 	if err := e.Store.SetCommit(record, head); err != nil {
 		return err
 	}
+	e.traceEvent("human_gate_evidence", map[string]string{
+		"commit": head, "decision": decision, "gate": gate.ID, "record": opaqueTraceRecord(record),
+	})
 	if gate.IdempotentRecord != "" {
 		idempotent, err := e.recordName(gate.IdempotentRecord, nil)
 		if err != nil {
 			return err
 		}
 		if idempotent != "" && idempotent != record {
-			return e.Store.SetCommit(idempotent, head)
+			if err := e.Store.SetCommit(idempotent, head); err != nil {
+				return err
+			}
+			e.traceEvent("human_gate_evidence", map[string]string{
+				"commit": head, "decision": decision, "gate": gate.ID, "record": opaqueTraceRecord(idempotent),
+			})
 		}
 	}
 	return nil
@@ -320,10 +331,16 @@ func (e *Engine) runCompletion(ctx context.Context, name string) (runErr error) 
 	if err := e.Store.SetCommit(marker, head); err != nil {
 		return err
 	}
+	e.traceEvent("completion_evidence", map[string]string{
+		"commit": head, "completion": name, "record": opaqueTraceRecord(marker),
+	})
 	if marker != e.workflowCompleteMarker() {
 		if err := e.Store.SetCommit(e.workflowCompleteMarker(), head); err != nil {
 			return err
 		}
+		e.traceEvent("completion_evidence", map[string]string{
+			"commit": head, "completion": name, "record": opaqueTraceRecord(e.workflowCompleteMarker()),
+		})
 	}
 	if c.FinalValidation != "" {
 		if err := e.runInterruptionHook(interruptionAfterCompletionMarker, PendingActorInvocation{

@@ -543,6 +543,18 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 			return err
 		}
 	}
+	traceStarted := false
+	if identityOK {
+		if err := e.startExecutionTrace(); err != nil {
+			return err
+		}
+		_, active, err := e.Store.Resolve(e.activeRecord())
+		if err != nil {
+			return err
+		}
+		e.traceEvent("run_started", map[string]string{"workflow": e.Workflow.Metadata.Name, "resumed": fmt.Sprint(active)})
+		traceStarted = true
+	}
 	// Reconcile a pending provider boundary only after the run identity has
 	// matched. This also cleans a record left behind after authority was
 	// durably recorded but before pending-invocation cleanup. Terminal safety
@@ -569,7 +581,9 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 	if _, active, err := e.Store.Resolve(e.activeRecord()); err == nil {
 		resumed = active
 	}
-	e.traceEvent("run_started", map[string]string{"workflow": e.Workflow.Metadata.Name, "resumed": fmt.Sprint(resumed)})
+	if !traceStarted {
+		e.traceEvent("run_started", map[string]string{"workflow": e.Workflow.Metadata.Name, "resumed": fmt.Sprint(resumed)})
+	}
 	// A pending record may have been created by an invocation that initialized
 	// state in this same process. The earlier identity-gated reconciliation is
 	// normally sufficient; this second idempotent check covers that case.
@@ -594,6 +608,9 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		if err := e.assertMutationBoundary(true, e.lifecycleConfigured()); err != nil {
 			return fmt.Errorf("completed workflow is no longer safe to reuse: %w", err)
 		}
+		e.traceEvent("completion_evidence", map[string]string{
+			"commit": completeSHA, "decision": "reused", "record": opaqueTraceRecord(e.workflowCompleteMarker()),
+		})
 		e.presenter().WorkflowAlreadyComplete(e.Workflow.Metadata.Name, completeSHA)
 		return nil
 	}
@@ -717,6 +734,9 @@ func (e *Engine) logEvent(kind string, fields map[string]string) {
 }
 
 func (e *Engine) startExecutionTrace() error {
+	if e.traceStore != nil {
+		return nil
+	}
 	if e.runID == "" {
 		var identity RunIdentity
 		ok, err := e.Store.GetJSON(e.runIdentityRecord(), &identity)
@@ -753,12 +773,36 @@ func (e *Engine) traceEvent(kind string, fields map[string]string) {
 	})
 }
 
+func (e *Engine) traceEventForActive(kind string, active ActivePhase, fields map[string]string) {
+	if e.traceStore == nil {
+		return
+	}
+	_ = e.traceStore.Append(executiontrace.Event{
+		Event:           kind,
+		NodeID:          active.PhaseID,
+		NodeExecutionID: active.NodeExecutionID,
+		Attempt:         active.Attempt,
+		Fields:          traceFields(fields),
+	})
+}
+
 func traceFields(fields map[string]string) map[string]string {
 	allowed := map[string]bool{
-		"actor": true, "completion": true, "gate": true, "label": true,
-		"phase": true, "provider": true, "reason": true, "result": true,
-		"resumed": true, "stage": true, "tool": true, "validation": true,
-		"workflow": true,
+		"actor": true, "approval": true, "capability_count": true, "capture_log": true,
+		"capture_stderr": true, "capture_stdout": true, "commit": true, "completion": true,
+		"context_version": true, "cost_budget_usd": true, "cost_usd": true,
+		"created_commit": true, "credential_count": true, "decision": true,
+		"duration_budget_ms": true, "duration_ms": true, "ephemeral": true,
+		"evidence": true, "exit_code": true, "failure_kind": true,
+		"filesystem_rule_count": true, "final_message_present": true, "gate": true,
+		"input_tokens": true, "label": true, "max_attempts": true, "model_config": true,
+		"model_ref": true, "mutates_workspace": true, "network": true, "outcome": true,
+		"output_capture": true, "output_tokens": true, "phase": true, "presentation": true,
+		"provider": true, "reason": true, "reconciled": true, "record": true,
+		"repair_attempt": true, "result": true, "resumed": true, "role": true,
+		"sandbox": true, "stage": true, "start_commit": true, "state": true,
+		"token_budget": true, "tool": true, "tool_type": true, "transition": true,
+		"validation": true, "work_item": true, "workflow": true,
 	}
 	safe := make(map[string]string, len(fields))
 	for key, value := range fields {

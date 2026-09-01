@@ -18,6 +18,14 @@
   attempts, provider attribution metadata, status projection, compatible legacy
   migration, and a separate versioned append-only execution trace under the
   repository's private Git directory.
+- Completed orchestration trace coverage for attempt lifecycle, durable node
+  transitions, validation reuse/failure/repair, repair exhaustion, checkpoint
+  commits, human decisions, phase acceptance, crash reconciliation, and
+  workflow completion evidence without persisting diagnostic output.
+- Added allowlisted provider request/response and tool metadata to execution
+  traces, including enforced policy shape, opaque static-model correlation,
+  metering, duration, classified outcomes, tool declarations, skips, and shell
+  exit codes while excluding prompts, reasoning, credentials, and output.
 - Completed Stage 2 runtime security and resource control with fail-closed
   execution-policy inheritance, provider-enforced network/capability scopes,
   explicit credential injection and output redaction, human approval for

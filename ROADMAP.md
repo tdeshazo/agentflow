@@ -402,17 +402,21 @@ and Git-backed model/tool/token/time/cost exhaustion. See the
 
 ### Implementation status
 
-**Identity and trace foundation complete (2026-09-01).** Every initialized run
+**Identity and orchestration trace complete (2026-09-01).** Every initialized run
 has an opaque durable run ID bound to its compatibility digests. Every phase
 attempt has a distinct node-execution ID and monotonic per-node attempt number;
 interrupted recovery retains both. The runtime writes a separate v1 JSONL trace
 with monotonic sequence numbers under the repository's private Git directory,
-and exposes its schema, path, and current identities through status. Existing
-digest-only run and active-phase records migrate without replaying work. See the
-[Stage 3 identity and trace evidence](docs/evidence/stage-3-run-identity-trace.md).
+and records attempt lifecycle, durable state transitions, validation and repair
+outcomes, checkpoint commits, human decisions, phase acceptance, workflow
+completion evidence, and bounded provider/tool metadata. Provider metadata
+includes enforced request shape, duration, metering, and outcome without prompt,
+reasoning, credentials, or output. Status exposes the schema, path, and current
+identities. Existing digest-only run and active-phase records migrate without
+replaying work. See the [Stage 3 identity and trace evidence](docs/evidence/stage-3-run-identity-trace.md).
 
-Supervised attach/detach sessions, expanded transition coverage, status detail,
-and `explain` remain open Stage 3 work.
+Supervised attach/detach sessions, status detail, and `explain` remain open
+Stage 3 work.
 
 This stage builds on the exclusive ownership boundary from stage 2. Stable run identity and lossless session supervision are required before migration broadens the preferred workflow surface or parallel execution increases runtime complexity.
 
@@ -420,8 +424,8 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
 
 - [x] Define a versioned execution-trace schema distinct from the workflow SDL.
 - [x] Assign stable run and node-execution identities.
-- Record state transitions, attempts, validations, repairs, checkpoints, human gates, and completion evidence.
-- Capture provider/tool metadata without requiring private model reasoning.
+- [x] Record state transitions, attempts, validations, repairs, checkpoints, human gates, and completion evidence.
+- [x] Capture provider/tool metadata without requiring private model reasoning.
 - Add `agentflow status` detail suitable for both humans and automation.
 - Add `agentflow explain` for “why is this node blocked/skipped/failed?”
 - Add supervised run-session control with mutually exclusive active ownership:

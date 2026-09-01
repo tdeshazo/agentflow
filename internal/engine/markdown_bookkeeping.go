@@ -183,7 +183,13 @@ func (e *Engine) applyBookkeeping(p *workflow.Phase, active *ActivePhase) error 
 	}
 	active.BookkeepingPending = false
 	active.BookkeepingApplied = true
-	return e.Store.SetJSON(e.activeRecord(), *active)
+	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+		return err
+	}
+	e.traceEventForActive("node_state_transition", *active, map[string]string{
+		"phase": p.ID, "state": "bookkeeping_applied", "transition": "markdown_updated",
+	})
+	return nil
 }
 
 // allowSatisfied permits recovery to replay a partially applied, durable

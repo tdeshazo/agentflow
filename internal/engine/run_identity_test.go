@@ -60,6 +60,20 @@ func TestRunAndNodeExecutionIdentitiesSurviveRecovery(t *testing.T) {
 		t.Fatalf("status identity = %+v", snapshot)
 	}
 	assertTraceIdentities(t, snapshot.TracePath, identity.RunID, interrupted.NodeExecutionID)
+	events := readExecutionTrace(t, restarted)
+	requireTraceEvent(t, events, "node_attempt_resumed", func(event executiontrace.Event) bool {
+		return event.NodeID == interrupted.PhaseID && event.NodeExecutionID == interrupted.NodeExecutionID && event.Attempt == interrupted.Attempt
+	})
+	requireTraceEvent(t, events, "provider_response", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == interrupted.NodeExecutionID && event.Fields["result"] == "failure" && event.Fields["outcome"] == "error"
+	})
+	encoded, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "interrupted provider") {
+		t.Fatal("trace persisted provider error output")
+	}
 }
 
 func TestLegacyRunIdentityMigratesWithoutChangingCompatibilityDigests(t *testing.T) {
@@ -129,6 +143,290 @@ func TestParallelTraceKeepsNodeExecutionAttributionIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertParallelValidationTrace(t, snapshot.TracePath, identities)
+}
+
+func TestTraceCoversDurablePhaseAndCompletionTransitions(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "complete-trace-lifecycle")
+	e := newDurableEngine(t, w, &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}})
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	phaseCommit, ok, err := e.Store.Resolve("phases/change")
+	if err != nil || !ok {
+		t.Fatalf("phase evidence: commit=%q ok=%v err=%v", phaseCommit, ok, err)
+	}
+	completionCommit, ok, err := e.Store.Resolve("complete")
+	if err != nil || !ok {
+		t.Fatalf("completion evidence: commit=%q ok=%v err=%v", completionCommit, ok, err)
+	}
+	events := readExecutionTrace(t, e)
+	started := requireTraceEvent(t, events, "node_attempt_started", func(event executiontrace.Event) bool {
+		return event.NodeID == "change" && event.NodeExecutionID != "" && event.Attempt == 1 && event.Fields["start_commit"] != ""
+	})
+	requireTraceEvent(t, events, "validation_end", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["validation"] == "phaseGate" && event.Fields["result"] == "success"
+	})
+	requireTraceEvent(t, events, "checkpoint_end", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["commit"] == phaseCommit && event.Fields["result"] == "success"
+	})
+	requireTraceEvent(t, events, "phase_accepted", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["record"] == opaqueTraceRecord("phases/change") && event.Fields["commit"] == phaseCommit
+	})
+	requireTraceEvent(t, events, "node_attempt_finished", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["result"] == "success"
+	})
+	requireTraceEvent(t, events, "completion_evidence", func(event executiontrace.Event) bool {
+		return event.Fields["completion"] == "done" && event.Fields["record"] == opaqueTraceRecord("complete") && event.Fields["commit"] == completionCommit
+	})
+}
+
+func TestTraceCoversValidationRepairAttemptAndOutcome(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "complete-trace-repair")
+	w.Spec.Validation["phaseGate"] = repairValidation()
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test"}
+	e := newDurableEngine(t, w, &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		contents := "partial\n"
+		if request.Metadata["actor"] == "repair" {
+			contents = "complete\n"
+		}
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte(contents), 0o644)
+	}})
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	events := readExecutionTrace(t, e)
+	requireTraceEvent(t, events, "validation_failed", func(event executiontrace.Event) bool {
+		return event.Fields["validation"] == "phaseGate" && event.Fields["failure_kind"] == string(PhaseFailureValidation)
+	})
+	requireTraceEvent(t, events, "repair_attempt_start", func(event executiontrace.Event) bool {
+		return event.Fields["validation"] == "phaseGate" && event.Fields["actor"] == "repair" && event.Fields["repair_attempt"] == "1" && event.Fields["max_attempts"] == "1"
+	})
+	requireTraceEvent(t, events, "repair_attempt_end", func(event executiontrace.Event) bool {
+		return event.Fields["validation"] == "phaseGate" && event.Fields["repair_attempt"] == "1" && event.Fields["result"] == "success"
+	})
+	requireTraceEvent(t, events, "validation_repaired", func(event executiontrace.Event) bool {
+		return event.Fields["validation"] == "phaseGate" && event.Fields["repair_attempt"] == "1"
+	})
+	for _, event := range events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "partial") {
+			t.Fatalf("trace leaked validation output: %s", encoded)
+		}
+	}
+}
+
+func TestTraceCoversDurableRepairExhaustion(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "complete-trace-repair-exhaustion")
+	w.Spec.Validation["phaseGate"] = repairValidation()
+	w.Spec.Agents["repair"] = workflow.Agent{Runner: "test"}
+	providerImpl := &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("partial\n"), 0o644)
+	}}
+	first := newDurableEngine(t, w, providerImpl)
+	if err := first.Run(context.Background()); err == nil {
+		t.Fatal("first run unexpectedly succeeded")
+	}
+	restarted := newDurableEngine(t, w, providerImpl)
+	if err := restarted.Run(context.Background()); err == nil {
+		t.Fatal("restart unexpectedly renewed the repair budget")
+	}
+	events := readExecutionTrace(t, restarted)
+	requireTraceEvent(t, events, "repair_budget_exhausted", func(event executiontrace.Event) bool {
+		return event.Fields["validation"] == "phaseGate" && event.Fields["max_attempts"] == "1"
+	})
+	requireTraceEvent(t, events, "node_attempt_blocked", func(event executiontrace.Event) bool {
+		return event.NodeID == "change" && event.Fields["failure_kind"] == string(PhaseFailureValidation) && event.Fields["result"] == "failure"
+	})
+}
+
+func TestTraceCoversHumanGateAndCompletionEvidence(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "complete-trace-human")
+	w.Spec.Phases = nil
+	w.Spec.Flow = []workflow.FlowStep{{Human: "review"}, {Complete: "done"}}
+	w.Spec.HumanGates = []workflow.HumanGate{{
+		ID: "review", When: "{{ true }}",
+		Acknowledgement: workflow.Acknowledgement{Type: "exact-text", Value: "yes"},
+	}}
+	e := newDurableEngine(t, w, &durableProvider{})
+	e.In = strings.NewReader("yes\n")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	humanCommit, ok, err := e.Store.Resolve("human/review")
+	if err != nil || !ok {
+		t.Fatalf("human evidence: commit=%q ok=%v err=%v", humanCommit, ok, err)
+	}
+	events := readExecutionTrace(t, e)
+	requireTraceEvent(t, events, "human_gate_evidence", func(event executiontrace.Event) bool {
+		return event.Fields["gate"] == "review" && event.Fields["decision"] == "confirmed" && event.Fields["record"] == opaqueTraceRecord("human/review") && event.Fields["commit"] == humanCommit
+	})
+	requireTraceEvent(t, events, "completion_evidence", func(event executiontrace.Event) bool {
+		return event.Fields["completion"] == "done" && event.Fields["record"] == opaqueTraceRecord("complete") && event.Fields["commit"] == humanCommit
+	})
+}
+
+func TestTraceCoversConditionallySkippedNodeEvidence(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "complete-trace-skip")
+	w.Spec.Phases[0].If = "{{ false }}"
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	commit, ok, err := e.Store.Resolve("phases/change")
+	if err != nil || !ok {
+		t.Fatalf("skip evidence: commit=%q ok=%v err=%v", commit, ok, err)
+	}
+	events := readExecutionTrace(t, e)
+	started := requireTraceEvent(t, events, "node_attempt_started", func(event executiontrace.Event) bool {
+		return event.NodeID == "change" && event.NodeExecutionID != "" && event.Attempt == 1
+	})
+	requireTraceEvent(t, events, "node_skipped", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["record"] == opaqueTraceRecord("phases/change") && event.Fields["commit"] == commit && event.Fields["reason"] == "condition is false"
+	})
+	requireTraceEvent(t, events, "node_attempt_finished", func(event executiontrace.Event) bool {
+		return event.NodeExecutionID == started.NodeExecutionID && event.Fields["result"] == "skipped"
+	})
+}
+
+func TestTraceUsesOpaqueReferencesForResolvedRecordNames(t *testing.T) {
+	repo := newDurableRepo(t)
+	const (
+		parameterValue   = "customer-secret-rose"
+		phaseEnvValue    = "phase-secret-sable"
+		humanEnvValue    = "human-secret-amber"
+		completeEnvValue = "completion-secret-ivory"
+	)
+	t.Setenv("AGENTFLOW_TRACE_PHASE_RECORD", phaseEnvValue)
+	t.Setenv("AGENTFLOW_TRACE_HUMAN_RECORD", humanEnvValue)
+	t.Setenv("AGENTFLOW_TRACE_COMPLETION_RECORD", completeEnvValue)
+	w := durableWorkflow(repo, "opaque-trace-records")
+	w.Spec.Parameters["customer"] = workflow.Parameter{Type: "string", Default: parameterValue}
+	w.Spec.State.Records.CompletedPhasePattern = "phases/{{ parameters.customer }}/{{ env.AGENTFLOW_TRACE_PHASE_RECORD }}/{{ phase.id }}"
+	w.Spec.Flow = []workflow.FlowStep{{Phase: "change"}, {Human: "review"}, {Complete: "done"}}
+	w.Spec.HumanGates = []workflow.HumanGate{{
+		ID: "review", When: "{{ true }}",
+		Acknowledgement: workflow.Acknowledgement{Type: "exact-text", Value: "yes"},
+		Evidence:        workflow.Marker{Record: "human/{{ parameters.customer }}/{{ env.AGENTFLOW_TRACE_HUMAN_RECORD }}"},
+	}}
+	completion := w.Spec.Completion["done"]
+	completion.WriteMarker.Record = "completion/{{ parameters.customer }}/{{ env.AGENTFLOW_TRACE_COMPLETION_RECORD }}"
+	w.Spec.Completion["done"] = completion
+	e := newDurableEngine(t, w, &durableProvider{action: func(_ context.Context, request provider.Request) error {
+		return os.WriteFile(filepath.Join(request.Workspace, "work.txt"), []byte("complete\n"), 0o644)
+	}})
+	e.In = strings.NewReader("yes\n")
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	phaseRecord := "phases/" + parameterValue + "/" + phaseEnvValue + "/change"
+	humanRecord := "human/" + parameterValue + "/" + humanEnvValue
+	completionRecord := "completion/" + parameterValue + "/" + completeEnvValue
+	for _, expected := range []struct {
+		name   string
+		record string
+	}{
+		{name: "phase", record: phaseRecord},
+		{name: "human", record: humanRecord},
+		{name: "completion", record: completionRecord},
+	} {
+		t.Run("authoritative_"+expected.name, func(t *testing.T) {
+			if _, ok, err := e.Store.Resolve(expected.record); err != nil || !ok {
+				t.Fatalf("authoritative record was not persisted: ok=%v err=%v", ok, err)
+			}
+		})
+	}
+
+	events := readExecutionTrace(t, e)
+	for _, expected := range []struct {
+		kind   string
+		record string
+	}{
+		{kind: "phase_accepted", record: phaseRecord},
+		{kind: "human_gate_evidence", record: humanRecord},
+		{kind: "completion_evidence", record: completionRecord},
+	} {
+		t.Run("trace_"+expected.kind, func(t *testing.T) {
+			requireTraceEvent(t, events, expected.kind, func(event executiontrace.Event) bool {
+				return event.Fields["record"] == opaqueTraceRecord(expected.record)
+			})
+		})
+	}
+	encoded, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []struct {
+		name  string
+		value string
+	}{
+		{name: "parameter", value: parameterValue},
+		{name: "phase_environment", value: phaseEnvValue},
+		{name: "human_environment", value: humanEnvValue},
+		{name: "completion_environment", value: completeEnvValue},
+	} {
+		t.Run("excludes_"+secret.name, func(t *testing.T) {
+			if strings.Contains(string(encoded), secret.value) {
+				t.Fatal("trace persisted a resolved record value")
+			}
+		})
+	}
+
+	restarted := newDurableEngine(t, w, &durableProvider{})
+	if err := restarted.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restartedEvents := readExecutionTrace(t, restarted)
+	requireTraceEvent(t, restartedEvents, "completion_evidence", func(event executiontrace.Event) bool {
+		return event.Fields["decision"] == "reused" && event.Fields["record"] == opaqueTraceRecord(restarted.workflowCompleteMarker())
+	})
+}
+
+func readExecutionTrace(t *testing.T, e *Engine) []executiontrace.Event {
+	t.Helper()
+	snapshot, err := e.statusSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(snapshot.TracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	var events []executiontrace.Event
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var event executiontrace.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func requireTraceEvent(t *testing.T, events []executiontrace.Event, kind string, matches func(executiontrace.Event) bool) executiontrace.Event {
+	t.Helper()
+	for _, event := range events {
+		if event.Event == kind && matches(event) {
+			return event
+		}
+	}
+	t.Fatalf("trace has no matching %q event: %+v", kind, events)
+	return executiontrace.Event{}
 }
 
 func assertParallelValidationTrace(t *testing.T, path string, identities map[string]string) {

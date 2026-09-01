@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/tdeshazo/agentflow/internal/executiontrace"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 )
@@ -132,6 +133,18 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 	if err := e.runInterruptionHook(interruptionAfterAuthority, pending); err != nil {
 		return moved, err
 	}
+	decision := "observed"
+	if imported {
+		decision = "imported"
+	}
+	result := "success"
+	if violation != nil {
+		decision = "rejected"
+		result = "failure"
+	}
+	if err := e.appendReconciliationTrace(pending, head, decision, result); err != nil {
+		return moved, fmt.Errorf("record actor invocation reconciliation for %q: %w", pending.Actor, err)
+	}
 	if violation == nil && quarantine != nil {
 		if err := quarantine.Remove(); err != nil {
 			return moved, fmt.Errorf("remove compliant actor quarantine: %w", err)
@@ -144,6 +157,25 @@ func (e *Engine) reconcilePendingInvocation() (bool, error) {
 		return moved, violation
 	}
 	return moved, nil
+}
+
+func (e *Engine) appendReconciliationTrace(pending PendingActorInvocation, commit, decision, result string) error {
+	if e.traceStore == nil {
+		return nil
+	}
+	nodeID := e.nodeID
+	if nodeID == "" && e.phase != nil {
+		nodeID = e.phase.ID
+	}
+	return e.traceStore.Append(executiontrace.Event{
+		Event:           "actor_invocation_reconciled",
+		NodeID:          nodeID,
+		NodeExecutionID: e.nodeExecutionID,
+		Attempt:         e.nodeAttempt,
+		Fields: traceFields(map[string]string{
+			"actor": pending.Actor, "commit": commit, "decision": decision, "result": result, "role": pending.Role,
+		}),
+	})
 }
 
 func (e *Engine) runInterruptionHook(point interruptionPoint, pending PendingActorInvocation) error {

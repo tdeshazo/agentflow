@@ -125,7 +125,13 @@ func (e *Engine) advanceWorkItem(phase *workflow.Phase, active *ActivePhase) err
 	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 		return err
 	}
-	return e.assertWorkItemAccepted(phase)
+	if err := e.assertWorkItemAccepted(phase); err != nil {
+		return err
+	}
+	e.traceEventForActive("node_state_transition", *active, map[string]string{
+		"phase": phase.ID, "reconciled": "true", "state": "work_item_completed", "transition": "work_item_published", "work_item": phase.WorkItemID,
+	})
+	return nil
 }
 
 // completeWorkItem publishes the authoritative completion record only after
@@ -164,7 +170,13 @@ func (e *Engine) completeWorkItem(phase *workflow.Phase, active *ActivePhase) er
 	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 		return err
 	}
-	return e.assertWorkItemAccepted(phase)
+	if err := e.assertWorkItemAccepted(phase); err != nil {
+		return err
+	}
+	e.traceEventForActive("node_state_transition", *active, map[string]string{
+		"phase": phase.ID, "state": "work_item_completed", "transition": "work_item_published", "work_item": phase.WorkItemID,
+	})
+	return nil
 }
 
 func (e *Engine) workItemAdapterDigest() (string, error) {

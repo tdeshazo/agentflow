@@ -489,6 +489,57 @@ On resume, AgentFlow validates the existing schema, run binding, and sequence
 continuity before appending. The trace is diagnostic evidence and never grants
 phase acceptance, dependency release, recovery authority, or completion.
 
+Schema v1 uses the following orchestration vocabulary:
+
+- Run events: `run_started` and `run_finished`.
+- Attempt events: `node_attempt_started`, `node_attempt_resumed`,
+  `node_attempt_blocked`, `node_attempt_finished`, and `node_skipped`.
+- Durable node transitions: `node_state_transition` records actor completion,
+  engine-owned progress or bookkeeping application, and work-item publication.
+- Provider events: `provider_start` and `provider_end` bracket the full runtime
+  boundary. `provider_request` records the adapter, actor/role, context version,
+  enforced sandbox/network/approval shape, capability/credential/filesystem-rule
+  counts, capture/presentation flags, and applicable hard budgets.
+  `provider_response` records duration, input/output token and cost metering,
+  final-message presence, and a success/error/cancellation/deadline outcome.
+  Static model names are represented only by a domain-separated opaque digest;
+  parameter- or environment-expanded model values are labeled `dynamic` and
+  are neither stored nor hashed. Reasoning configuration and model reasoning
+  are not trace metadata. `actor_invocation_reconciled` records whether
+  quarantined authority was imported, observed without import, or rejected.
+- Validation events: `validation_start`, `validation_end`,
+  `validation_reused`, `validation_failed`, and `validation_repaired`.
+- Repair events: `repair_attempt_start`, `repair_attempt_end`, and
+  `repair_budget_exhausted`. Attempts and configured maxima are numeric strings
+  in `fields`; failure output is never included.
+- Tool and checkpoint events: `tool_start`, `tool_end`, `tool_skipped`,
+  `checkpoint_start`, and `checkpoint_end`. Tool metadata contains the authored
+  tool name/type, declared workspace-mutation and capture flags, duration,
+  outcome, and a shell exit code when available. Commands, expanded `with`
+  values, paths, regexes, and output are excluded. A successful checkpoint end
+  carries the resulting Git commit and whether that checkpoint created a commit.
+- Human events: `human_gate_start`, `human_gate_end`, and
+  `human_gate_evidence`. Evidence identifies the confirmed, skipped, or reused
+  decision, Git-backed record, and commit.
+- Acceptance events: `phase_accepted`, `completion_start`, `completion_end`,
+  and `completion_evidence`. Evidence events identify the exact Git-backed
+  record and commit, including reconciled or reused evidence after interruption.
+
+Every node-scoped event for one attempt carries the same `node_execution_id`
+and `attempt`, including parallel siblings and recovery. A blocked attempt is
+not a completed attempt: rerunning resumes the same identity until acceptance,
+an explicit skip, or reset ends it. Evidence-bearing events are appended only
+after their corresponding Git record has been written; recovery emits a
+`reconciled` or `reused` event when it finds durable evidence whose original
+post-write trace append may have been interrupted.
+
+Provider and tool metadata is runtime-observed and bounded to an explicit field
+allowlist. The trace never requests or accepts chain-of-thought, hidden model
+reasoning, prompts, objectives, provider final-message content, provider or
+command output, credential names or values, resolved parameters, or environment
+values. Metering comes from the provider's structured `Usage` result and remains
+diagnostic; deterministic validation and Git evidence continue to own acceptance.
+
 Human-readable status, validation results, usage text, errors, and detached-run
 confirmations use restrained ANSI styling only when their actual output writer
 is a terminal. Set `NO_COLOR` to keep the same human-readable text without

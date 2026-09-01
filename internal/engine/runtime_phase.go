@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,10 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return fmt.Errorf("record skipped phase %s: %w", id, err)
 			}
+			e.traceEvent("node_skipped", map[string]string{
+				"commit": head, "phase": p.ID, "reason": "typed evidence condition is false", "record": opaqueTraceRecord(e.phaseMarkerName(p)),
+			})
+			e.traceEvent("node_attempt_finished", map[string]string{"phase": p.ID, "result": "skipped"})
 			return nil
 		}
 	}
@@ -115,6 +120,10 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return fmt.Errorf("record skipped phase %s: %w", id, err)
 			}
+			e.traceEvent("node_skipped", map[string]string{
+				"commit": head, "phase": p.ID, "reason": "condition is false", "record": opaqueTraceRecord(e.phaseMarkerName(p)),
+			})
+			e.traceEvent("node_attempt_finished", map[string]string{"phase": p.ID, "result": "skipped"})
 			return nil
 		}
 	}
@@ -126,6 +135,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			return fmt.Errorf("completed phase %s is no longer safe to skip: %w", id, err)
 		}
 		e.presenter().CompletedPhaseSkip(id, p.Label, sha)
+		e.traceEvent("phase_accepted", map[string]string{
+			"commit": sha, "decision": "reused", "phase": p.ID, "record": opaqueTraceRecord(e.phaseMarkerName(p)),
+		})
 		if err := e.assertWorkItemAccepted(p); err != nil {
 			return err
 		}
@@ -191,6 +203,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return err
 			}
+			e.traceEvent("phase_accepted", map[string]string{
+				"commit": head, "decision": "existing_state", "phase": p.ID, "record": opaqueTraceRecord(e.phaseMarkerName(p)),
+			})
 			e.presenter().CriterionAlreadyChecked(id)
 			return nil
 		}
@@ -216,6 +231,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 		return err
 	}
 	e.recoveryEligible = true
+	e.traceEventForActive("node_attempt_started", active, map[string]string{
+		"phase": p.ID, "start_commit": active.StartCommit,
+	})
 
 	e.presenter().PhaseStart(id, p.Label)
 	e.logEvent("phase_start", map[string]string{"phase": id})
@@ -225,12 +243,25 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			result = "failure"
 		}
 		e.logEvent("phase_end", map[string]string{"phase": id, "result": result})
+		if runErr != nil {
+			fields := map[string]string{"phase": id, "result": "failure", "stage": e.runStage}
+			var persisted ActivePhase
+			if ok, _ := e.Store.GetJSON(e.activeRecord(), &persisted); ok && persisted.PhaseID == id {
+				fields["failure_kind"] = string(persisted.FailureKind)
+				e.traceEventForActive("node_attempt_blocked", persisted, fields)
+			} else {
+				e.traceEvent("node_attempt_blocked", fields)
+			}
+		}
 	}()
 	if p.Kind == "bookkeeping" && len(p.Bookkeeping) > 0 {
 		active.ActorCompleted = true // engine-only deterministic phase; no actor owns this transition.
 		if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
 			return fmt.Errorf("persist engine-owned bookkeeping phase %s: %w", p.ID, err)
 		}
+		e.traceEventForActive("node_state_transition", active, map[string]string{
+			"phase": p.ID, "state": "actor_completed", "transition": "engine_owned",
+		})
 	} else if err := e.runPhaseActor(ctx, p, p.Prompt, &active); err != nil {
 		return err
 	} else {
@@ -299,7 +330,7 @@ func phaseHasValidation(actions []workflow.PhaseAction) bool {
 	}
 	return false
 }
-func (e *Engine) recoverActive(ctx context.Context) error {
+func (e *Engine) recoverActive(ctx context.Context) (runErr error) {
 	if _, err := e.reconcilePendingInvocation(); err != nil {
 		return err
 	}
@@ -324,6 +355,22 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 		return fmt.Errorf("active phase %s has an invalid node execution identity", a.PhaseID)
 	}
 	e.nodeID, e.nodeExecutionID, e.nodeAttempt = a.PhaseID, a.NodeExecutionID, a.Attempt
+	e.traceEventForActive("node_attempt_resumed", a, map[string]string{
+		"phase": a.PhaseID, "start_commit": a.StartCommit,
+	})
+	defer func() {
+		if runErr == nil {
+			return
+		}
+		fields := map[string]string{"phase": a.PhaseID, "result": "failure", "stage": e.runStage}
+		var persisted ActivePhase
+		if ok, _ := e.Store.GetJSON(e.activeRecord(), &persisted); ok && persisted.PhaseID == a.PhaseID {
+			fields["failure_kind"] = string(persisted.FailureKind)
+			e.traceEventForActive("node_attempt_blocked", persisted, fields)
+			return
+		}
+		e.traceEventForActive("node_attempt_blocked", a, fields)
+	}()
 	p, err := e.phaseByID(a.PhaseID)
 	if err != nil {
 		return err
@@ -338,13 +385,20 @@ func (e *Engine) recoverActive(ctx context.Context) error {
 		return fmt.Errorf("HEAD no longer descends from interrupted phase start %s", a.StartCommit)
 	}
 	e.presenter().PhaseResume(p.ID, p.Label)
-	if marked, _, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
+	if marked, acceptedCommit, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if marked {
 		// A process may be interrupted between writing the commit-valued phase
 		// marker and clearing active state. The marker is the acceptance record;
 		// clear only the stale in-progress record and never rerun the actor.
-		return e.Store.Delete(e.activeRecord())
+		if err := e.Store.Delete(e.activeRecord()); err != nil {
+			return err
+		}
+		e.traceEventForActive("phase_accepted", a, map[string]string{
+			"commit": acceptedCommit, "phase": p.ID, "reconciled": "true", "record": opaqueTraceRecord(e.phaseMarkerName(p)),
+		})
+		e.traceEventForActive("node_attempt_finished", a, map[string]string{"phase": p.ID, "result": "success"})
+		return nil
 	}
 	if a.ActorCompleted {
 		// The provider has durably returned. Resume only deterministic phase
@@ -428,6 +482,9 @@ func (e *Engine) runPhaseActorWithRole(ctx context.Context, p *workflow.Phase, o
 	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
 		return fmt.Errorf("persist successful actor completion for phase %s: %w", p.ID, err)
 	}
+	e.traceEventForActive("node_state_transition", *active, map[string]string{
+		"phase": p.ID, "state": "actor_completed", "transition": "actor_returned",
+	})
 	return nil
 }
 func (e *Engine) runAgent(ctx context.Context, actorName, reasoning, prompt string, p *workflow.Phase) error {
@@ -544,7 +601,7 @@ func (e *Engine) traceSkippedNode(phase *workflow.Phase, reason string) error {
 		return err
 	}
 	e.nodeID, e.nodeExecutionID, e.nodeAttempt = phase.ID, identity, attempt
-	e.traceEvent("node_skipped", map[string]string{"phase": phase.ID, "reason": reason})
+	e.traceEvent("node_attempt_started", map[string]string{"phase": phase.ID, "reason": reason})
 	return nil
 }
 
@@ -713,7 +770,10 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 		}
 	}
 
+	e.traceEvent("provider_request", providerRequestTraceFields(prov.Name(), actorName, agent, request, invocation))
+	providerStarted := time.Now()
 	providerResult, providerErr := prov.Run(ctx, request)
+	e.traceEvent("provider_response", providerResponseTraceFields(prov.Name(), actorName, providerResult, providerErr, time.Since(providerStarted)))
 	if usageErr := e.recordModelUsage(actorName, policy, providerResult.Usage); usageErr != nil {
 		providerErr = errors.Join(providerErr, usageErr)
 	}
@@ -925,6 +985,7 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 				return err
 			}
 			e.presenter().ValidationReuse(name)
+			e.traceEvent("validation_reused", map[string]string{"evidence": "cache", "validation": name})
 			if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 				return clearErr
 			}
@@ -966,6 +1027,13 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		return persistErr
 	}
 	var safetyErr *safetyViolation
+	failureKind := string(PhaseFailureValidation)
+	if errors.As(failure, &safetyErr) {
+		failureKind = string(PhaseFailureSafety)
+	}
+	e.traceEvent("validation_failed", map[string]string{
+		"failure_kind": failureKind, "validation": name,
+	})
 	if errors.As(failure, &safetyErr) {
 		return failure
 	}
@@ -977,11 +1045,29 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 		return budgetErr
 	}
 	if !available {
+		e.traceEvent("repair_budget_exhausted", map[string]string{
+			"max_attempts": strconv.Itoa(v.OnFailure.MaxRepairAttempts), "validation": name,
+		})
 		return &repairBudgetExhaustedError{validation: name, failure: failure}
 	}
+	repairAttempt := e.repairAttemptNumber(name, p)
 	e.lastFailure = boundedFailureOutput(failure)
 	e.presenter().RepairAttempt(name)
-	if err := e.runRepairAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, name, p); err != nil {
+	repairFields := map[string]string{
+		"actor": v.OnFailure.Repair.Actor, "max_attempts": strconv.Itoa(v.OnFailure.MaxRepairAttempts),
+		"repair_attempt": strconv.Itoa(repairAttempt), "validation": name,
+	}
+	e.traceEvent("repair_attempt_start", repairFields)
+	repairErr := e.runRepairAgent(ctx, v.OnFailure.Repair.Actor, v.OnFailure.Repair.Reasoning, v.OnFailure.Repair.Prompt, name, p)
+	repairEndFields := map[string]string{
+		"actor": v.OnFailure.Repair.Actor, "repair_attempt": strconv.Itoa(repairAttempt),
+		"result": "success", "validation": name,
+	}
+	if repairErr != nil {
+		repairEndFields["result"] = "failure"
+	}
+	e.traceEvent("repair_attempt_end", repairEndFields)
+	if err := repairErr; err != nil {
 		var safetyErr *safetyViolation
 		if errors.As(err, &safetyErr) {
 			if persistErr := e.persistValidationFailure(p, name, err); persistErr != nil {
@@ -1033,6 +1119,9 @@ func (e *Engine) runValidation(ctx context.Context, name string, p *workflow.Pha
 	if clearErr := e.clearValidationFailure(p, name); clearErr != nil {
 		return clearErr
 	}
+	e.traceEvent("validation_repaired", map[string]string{
+		"repair_attempt": strconv.Itoa(repairAttempt), "validation": name,
+	})
 	return e.persistContractValidationEvidence(name, p)
 }
 
@@ -1318,6 +1407,18 @@ func (e *Engine) consumeRepairAttempt(validation string, p *workflow.Phase, max 
 	return e.consumeStandaloneRepairAttempt(validation, max)
 }
 
+func (e *Engine) repairAttemptNumber(validation string, p *workflow.Phase) int {
+	if p != nil {
+		var active ActivePhase
+		if ok, _ := e.Store.GetJSON(e.activeRecord(), &active); ok && active.PhaseID == p.ID {
+			return active.RepairAttempts[validation]
+		}
+	}
+	var state standaloneRepairState
+	_, _ = e.Store.GetJSON(e.standaloneRepairRecord(validation), &state)
+	return state.Attempts
+}
+
 func (e *Engine) standaloneRepairRecord(validation string) string {
 	return e.standaloneRepairRecordForScope(e.standaloneValidationScope(validation))
 }
@@ -1366,6 +1467,9 @@ func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *w
 				return fmt.Errorf("tool %s condition: %w", use.Uses, err)
 			}
 			if !ok {
+				fields := toolTraceFields(use.Uses, e.Workflow.Spec.Tools[use.Uses])
+				fields["reason"] = "condition_false"
+				e.logEvent("tool_skipped", fields)
 				continue
 			}
 		}
@@ -1389,15 +1493,17 @@ func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workfl
 	if err := e.consumeToolCall(name); err != nil {
 		return err
 	}
-	e.logEvent("tool_start", map[string]string{"tool": name})
+	t, ok := e.Workflow.Spec.Tools[name]
+	fields := toolTraceFields(name, t)
+	started := time.Now()
+	e.logEvent("tool_start", fields)
 	defer func() {
 		result := "success"
 		if runErr != nil {
 			result = "failure"
 		}
-		e.logEvent("tool_end", map[string]string{"tool": name, "result": result})
+		e.logEvent("tool_end", finishToolTraceFields(fields, result, time.Since(started), runErr))
 	}()
-	t, ok := e.Workflow.Spec.Tools[name]
 	if !ok {
 		return fmt.Errorf("unknown tool %q", name)
 	}

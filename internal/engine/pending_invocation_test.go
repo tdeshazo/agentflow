@@ -138,6 +138,65 @@ func TestReconcilePendingInvocationWithoutHeadMovementDoesNotAttributeCommit(t *
 	}
 }
 
+func TestReconcilePendingInvocationRetainsAuthorityWhenTraceAppendFails(t *testing.T) {
+	repo := newDurableRepo(t)
+	w := durableWorkflow(repo, "pending-trace-failure")
+	e := newDurableEngine(t, w, &durableProvider{})
+	if err := e.initializeOrResumeState(); err != nil {
+		t.Fatal(err)
+	}
+	quarantine, err := e.Repo.CreateActorWorktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = quarantine.Remove() })
+	if err := e.startExecutionTrace(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.traceStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingActorInvocation{
+		Version:             pendingActorInvocationVersion,
+		Actor:               "worker",
+		StartCommit:         quarantine.StartCommit,
+		Role:                "phase",
+		QuarantinePath:      quarantine.Repo.Root,
+		BaselineTree:        quarantine.BaselineTree,
+		BaselinePermissions: quarantine.BaselinePermissions,
+		Submodules:          quarantine.Submodules,
+	}
+	if err := e.Store.SetJSON(e.pendingInvocationRecord(), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	moved, err := e.reconcilePendingInvocation()
+	if err == nil || moved || !strings.Contains(err.Error(), "execution trace is closed") {
+		t.Fatalf("reconcile with closed trace: moved=%t err=%v", moved, err)
+	}
+	var persisted PendingActorInvocation
+	if ok, err := e.Store.GetJSON(e.pendingInvocationRecord(), &persisted); err != nil || !ok || persisted.Actor != pending.Actor {
+		t.Fatalf("pending invocation after trace failure: %+v ok=%t err=%v", persisted, ok, err)
+	}
+	if _, err := os.Stat(quarantine.Repo.Root); err != nil {
+		t.Fatalf("recoverable quarantine after trace failure: %v", err)
+	}
+
+	e.traceStore = nil
+	if err := e.startExecutionTrace(); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := e.reconcilePendingInvocation(); err != nil || moved {
+		t.Fatalf("retry reconciliation: moved=%t err=%v", moved, err)
+	}
+	if _, ok, err := e.Store.Resolve(e.pendingInvocationRecord()); err != nil || ok {
+		t.Fatalf("pending invocation after retry: present=%t err=%v", ok, err)
+	}
+	if _, err := os.Stat(quarantine.Repo.Root); !os.IsNotExist(err) {
+		t.Fatalf("quarantine after successful retry: %v", err)
+	}
+}
+
 func TestReconcilePendingInvocationV1UsesLegacyPrimaryWorkspaceSemantics(t *testing.T) {
 	repo := newDurableRepo(t)
 	w := durableWorkflow(repo, "pending-v1-primary-workspace")

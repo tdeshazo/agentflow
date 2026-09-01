@@ -339,6 +339,9 @@ func (e *Engine) runPhaseActions(ctx context.Context, phase *workflow.Phase, act
 			if err := e.Store.Delete(e.activeRecord()); err != nil {
 				return err
 			}
+			e.traceEventForActive("node_attempt_finished", *active, map[string]string{
+				"phase": phase.ID, "result": "success",
+			})
 		}
 		if action.Return != "" {
 			return nil
@@ -480,7 +483,14 @@ func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
 			return err
 		}
 	}
-	return e.Store.SetCommit(e.phaseMarkerName(phase), head)
+	marker := e.phaseMarkerName(phase)
+	if err := e.Store.SetCommit(marker, head); err != nil {
+		return err
+	}
+	e.traceEvent("phase_accepted", map[string]string{
+		"commit": head, "phase": phase.ID, "record": opaqueTraceRecord(marker),
+	})
+	return nil
 }
 
 func (e *Engine) requirePhaseCompletion(phase *workflow.Phase) error {

@@ -14,13 +14,25 @@ import (
 
 func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 	e.logEvent("checkpoint_start", map[string]string{"label": label})
+	before := ""
+	checkpointCommit := ""
 	defer func() {
 		result := "success"
 		if runErr != nil {
 			result = "failure"
 		}
-		e.logEvent("checkpoint_end", map[string]string{"label": label, "result": result})
+		fields := map[string]string{"label": label, "result": result}
+		if checkpointCommit != "" {
+			fields["commit"] = checkpointCommit
+			fields["created_commit"] = fmt.Sprint(checkpointCommit != before)
+		}
+		e.logEvent("checkpoint_end", fields)
 	}()
+	var err error
+	before, err = e.Repo.Head()
+	if err != nil {
+		return err
+	}
 	if err := e.assertMutationBoundary(false, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
 		return err
 	}
@@ -63,7 +75,11 @@ func (e *Engine) checkpoint(label string, p *workflow.Phase) (runErr error) {
 	if len(dirty) > 0 {
 		return fmt.Errorf("workspace remains dirty after checkpoint: %s", strings.Join(dirty, ", "))
 	}
-	return e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p))
+	if err := e.assertMutationBoundary(true, e.runtimeOwnsPhaseLifecycle(p)); err != nil {
+		return err
+	}
+	checkpointCommit, err = e.Repo.Head()
+	return err
 }
 
 func checkpointCommitLabel(label string, p *workflow.Phase) string {
@@ -427,7 +443,13 @@ func (e *Engine) advanceProgress(p *workflow.Phase, active *ActivePhase) error {
 		if resultErr := e.assertEngineProgressResult(p, *active); resultErr == nil {
 			active.ProgressAdvanced = true
 			active.ProgressAdvancePending = false
-			return e.Store.SetJSON(e.activeRecord(), *active)
+			if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+				return err
+			}
+			e.traceEventForActive("node_state_transition", *active, map[string]string{
+				"phase": p.ID, "reconciled": "true", "state": "progress_advanced", "transition": "criterion_checked",
+			})
+			return nil
 		}
 		return err
 	}
@@ -447,7 +469,13 @@ func (e *Engine) advanceProgress(p *workflow.Phase, active *ActivePhase) error {
 	}
 	active.ProgressAdvancePending = false
 	active.ProgressAdvanced = true
-	return e.Store.SetJSON(e.activeRecord(), *active)
+	if err := e.Store.SetJSON(e.activeRecord(), *active); err != nil {
+		return err
+	}
+	e.traceEventForActive("node_state_transition", *active, map[string]string{
+		"phase": p.ID, "state": "progress_advanced", "transition": "criterion_checked",
+	})
+	return nil
 }
 
 func (e *Engine) progressContext() (workflow.ProgressContext, error) {

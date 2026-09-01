@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -140,11 +141,14 @@ func scanCompletedLines(data []byte, atEOF bool) (advance int, token []byte, err
 // Append writes one event and synchronizes it before returning so a completed
 // transition is not acknowledged only in process memory.
 func (s *Store) Append(event Event) error {
-	if s == nil || s.file == nil {
+	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.file == nil {
+		return errors.New("execution trace is closed")
+	}
 	s.sequence++
 	event.SchemaVersion = SchemaVersion
 	event.Sequence = s.sequence

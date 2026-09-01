@@ -132,6 +132,9 @@ func (e *Engine) runParallelBatch(ctx context.Context, nodes []workflow.PhaseDep
 		if err := nodeEngine.Store.SetJSON(nodeEngine.activeRecord(), active); err != nil {
 			return err
 		}
+		e.traceEventForActive("node_attempt_started", active, map[string]string{
+			"phase": phase.ID, "start_commit": active.StartCommit,
+		})
 	}
 	if err := e.Store.SetJSON(parallelBatchRecord, batch); err != nil {
 		return fmt.Errorf("persist parallel scheduler batch: %w", err)
@@ -251,8 +254,16 @@ func (e *Engine) acceptParallelBatch(ctx context.Context, batch parallelBatch, c
 		if err := e.Store.SetJSON(e.activeRecord(), active); err != nil {
 			return err
 		}
+		if active.ActorCompleted {
+			e.traceEventForActive("node_state_transition", active, map[string]string{
+				"phase": phaseID, "state": "actor_completed", "transition": "actor_returned",
+			})
+		}
 		e.recoveryEligible = true
 		if callErr := preferredParallelCallError(phaseID, batch.Phases, callErrors); callErr != nil {
+			e.traceEventForActive("node_attempt_blocked", active, map[string]string{
+				"phase": phaseID, "result": "failure", "stage": "provider",
+			})
 			return callErr
 		}
 		if !active.ActorCompleted {
