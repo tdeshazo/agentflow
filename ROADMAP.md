@@ -518,8 +518,10 @@ not automatically earn one-for-one successor syntax.
 ### Deprecation gates
 
 Migration readiness satisfied these gates on 2026-08-31. v1alpha1 remains in
-grammar-frozen compatibility and maintenance mode; a user-facing deprecation
-warning or removal is a separate release decision.
+grammar-frozen compatibility and maintenance mode. `agentflow validate` emits
+a non-fatal authoring deprecation warning that directs new workflows to
+v1alpha4 and existing workflows to `agentflow migrate --check`; removal, if
+ever chosen, remains a separate release decision.
 
 Formal v1alpha1 deprecation requires all of the following:
 

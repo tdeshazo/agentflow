@@ -70,6 +70,9 @@ func (s sets) Values() []string {
 
 const detachedChildEnv = "AGENTFLOW_DETACHED_CHILD"
 
+const v1alpha1DeprecationWarning = "warning: agentflow.dev/v1alpha1 is deprecated for new authoring; " +
+	"use agentflow.dev/v1alpha4 for new workflows and run 'agentflow migrate --check' to assess an existing workflow"
+
 var statusOutputIsTTY = clioutput.IsTTY
 
 var currentWorkingDirectory = os.Getwd
@@ -605,6 +608,13 @@ func runWorkflows(repoRoot string, out io.Writer) error {
 }
 
 func writeValidationResult(presenter clioutput.Presenter, result workflow.Result) error {
+	isDeprecatedV1Alpha1 := result.Status != workflow.Invalid &&
+		result.Document != nil &&
+		result.Document.Workflow != nil &&
+		result.Document.Workflow.APIVersion == "agentflow.dev/v1alpha1"
+	if isDeprecatedV1Alpha1 {
+		presenter.Line(clioutput.RoleWarning, "%s", v1alpha1DeprecationWarning)
+	}
 	for _, diagnostic := range result.Diagnostics {
 		role := clioutput.RoleWarning
 		if result.Status == workflow.Invalid {

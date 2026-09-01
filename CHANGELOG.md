@@ -14,6 +14,10 @@
 
 ### Added
 
+- Added a non-fatal `agentflow validate` warning when a workflow uses the
+  grammar-frozen `agentflow.dev/v1alpha1` API. Existing v1alpha1 workflows
+  remain valid and executable; the warning directs new authoring to v1alpha4
+  and existing workflows to `agentflow migrate --check`.
 - Added Stage 6 bounded dependency scheduling for successor workflows.
   `execution.maxParallel` opts into concurrent isolated actor work, while
   enforced phase `writes` scopes, conservative conflict analysis, authored-order

@@ -52,6 +52,41 @@ func TestValidateCLIRejectsNonExecutableRecoveryBeforeRepositoryAccess(t *testin
 	}
 }
 
+func TestValidateCLIDeprecatesV1Alpha1WithoutRejectingIt(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	var output bytes.Buffer
+	if err := runArgsWithIO(
+		[]string{"validate", "-f", workflowFile},
+		strings.NewReader(""),
+		&output,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		v1alpha1DeprecationWarning,
+		"valid and executable",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("validate output missing %q: %q", want, output.String())
+		}
+	}
+}
+
+func TestValidateCLIDoesNotDeprecateSuccessorVersions(t *testing.T) {
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "v1alpha4-typed-work-items.yaml")
+	var output bytes.Buffer
+	if err := runArgsWithIO(
+		[]string{"validate", "-f", workflowFile},
+		strings.NewReader(""),
+		&output,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "deprecated") {
+		t.Fatalf("successor validation output contains deprecation warning: %q", output.String())
+	}
+}
+
 func TestPlanExpandedCLI(t *testing.T) {
 	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
 	var output bytes.Buffer
