@@ -415,8 +415,10 @@ reasoning, credentials, or output. Status exposes the schema, path, and current
 identities. Existing digest-only run and active-phase records migrate without
 replaying work. See the [Stage 3 identity and trace evidence](docs/evidence/stage-3-run-identity-trace.md).
 
-Supervised attach/detach sessions, status detail, and `explain` remain open
-Stage 3 work.
+Definition-aware `status --detail` now provides a bounded recent-event view in
+both human-readable and stable JSON forms without treating the diagnostic trace
+as authority. Supervised attach/detach sessions and `explain` remain open Stage
+3 work.
 
 This stage builds on the exclusive ownership boundary from stage 2. Stable run identity and lossless session supervision are required before migration broadens the preferred workflow surface or parallel execution increases runtime complexity.
 
@@ -426,7 +428,7 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
 - [x] Assign stable run and node-execution identities.
 - [x] Record state transitions, attempts, validations, repairs, checkpoints, human gates, and completion evidence.
 - [x] Capture provider/tool metadata without requiring private model reasoning.
-- Add `agentflow status` detail suitable for both humans and automation.
+- [x] Add `agentflow status` detail suitable for both humans and automation.
 - Add `agentflow explain` for “why is this node blocked/skipped/failed?”
 - Add supervised run-session control with mutually exclusive active ownership:
   `agentflow attach` reconnects a terminal to a detached run, while an explicit

@@ -34,6 +34,13 @@ type Event struct {
 	Fields          map[string]string `json:"fields,omitempty"`
 }
 
+// Recent is a bounded, chronological view of the completed events in a trace.
+// EventCount counts all validated events, including events omitted from Events.
+type Recent struct {
+	EventCount uint64
+	Events     []Event
+}
+
 // Store appends events for one run. A Store may be shared by parallel node
 // engines; writes and sequence allocation are serialized.
 type Store struct {
@@ -100,15 +107,9 @@ func validateExisting(path, runID string) (uint64, error) {
 	scanner.Buffer(buffer, 1024*1024)
 	scanner.Split(scanCompletedLines)
 	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return 0, fmt.Errorf("decode execution trace event: %w", err)
-		}
-		if event.SchemaVersion != SchemaVersion {
-			return 0, fmt.Errorf("unsupported execution trace schema version %d", event.SchemaVersion)
-		}
-		if event.RunID != runID || event.Sequence != sequence+1 || event.Event == "" || event.Time == "" {
-			return 0, fmt.Errorf("execution trace contains an incompatible event at sequence %d", event.Sequence)
+		event, err := decodeEvent(scanner.Bytes(), runID, sequence+1)
+		if err != nil {
+			return 0, err
 		}
 		sequence = event.Sequence
 		validBytes += int64(len(scanner.Bytes()))
@@ -126,6 +127,64 @@ func validateExisting(path, runID string) (uint64, error) {
 		}
 	}
 	return sequence, nil
+}
+
+// ReadRecent validates a trace and returns at most limit completed events. A
+// torn final event is ignored, matching Open's crash-recovery behavior. It
+// never creates, truncates, or otherwise mutates the trace.
+func ReadRecent(repo gitstate.Repo, runID string, limit int) (Recent, error) {
+	if limit < 0 {
+		return Recent{}, fmt.Errorf("execution trace event limit must not be negative")
+	}
+	path, err := Path(repo, runID)
+	if err != nil {
+		return Recent{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return Recent{}, err
+	}
+	defer file.Close()
+
+	recent := Recent{Events: make([]Event, 0, limit)}
+	scanner := bufio.NewScanner(file)
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
+	scanner.Split(scanCompletedLines)
+	for scanner.Scan() {
+		event, err := decodeEvent(scanner.Bytes(), runID, recent.EventCount+1)
+		if err != nil {
+			return Recent{}, err
+		}
+		recent.EventCount++
+		if limit == 0 {
+			continue
+		}
+		if len(recent.Events) == limit {
+			copy(recent.Events, recent.Events[1:])
+			recent.Events[len(recent.Events)-1] = event
+			continue
+		}
+		recent.Events = append(recent.Events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return Recent{}, fmt.Errorf("read execution trace: %w", err)
+	}
+	return recent, nil
+}
+
+func decodeEvent(data []byte, runID string, sequence uint64) (Event, error) {
+	var event Event
+	if err := json.Unmarshal(data, &event); err != nil {
+		return Event{}, fmt.Errorf("decode execution trace event: %w", err)
+	}
+	if event.SchemaVersion != SchemaVersion {
+		return Event{}, fmt.Errorf("unsupported execution trace schema version %d", event.SchemaVersion)
+	}
+	if event.RunID != runID || event.Sequence != sequence || event.Event == "" || event.Time == "" {
+		return Event{}, fmt.Errorf("execution trace contains an incompatible event at sequence %d", event.Sequence)
+	}
+	return event, nil
 }
 
 func scanCompletedLines(data []byte, atEOF bool) (advance int, token []byte, err error) {

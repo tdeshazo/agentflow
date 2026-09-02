@@ -123,6 +123,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 	jsonDefault := cmd == "status" && configuredBool(config.Status.JSON, false)
 	allDefault := cmd == "status" && configuredBool(config.Status.All, false)
+	detailDefault := cmd == "status" && configuredBool(config.Status.Detail, false)
 	tailDefault := -1
 	followDefault := false
 	if cmd == "logs" {
@@ -139,6 +140,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	detach := fs.Bool("detach", detachDefault, "start the workflow in a detached child process (run only)")
 	jsonOutput := fs.Bool("json", jsonDefault, "emit machine-readable JSON (status only)")
 	all := fs.Bool("all", allDefault, "inspect every discovered workflow (status only)")
+	detail := fs.Bool("detail", detailDefault, "include bounded recent trace events (status only)")
 	workflowName := fs.String("workflow", "", "workflow name (logs only)")
 	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
 	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
@@ -153,6 +155,14 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 	explicit := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if cmd == "status" {
+		switch {
+		case explicit["detail"] && *detail && !(explicit["all"] && *all):
+			*all = false
+		case explicit["all"] && *all && !(explicit["detail"] && *detail):
+			*detail = false
+		}
+	}
 	configuredWorkflow := configWorkflow(config, cmd)
 	if len(positional) > 0 || *file != "" {
 		if cmd == "status" && !explicit["all"] {
@@ -205,6 +215,9 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if *all && cmd != "status" {
 		return fmt.Errorf("--all is only supported with status")
 	}
+	if *detail && cmd != "status" {
+		return fmt.Errorf("--detail is only supported with status")
+	}
 	if *workflowName != "" && cmd != "logs" {
 		return fmt.Errorf("--workflow is only supported with logs")
 	}
@@ -235,8 +248,11 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if cmd == "status" && *all && *file != "" {
 		return fmt.Errorf("status selectors --all and -f are mutually exclusive")
 	}
+	if cmd == "status" && *all && *detail {
+		return fmt.Errorf("status selectors --all and --detail are mutually exclusive")
+	}
 	if cmd == "switch" {
-		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "check", "set"} {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "detail", "workflow", "tail", "follow", "expanded", "check", "set"} {
 			if explicit[name] {
 				return fmt.Errorf("--%s is not supported with switch", name)
 			}
@@ -247,7 +263,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		return runWorkflowSwitchWithIO(*repo, positional, *clearSelection, in, out)
 	}
 	if cmd == "current" || cmd == "workflows" {
-		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "workflow", "tail", "follow", "expanded", "check", "clear", "set"} {
+		for _, name := range []string{"f", "codex-bin", "detach", "json", "all", "detail", "workflow", "tail", "follow", "expanded", "check", "clear", "set"} {
 			if explicit[name] {
 				return fmt.Errorf("--%s is not supported with %s", name, cmd)
 			}
@@ -438,7 +454,13 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	case "status":
 		if *jsonOutput {
 			stdout := os.Stdout
+			if *detail {
+				return e.StatusJSONWithDetailTo(stdout, statusOutputIsTTY(stdout))
+			}
 			return e.StatusJSONTo(stdout, statusOutputIsTTY(stdout))
+		}
+		if *detail {
+			return e.StatusWithDetail()
 		}
 		return e.Status()
 	case "reset":
@@ -487,7 +509,7 @@ func usage() error {
 }
 
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
-	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset|migrate --check> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--set key=value]\n", presenter.Label("usage"))
+	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset|migrate --check> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--detail] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(out, "       agentflow switch [workflow-name|-] [-C repo] | agentflow switch --clear [-C repo]")
 	fmt.Fprintln(out, "       agentflow checkout ...  # compatibility alias for switch")
@@ -495,6 +517,7 @@ func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintln(out, "       agentflow workflows [-C repo]")
 	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
+	fmt.Fprintln(out, "       agentflow status [-f workflow.yaml | workflow-name] [-C repo] --detail [--json]")
 	fmt.Fprintln(out, "       agentflow logs [--workflow name] [-C repo] [--tail n|--follow]")
 	fmt.Fprintln(out, "       defaults load from <repo>/.agentflow/config.toml and ~/.agentflow/config.toml")
 }

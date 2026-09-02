@@ -4,8 +4,8 @@ Date: 2026-09-01
 
 This record closes the stable run/node identity, versioned trace, complete
 orchestration-transition coverage, and provider/tool metadata targets of
-Execution Stage 3. It does not claim completion of supervised sessions, status
-detail, or `explain`.
+Execution Stage 3. It does not claim completion of supervised sessions or
+`explain`.
 
 ## Implemented contract
 
@@ -67,6 +67,11 @@ detail, or `explain`.
   values, and command output from the JSONL trace.
 - Existing run-identity tests continue to prove that plaintext parameters,
   model selections, and environment inputs are not persisted.
+- `internal/executiontrace/trace_test.go`, `internal/engine/status_test.go`, and
+  `internal/agentflowcli/main_test.go` prove that `status --detail` returns a
+  bounded chronological event window in both human and JSON forms, reports
+  trace availability without hiding authoritative status, and leaves torn
+  diagnostic tails untouched.
 - The full engine suite completed in 500.6 seconds with only the previously known
   dirty-initialization diagnostic assertion mismatch; all identity, recovery,
   pending-invocation, and scheduler compatibility tests otherwise passed. The
@@ -75,5 +80,5 @@ detail, or `explain`.
 
 ## Remaining Stage 3 work
 
-- Add automation-oriented status detail and `agentflow explain`.
+- Add `agentflow explain`.
 - Add exclusive supervised foreground/detached session handoff and attach.

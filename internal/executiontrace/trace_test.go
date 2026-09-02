@@ -143,6 +143,70 @@ func TestOpenRejectsMalformedCompletedEvent(t *testing.T) {
 	}
 }
 
+func TestReadRecentReturnsBoundedChronologicalEvents(t *testing.T) {
+	repo := gitstate.Repo{Root: t.TempDir()}
+	initTraceRepo(t, repo.Root)
+	runID := "run_0123456789abcdeffedcba9876543210"
+	store, err := Open(repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"one", "two", "three", "four", "five"} {
+		if err := store.Append(Event{Event: kind}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := ReadRecent(repo, runID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recent.EventCount != 5 || len(recent.Events) != 3 {
+		t.Fatalf("recent trace = %+v", recent)
+	}
+	for index, want := range []string{"three", "four", "five"} {
+		if got := recent.Events[index]; got.Event != want || got.Sequence != uint64(index+3) {
+			t.Fatalf("event %d = %+v, want %q at sequence %d", index, got, want, index+3)
+		}
+	}
+}
+
+func TestReadRecentIgnoresTornFinalEventWithoutMutation(t *testing.T) {
+	repo := gitstate.Repo{Root: t.TempDir()}
+	initTraceRepo(t, repo.Root)
+	runID := "run_0123456789abcdeffedcba9876543210"
+	path, err := Path(repo, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo.Root+"/.git/agentflow/traces", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	complete := `{"schema_version":1,"sequence":1,"time":"now","run_id":"` + runID + `","event":"run_started"}` + "\n"
+	contents := []byte(complete + `{"schema_version":1,"sequence":2`)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recent, err := ReadRecent(repo, runID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recent.EventCount != 1 || len(recent.Events) != 1 || recent.Events[0].Event != "run_started" {
+		t.Fatalf("recent trace = %+v", recent)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, contents) {
+		t.Fatal("ReadRecent mutated a torn trace")
+	}
+}
+
 func initTraceRepo(t *testing.T, root string) {
 	t.Helper()
 	if output, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {

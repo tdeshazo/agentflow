@@ -226,6 +226,61 @@ func TestStatusJSONCLI(t *testing.T) {
 	if status["state"] != "uninitialized" || status["initialized"] != false {
 		t.Fatalf("CLI status JSON = %v", status)
 	}
+	if _, exists := status["detail"]; exists {
+		t.Fatalf("default status unexpectedly included detail: %v", status)
+	}
+}
+
+func TestStatusDetailCLITextAndJSON(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+
+	jsonOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--detail", "--json", "-f", workflowFile, "-C", repo.Root})
+	})
+	var report struct {
+		State  string `json:"state"`
+		Detail struct {
+			TraceState      string            `json:"trace_state"`
+			EventCount      uint64            `json:"event_count"`
+			EventLimit      int               `json:"event_limit"`
+			EventsTruncated bool              `json:"events_truncated"`
+			RecentEvents    []json.RawMessage `json:"recent_events"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &report); err != nil {
+		t.Fatalf("status --detail --json = %q: %v", jsonOutput, err)
+	}
+	if report.State != "uninitialized" || report.Detail.TraceState != "not_initialized" || report.Detail.EventCount != 0 || report.Detail.EventLimit != 20 || report.Detail.EventsTruncated || report.Detail.RecentEvents == nil {
+		t.Fatalf("detailed JSON status = %+v", report)
+	}
+
+	textOutput := captureCLIStdout(t, func() error {
+		return runArgs([]string{"status", "--detail", "-f", workflowFile, "-C", repo.Root})
+	})
+	for _, want := range []string{"state: uninitialized", "detail:\n", "  trace_state: not_initialized", "  recent_events: []"} {
+		if !strings.Contains(textOutput, want) {
+			t.Fatalf("status --detail text missing %q: %s", want, textOutput)
+		}
+	}
+}
+
+func TestStatusDetailFlagScope(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "status all", args: []string{"status", "--all", "--detail"}, want: "--all and --detail are mutually exclusive"},
+		{name: "run", args: []string{"run", "--detail"}, want: "--detail is only supported with status"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := runArgs(test.args); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
 }
 
 func TestStatusAllCLITextAndJSON(t *testing.T) {

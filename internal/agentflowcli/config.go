@@ -25,6 +25,7 @@ type statusDefaults struct {
 	Workflow *string `toml:"workflow"`
 	JSON     *bool   `toml:"json"`
 	All      *bool   `toml:"all"`
+	Detail   *bool   `toml:"detail"`
 }
 
 type planDefaults struct {
@@ -127,6 +128,9 @@ func validateCLIConfig(config cliConfig) error {
 	if config.Status.All != nil && *config.Status.All && config.Status.Workflow != nil {
 		return fmt.Errorf("status.all and status.workflow are mutually exclusive")
 	}
+	if config.Status.All != nil && *config.Status.All && config.Status.Detail != nil && *config.Status.Detail {
+		return fmt.Errorf("status.all and status.detail are mutually exclusive")
+	}
 	if config.Logs.Tail != nil && *config.Logs.Tail < 0 {
 		return fmt.Errorf("logs.tail must not be negative")
 	}
@@ -154,9 +158,16 @@ func overlayCLIConfig(dst *cliConfig, src cliConfig) {
 		dst.Status.All = src.Status.All
 		if *src.Status.All {
 			dst.Status.Workflow = nil
+			dst.Status.Detail = nil
 		}
 	}
 	overlay(&dst.Status.JSON, src.Status.JSON)
+	if src.Status.Detail != nil {
+		dst.Status.Detail = src.Status.Detail
+		if *src.Status.Detail {
+			dst.Status.All = nil
+		}
+	}
 	overlaySelector(&dst.Reset, src.Reset)
 	overlaySelector(&dst.Validate, src.Validate)
 	overlay(&dst.Plan.Workflow, src.Plan.Workflow)

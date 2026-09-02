@@ -14,6 +14,10 @@
 
 ### Added
 
+- Added `agentflow status --detail` for humans and automation, with a bounded
+  recent-event view, stable trace availability and truncation metadata, compact
+  or pretty JSON through the existing `--json` policy, and non-fatal reporting
+  of missing or invalid diagnostic traces.
 - Added stable opaque run and node-execution identities with recovery-preserved
   attempts, provider attribution metadata, status projection, compatible legacy
   migration, and a separate versioned append-only execution trace under the

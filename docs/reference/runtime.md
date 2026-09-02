@@ -103,6 +103,7 @@ detach = false
 workflow = "art-portfolio"
 json = false
 all = false
+detail = false
 
 [reset]
 workflow = "art-portfolio"
@@ -123,12 +124,15 @@ follow = false
 Within one configuration file, `status.workflow` conflicts with
 `status.all = true`, and `logs.tail` conflicts with `logs.follow = true`.
 A higher-precedence selector or mode replaces its lower-precedence conflict.
+Detailed status is definition-aware and cannot be combined with `status.all`.
 
 State can be inspected or reset independently:
 
 ```sh
 go run . status -f workflow.yaml -C /path/to/repo
 go run . status -f workflow.yaml -C /path/to/repo --json
+go run . status -f workflow.yaml -C /path/to/repo --detail
+go run . status -f workflow.yaml -C /path/to/repo --detail --json
 go run . status --all -C /path/to/repo
 go run . status --all -C /path/to/repo --json
 go run . logs --workflow workflow-name -C /path/to/repo
@@ -473,6 +477,18 @@ lists contain bounded, safe repository-relative paths and are available in
 both single-workflow and repository-wide text and JSON status.
 The same presentation rule applies to the collection returned by
 `status --all --json`, without changing its schema or workflow ordering.
+
+Pass `--detail` for a bounded, validated view of the run's orchestration trace.
+The human form appends a `detail` section with quoted event metadata. With
+`--json`, the unchanged top-level status summary gains a `detail` object with
+`trace_state`, `event_count`, `event_limit`, `events_truncated`, and
+`recent_events`. At most 20 completed events are returned in chronological
+order. `trace_state` is one of `not_initialized`, `unavailable`, `missing`,
+`available`, or `error`; `trace_error` is present only for an unreadable or
+invalid trace. Because traces are diagnostic rather than authoritative, a
+missing or invalid trace does not suppress the durable status summary.
+`--detail` and `--all` are mutually exclusive so repository-wide status remains
+a lightweight, stable inventory.
 
 ## Execution traces
 

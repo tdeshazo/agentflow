@@ -40,6 +40,7 @@ workflow = "local-run"
 
 [status]
 workflow = "local-status"
+detail = true
 
 [logs]
 tail = 25
@@ -58,7 +59,7 @@ tail = 25
 	if got := configuredString(config.Run.Workflow, ""); got != "local-run" || !configuredBool(config.Run.Detach, false) {
 		t.Fatalf("run defaults = %#v", config.Run)
 	}
-	if got := configuredString(config.Status.Workflow, ""); got != "local-status" || config.Status.All != nil {
+	if got := configuredString(config.Status.Workflow, ""); got != "local-status" || config.Status.All != nil || !configuredBool(config.Status.Detail, false) {
 		t.Fatalf("status defaults = %#v", config.Status)
 	}
 	if got := configuredInt(config.Logs.Tail, -1); got != 25 || config.Logs.Follow != nil {
@@ -77,6 +78,7 @@ func TestLoadCLIConfigRejectsInvalidFiles(t *testing.T) {
 		{name: "empty parameter", config: "[parameters]\n\"\" = \"value\"\n", want: "empty key"},
 		{name: "path selector", config: "[run]\nworkflow = \"nested/workflow\"\n", want: "run.workflow"},
 		{name: "status conflict", config: "[status]\nworkflow = \"one\"\nall = true\n", want: "mutually exclusive"},
+		{name: "status detail conflict", config: "[status]\nall = true\ndetail = true\n", want: "mutually exclusive"},
 		{name: "logs conflict", config: "[logs]\ntail = 10\nfollow = true\n", want: "mutually exclusive"},
 		{name: "negative tail", config: "[logs]\ntail = -1\n", want: "must not be negative"},
 	}
@@ -102,7 +104,7 @@ func TestCLIUsesConfiguredWorkflowAndExplicitSelectorWins(t *testing.T) {
 	writeCLIWorkflow(t, configuredPath, "configured-workflow")
 	writeCLIWorkflow(t, explicitPath, "explicit-workflow")
 	writeCLIWorkflow(t, activePath, "active-workflow")
-	writeCLIConfig(t, repo.Root, "[status]\nworkflow = \"configured\"\njson = true\n")
+	writeCLIConfig(t, repo.Root, "[status]\nworkflow = \"configured\"\njson = true\ndetail = true\n")
 	store := newSelectionStore(repo)
 	if err := store.Select("active"); err != nil {
 		t.Fatal(err)
@@ -121,6 +123,9 @@ func TestCLIUsesConfiguredWorkflowAndExplicitSelectorWins(t *testing.T) {
 		}
 		if status["workflow"] != want {
 			t.Fatalf("workflow = %v, want %q", status["workflow"], want)
+		}
+		if _, ok := status["detail"].(map[string]any); !ok {
+			t.Fatalf("configured status detail = %#v", status["detail"])
 		}
 	}
 	assertWorkflow([]string{"status", "-C", repo.Root}, "configured-workflow")

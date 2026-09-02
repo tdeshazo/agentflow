@@ -1,8 +1,12 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +58,26 @@ type StatusSnapshot struct {
 	CompleteCommit  string `json:"complete_commit,omitempty"`
 	validationError string
 }
+
+// StatusReport adds optional, bounded diagnostic detail to StatusSnapshot.
+// The embedded summary remains the stable top-level automation contract.
+type StatusReport struct {
+	StatusSnapshot
+	Detail *StatusDetail `json:"detail,omitempty"`
+}
+
+// StatusDetail describes the validated orchestration trace without making it
+// authoritative. RecentEvents is chronological and bounded by EventLimit.
+type StatusDetail struct {
+	TraceState      string                 `json:"trace_state"`
+	TraceError      string                 `json:"trace_error,omitempty"`
+	EventCount      uint64                 `json:"event_count"`
+	EventLimit      int                    `json:"event_limit"`
+	EventsTruncated bool                   `json:"events_truncated"`
+	RecentEvents    []executiontrace.Event `json:"recent_events"`
+}
+
+const statusDetailEventLimit = 20
 
 func (e *Engine) statusSnapshot() (StatusSnapshot, error) {
 	base, initialized, err := e.Store.Resolve(e.baseRecord())
@@ -268,6 +292,27 @@ func (e *Engine) StatusTo(out io.Writer, tty, color bool) error {
 	return writeStatusSnapshot(p, snapshot)
 }
 
+// StatusWithDetail writes the human-readable status summary followed by a
+// bounded, validated view of recent orchestration events.
+func (e *Engine) StatusWithDetail() error {
+	return e.StatusWithDetailTo(e.Out, clioutput.IsTTY(e.Out), clioutput.ColorEnabled(e.Out))
+}
+
+// StatusWithDetailTo writes detailed human-readable status using an explicit
+// presentation mode.
+func (e *Engine) StatusWithDetailTo(out io.Writer, tty, color bool) error {
+	report, err := e.statusReport()
+	if err != nil {
+		return err
+	}
+	p := clioutput.NewPresenterWithMode(out, tty, color)
+	if err := writeStatusSnapshot(p, report.StatusSnapshot); err != nil {
+		return err
+	}
+	writeStatusDetail(p, report.Detail)
+	return nil
+}
+
 func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	p.Metadata("workflow", snapshot.Workflow)
 	p.Metadata("repo", p.Hyperlink(snapshot.Repo, clioutput.FileURL(snapshot.Repo)))
@@ -348,6 +393,88 @@ func writeStatusSnapshot(p clioutput.Presenter, snapshot StatusSnapshot) error {
 	return nil
 }
 
+func writeStatusDetail(p clioutput.Presenter, detail *StatusDetail) {
+	if detail == nil {
+		return
+	}
+	p.Line(clioutput.RoleHeading, "detail:")
+	p.IndentedMetadata("  ", "trace_state", detail.TraceState, clioutput.StateRole(detail.TraceState))
+	p.IndentedMetadata("  ", "event_count", fmt.Sprint(detail.EventCount), clioutput.RolePlain)
+	p.IndentedMetadata("  ", "event_limit", fmt.Sprint(detail.EventLimit), clioutput.RolePlain)
+	p.IndentedMetadata("  ", "events_truncated", fmt.Sprint(detail.EventsTruncated), clioutput.RolePlain)
+	if detail.TraceError != "" {
+		p.IndentedMetadata("  ", "trace_error", detail.TraceError, clioutput.RoleError)
+	}
+	if len(detail.RecentEvents) == 0 {
+		p.IndentedMetadata("  ", "recent_events", "[]", clioutput.RolePlain)
+		return
+	}
+	p.Line(clioutput.RolePlain, "  recent_events:")
+	for _, event := range detail.RecentEvents {
+		parts := []string{
+			fmt.Sprintf("sequence=%d", event.Sequence),
+			"time=" + strconv.Quote(event.Time),
+			"event=" + strconv.Quote(event.Event),
+		}
+		if event.NodeID != "" {
+			parts = append(parts, "node="+strconv.Quote(event.NodeID))
+		}
+		if event.NodeExecutionID != "" {
+			parts = append(parts, "node_execution_id="+strconv.Quote(event.NodeExecutionID))
+		}
+		if event.Attempt != 0 {
+			parts = append(parts, fmt.Sprintf("attempt=%d", event.Attempt))
+		}
+		keys := make([]string, 0, len(event.Fields))
+		for key := range event.Fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = append(parts, "field."+key+"="+strconv.Quote(event.Fields[key]))
+		}
+		p.Line(clioutput.RolePlain, "    - %s", strings.Join(parts, " "))
+	}
+}
+
+func (e *Engine) statusReport() (StatusReport, error) {
+	snapshot, err := e.statusSnapshot()
+	if err != nil {
+		return StatusReport{}, err
+	}
+	return StatusReport{StatusSnapshot: snapshot, Detail: e.statusDetail(snapshot)}, nil
+}
+
+func (e *Engine) statusDetail(snapshot StatusSnapshot) *StatusDetail {
+	detail := &StatusDetail{
+		TraceState:   "not_initialized",
+		EventLimit:   statusDetailEventLimit,
+		RecentEvents: []executiontrace.Event{},
+	}
+	if !snapshot.Initialized {
+		return detail
+	}
+	if snapshot.RunID == "" {
+		detail.TraceState = "unavailable"
+		return detail
+	}
+	recent, err := executiontrace.ReadRecent(e.Repo, snapshot.RunID, statusDetailEventLimit)
+	if errors.Is(err, os.ErrNotExist) {
+		detail.TraceState = "missing"
+		return detail
+	}
+	if err != nil {
+		detail.TraceState = "error"
+		detail.TraceError = err.Error()
+		return detail
+	}
+	detail.TraceState = "available"
+	detail.EventCount = recent.EventCount
+	detail.EventsTruncated = recent.EventCount > uint64(len(recent.Events))
+	detail.RecentEvents = recent.Events
+	return detail
+}
+
 func writeIntegrityViolation(p clioutput.Presenter, indent string, violation *gitstate.IntegrityViolation) {
 	if violation == nil {
 		return
@@ -413,6 +540,16 @@ func (e *Engine) StatusJSONTo(out io.Writer, tty bool) error {
 		return err
 	}
 	return clioutput.WriteJSONWithTTY(out, snapshot, tty)
+}
+
+// StatusJSONWithDetailTo writes one JSON object containing the stable status
+// summary and bounded trace detail using the supplied terminal policy.
+func (e *Engine) StatusJSONWithDetailTo(out io.Writer, tty bool) error {
+	report, err := e.statusReport()
+	if err != nil {
+		return err
+	}
+	return clioutput.WriteJSONWithTTY(out, report, tty)
 }
 
 func (e *Engine) pendingHumanGateForStatus() (string, error) {
