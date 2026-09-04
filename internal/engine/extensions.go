@@ -47,6 +47,13 @@ func (e *Engine) validateExtensions() error {
 					return fmt.Errorf("actor %q provider %q does not satisfy executor requirements: %w", name, providerImpl.Name(), err)
 				}
 			}
+			invocationModes := e.agentInvocationModes(name)
+			if invocationModes.ordinary && hasContract && !slices.Contains(contract.InvocationContextVersions, provider.InvocationContextVersionV1) {
+				return fmt.Errorf("actor %q provider %q requires invocation context %q for ordinary phases", name, providerImpl.Name(), provider.InvocationContextVersionV1)
+			}
+			if invocationModes.structured && (!hasContract || contract.Version != provider.ContractVersionV2 || !slices.Contains(contract.InvocationContextVersions, provider.InvocationContextVersionV2) || !slices.Contains(contract.HandoffVersions, provider.HandoffVersionV1)) {
+				return fmt.Errorf("actor %q provider %q requires provider contract %q with invocation context %q and structured handoff %q", name, providerImpl.Name(), provider.ContractVersionV2, provider.InvocationContextVersionV2, provider.HandoffVersionV1)
+			}
 		}
 	}
 
@@ -86,6 +93,88 @@ func (e *Engine) validateExtensions() error {
 	}
 	e.toolConfigs = configs
 	return nil
+}
+
+type invocationModes struct {
+	ordinary   bool
+	structured bool
+}
+
+func (e *Engine) agentInvocationModes(actor string) invocationModes {
+	var modes invocationModes
+	addValidationRepairMode := func(name string, structured bool) {
+		validation, ok := e.Workflow.Spec.Validation[name]
+		if !ok || validation.OnFailure.Strategy != "repair-once" || validation.OnFailure.Repair.Actor != actor {
+			return
+		}
+		if structured {
+			modes.structured = true
+		} else {
+			modes.ordinary = true
+		}
+	}
+	for index := range e.Workflow.Spec.Phases {
+		phase := &e.Workflow.Spec.Phases[index]
+		structured := phaseRequiresStructuredHandoff(phase)
+		if phase.Actor == actor {
+			if structured {
+				modes.structured = true
+			} else {
+				modes.ordinary = true
+			}
+		}
+		for _, name := range e.selectedPhaseValidations(phase) {
+			addValidationRepairMode(name, structured)
+		}
+		// Before validations are executable repair paths but are intentionally
+		// excluded from the phase actor's selected semantic context.
+		for _, action := range e.Workflow.Spec.PhaseDefaults.Before {
+			if action.Validate != "" {
+				addValidationRepairMode(action.Validate, structured)
+			}
+		}
+	}
+	for _, name := range e.standaloneValidationNames() {
+		addValidationRepairMode(name, false)
+	}
+	return modes
+}
+
+func (e *Engine) standaloneValidationNames() []string {
+	names := map[string]bool{}
+	for _, step := range e.Workflow.Spec.Flow {
+		if step.Validate != "" {
+			names[step.Validate] = true
+		}
+	}
+	for _, gate := range e.Workflow.Spec.HumanGates {
+		for _, action := range gate.After {
+			if action.Validation == "" {
+				continue
+			}
+			name := action.Validation
+			if _, ok := e.Workflow.Spec.Validation[name]; !ok {
+				for _, step := range e.Workflow.Spec.Flow {
+					if step.ID == name && step.Validate != "" {
+						name = step.Validate
+						break
+					}
+				}
+			}
+			names[name] = true
+		}
+	}
+	for _, completion := range e.Workflow.Spec.Completion {
+		if completion.FinalValidation != "" {
+			names[completion.FinalValidation] = true
+		}
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func builtinTool(kind string) bool {

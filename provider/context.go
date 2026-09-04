@@ -1,8 +1,14 @@
 package provider
 
-// InvocationContextVersion is the only structured invocation-context version
-// understood by providers in this release.
-const InvocationContextVersion = "agentflow.dev/invocation-context/v1"
+const (
+	// InvocationContextVersionV1 remains the source-compatible context used by
+	// providers that have not negotiated the fresh-context extension.
+	InvocationContextVersionV1 = "agentflow.dev/invocation-context/v1"
+	// InvocationContextVersionV2 adds a deterministic compilation receipt.
+	InvocationContextVersionV2 = "agentflow.dev/invocation-context/v2"
+	// InvocationContextVersion is retained for source compatibility.
+	InvocationContextVersion = InvocationContextVersionV1
+)
 
 // WorkspacePlaceholder is the stable workspace identity emitted by the
 // engine. Provider adapters replace it with their isolated workspace only
@@ -20,11 +26,29 @@ type InvocationContext struct {
 	Dependencies []DependencyContext     `json:"dependencies"`
 	Artifacts    []ArtifactReference     `json:"artifacts"`
 	Evidence     []EvidenceReference     `json:"evidence"`
+	Handoffs     []HandoffReference      `json:"handoffs,omitempty"`
 	Authority    InvocationAuthority     `json:"authority"`
 	Executor     ExecutorCapabilities    `json:"executor"`
 	Validations  []ValidationRequirement `json:"validations"`
 	Failure      *RepairFailureEvidence  `json:"failure,omitempty"`
 	Manifest     ContextManifest         `json:"manifest"`
+	// Receipt is present only for v2. It permits a provider or operator to
+	// account for selected context without receiving omitted payloads.
+	Receipt *ContextReceipt `json:"receipt,omitempty"`
+}
+
+// ContextReceipt is the bounded, non-secret result of v2 compilation.
+type ContextReceipt struct {
+	CompilerVersion string            `json:"compilerVersion"`
+	Digest          string            `json:"digest"`
+	Bytes           int               `json:"bytes"`
+	Selected        []string          `json:"selected"`
+	Omitted         []ContextOmission `json:"omitted"`
+}
+
+type ContextOmission struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 // InvocationIdentity identifies the actor unit without copying workflow
@@ -69,6 +93,15 @@ type EvidenceReference struct {
 	Name       string `json:"name"`
 	Producer   string `json:"producer"`
 	Validation string `json:"validation"`
+}
+
+// HandoffReference is an accepted advisory handoff from a direct dependency.
+// It is bound to that dependency's accepted commit by the engine.
+type HandoffReference struct {
+	Producer string  `json:"producer"`
+	Commit   string  `json:"commit"`
+	Digest   string  `json:"digest"`
+	Payload  Handoff `json:"payload"`
 }
 
 // InvocationAuthority is the effective runtime-enforced authority for one

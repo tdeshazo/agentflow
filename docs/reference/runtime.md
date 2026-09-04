@@ -9,6 +9,23 @@ The validator rejects a valid-but-unsupported provider, backend, tool, or policy
 before a repository is opened.
 This prevents descriptive fields from being silently treated as enforcement.
 
+## Fresh context and advisory handoffs
+
+A provider that negotiates `agentflow.dev/provider/v2` may receive
+`agentflow.dev/invocation-context/v2`. The engine deterministically compiles
+the current objective, authority, workspace state, direct accepted
+dependencies, declared artifacts/evidence, accepted direct handoffs, and
+validations under a non-configurable 65,536-byte ceiling. Its receipt explains
+selected opaque IDs and omissions without exposing omitted payloads.
+
+Audit and typed-output phases require `provider/v2`,
+`invocation-context/v2`, and native `agentflow.dev/handoff/v1` output at
+preflight. Ordinary phases alone may use the v1 compatibility path. The engine
+validates bounded, schema-shaped, non-secret output and
+publishes it only after deterministic acceptance, bound to the run, node,
+phase, and commit. Claims remain advisory; only deterministic validations and
+the phase marker authorize later work.
+
 ## CLI
 
 ```sh
@@ -700,8 +717,10 @@ deterministic validation still owns advancement, and the message is never
 ### Invocation context compilation
 
 Immediately before every primary, resumed, or validation-repair provider call,
-the engine derives `provider.InvocationContext` from normalized workflow
-authority and current runtime state. The context includes only the invocation
+the engine first derives a provider-independent semantic context from normalized
+workflow authority and current runtime state. After provider-contract
+negotiation, a narrow adapter projects that compiled result into
+`provider.InvocationContext`. The context includes only the invocation
 identity and expanded objective; relevant changed and dirty paths; accepted
 direct dependency commits; verified references to declared artifact files and
 deterministic evidence; effective write, integrity, read-only, runtime-owned,
@@ -716,7 +735,10 @@ copied body. Compilation uses `{{ agentflow.workspace }}` as a stable workspace
 identity. Only the provider adapter resolves that placeholder, and only to the
 quarantine workspace while rendering.
 
-The compiled context is a derived view and is never written to durable workflow
+Semantic selection, ordering, omission decisions, digest inputs, and canonical
+byte accounting complete before that provider projection, so adding a provider
+projection cannot change the selected semantic result. The compiled context is
+a derived view and is never written to durable workflow
 authority. Pending invocation records retain their existing attribution-only
 schema and do not acquire context, objectives, resolved parameters, failure
 output, artifact content, or secrets. `plan --expanded` exposes a per-phase,

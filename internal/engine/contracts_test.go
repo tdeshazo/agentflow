@@ -36,7 +36,7 @@ func TestV1Alpha3TypedContractsAuthorizeOnlyVerifiedHandoffs(t *testing.T) {
 		t.Fatalf("compiled contexts = %d", len(providerImpl.contexts))
 	}
 	auditContext := providerImpl.contexts[1]
-	if auditContext.Version != provider.InvocationContextVersion || auditContext.Invocation.Phase != "audit" || !auditContext.Authority.ReadOnly || len(auditContext.Authority.WritablePaths) != 0 {
+	if auditContext.Version != provider.InvocationContextVersionV2 || auditContext.Invocation.Phase != "audit" || !auditContext.Authority.ReadOnly || len(auditContext.Authority.WritablePaths) != 0 {
 		t.Fatalf("audit context identity/authority = %#v", auditContext)
 	}
 	if len(auditContext.Dependencies) != 1 || auditContext.Dependencies[0].Phase != "implement" || auditContext.Dependencies[0].Commit == "" {
@@ -310,6 +310,7 @@ func TestV1Alpha3IncompatibleDurableArtifactFailsBeforeProviderExecution(t *test
 
 func newTypedContractEngine(t *testing.T, repo string, providerImpl *schedulingProvider) *Engine {
 	t.Helper()
+	providerImpl.structured = true
 	workflowDefinition := &workflow.Workflow{
 		APIVersion: "agentflow.dev/v1alpha3",
 		Kind:       "AgentWorkflow",

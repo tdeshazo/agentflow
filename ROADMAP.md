@@ -26,6 +26,12 @@ Three principles guide the roadmap:
 2. **Agents may act; validation authorizes advancement.** Model output is evidence, not workflow authority.
 3. **Definition, execution, and assurance stay separable.** A reusable workflow definition, a concrete execution graph, and the observed execution trace are related but distinct artifacts.
 
+## Fresh-context evidence
+
+The runtime now has deterministic v2 fresh-context compilation and accepted
+direct-dependency handoffs. This intentionally excludes cross-run memory,
+learned ranking, semantic retrieval, and workflow-configurable context budgets.
+
 ## Minimum viable product: self-hosting
 
 The minimum acceptable AgentFlow product is not merely a parser or an engine that can run a demonstration workflow. **AgentFlow plus its reference execution engine must be sufficient to drive real development of AgentFlow itself.**

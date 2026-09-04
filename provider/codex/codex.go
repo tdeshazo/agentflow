@@ -64,11 +64,12 @@ func (p Provider) Name() string { return "codex" }
 // nested-workflow that this adapter does not implement.
 func (p Provider) Contract() provider.Contract {
 	return provider.Contract{
-		Version:                   provider.ContractVersionV1,
+		Version:                   provider.ContractVersionV2,
 		Modes:                     []provider.ExecutionMode{provider.ExecutionModeAgent},
-		InvocationContextVersions: []string{provider.InvocationContextVersion},
+		InvocationContextVersions: []string{provider.InvocationContextVersionV1, provider.InvocationContextVersionV2},
 		FilesystemBoundary:        true,
 		ExecutionPolicy:           true,
+		HandoffVersions:           []string{provider.HandoffVersionV1},
 	}
 }
 
@@ -87,13 +88,26 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 	}
 
 	var last string
-	if req.OutputLastMessage {
+	var temporary string
+	if req.OutputLastMessage || req.Handoff != nil {
 		tmp, err := os.MkdirTemp("", "agentflow-codex-*")
 		if err != nil {
 			return provider.Result{}, fmt.Errorf("create codex temp dir: %w", err)
 		}
 		defer os.RemoveAll(tmp)
+		temporary = tmp
 		last = filepath.Join(tmp, "last-message.txt")
+	}
+	if req.Handoff != nil {
+		if err := os.WriteFile(filepath.Join(temporary, "handoff-schema.json"), mustJSON(provider.HandoffJSONSchema()), 0o600); err != nil {
+			return provider.Result{}, fmt.Errorf("write codex handoff schema: %w", err)
+		}
+		metadata := make(map[string]string, len(req.Metadata)+1)
+		for key, value := range req.Metadata {
+			metadata[key] = value
+		}
+		metadata["agentflow_handoff_schema"] = filepath.Join(temporary, "handoff-schema.json")
+		req.Metadata = metadata
 	}
 	stdout := p.Stdout
 	if stdout == nil {
@@ -131,14 +145,33 @@ func (p Provider) Run(ctx context.Context, req provider.Request) (provider.Resul
 	if err != nil {
 		return provider.Result{}, err
 	}
-	if !req.OutputLastMessage {
+	if !req.OutputLastMessage && req.Handoff == nil {
 		return provider.Result{Usage: usage}, nil
 	}
 	b, err := os.ReadFile(last)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("read codex final message: %w", err)
 	}
-	return provider.Result{FinalMessage: redactString(string(b), secrets), Usage: usage}, nil
+	message := redactString(string(b), secrets)
+	result := provider.Result{Usage: usage}
+	if req.OutputLastMessage {
+		result.FinalMessage = message
+	}
+	if req.Handoff != nil {
+		if _, err := provider.ParseHandoff([]byte(message)); err != nil {
+			return provider.Result{}, fmt.Errorf("validate codex structured handoff: %w", err)
+		}
+		result.Handoff = []byte(message)
+	}
+	return result, nil
+}
+
+func mustJSON(value any) []byte {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func buildArgs(req provider.Request, lastMessage string) []string {
@@ -178,16 +211,26 @@ func buildArgsForOutput(req provider.Request, lastMessage string, outputTTY bool
 	if req.Reasoning != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", req.Reasoning))
 	}
-	if req.OutputLastMessage {
+	if req.OutputLastMessage || req.Handoff != nil {
 		args = append(args, "--output-last-message", lastMessage)
+	}
+	if req.Handoff != nil {
+		// The schema file is created by Run and supplied through Metadata so this
+		// pure argument builder remains directly testable.
+		if schemaPath := req.Metadata["agentflow_handoff_schema"]; schemaPath != "" {
+			args = append(args, "--output-schema", schemaPath)
+		}
 	}
 	args = append(args, "-")
 	return args
 }
 
 func validateRequest(req provider.Request) error {
-	if req.Context.Version != provider.InvocationContextVersion {
+	if req.Context.Version != provider.InvocationContextVersionV1 && req.Context.Version != provider.InvocationContextVersionV2 {
 		return fmt.Errorf("codex provider does not support invocation context version %q", req.Context.Version)
+	}
+	if req.Handoff != nil && req.Handoff.Version != provider.HandoffVersionV1 {
+		return fmt.Errorf("codex provider does not support handoff version %q", req.Handoff.Version)
 	}
 	if req.Approval != "" && req.Approval != "never" {
 		return fmt.Errorf("codex provider supports approval policy \"never\" only, got %q", req.Approval)
@@ -395,7 +438,7 @@ func redactString(value string, secrets [][]byte) string {
 // deterministically. It resolves only the engine's stable workspace
 // placeholder and does not reconstruct workflow semantics.
 func RenderInvocationContext(context provider.InvocationContext, workspace string) (string, error) {
-	if context.Version != provider.InvocationContextVersion {
+	if context.Version != provider.InvocationContextVersionV1 && context.Version != provider.InvocationContextVersionV2 {
 		return "", fmt.Errorf("codex provider does not support invocation context version %q", context.Version)
 	}
 	if workspace == "" || !filepath.IsAbs(workspace) {
@@ -410,7 +453,7 @@ func RenderInvocationContext(context provider.InvocationContext, workspace strin
 		return "", fmt.Errorf("render codex workspace: %w", err)
 	}
 	resolved := strings.ReplaceAll(string(b), provider.WorkspacePlaceholder, string(encodedWorkspace[1:len(encodedWorkspace)-1]))
-	return "AgentFlow invocation context (" + provider.InvocationContextVersion + "):\n" + resolved + "\n", nil
+	return "AgentFlow invocation context (" + context.Version + "):\n" + resolved + "\n", nil
 }
 
 func codexPermissionsBase(sandbox string) string {

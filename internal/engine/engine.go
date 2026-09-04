@@ -87,6 +87,7 @@ type Engine struct {
 	nodeExecutionID     string
 	nodeID              string
 	nodeAttempt         int
+	lastProviderHandoff []byte
 	resourceMu          *sync.Mutex
 	// interruptionHook is a deterministic crash-window seam used by the
 	// conformance suite. It is intentionally unexported: provider contracts

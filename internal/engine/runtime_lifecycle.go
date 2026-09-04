@@ -472,6 +472,9 @@ func (e *Engine) markPhaseComplete(phase *workflow.Phase) error {
 	if err != nil {
 		return err
 	}
+	if err := e.publishAcceptedHandoff(phase, head); err != nil {
+		return err
+	}
 	if phase.AdvanceWorkItem {
 		var active ActivePhase
 		if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err != nil {

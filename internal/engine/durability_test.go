@@ -19,22 +19,32 @@ import (
 )
 
 type durableProvider struct {
-	calls  int
-	action func(context.Context, provider.Request) error
+	calls      int
+	action     func(context.Context, provider.Request) error
+	structured bool
 }
 
 func (p *durableProvider) Name() string                     { return "durable-test" }
 func (p *durableProvider) EnforcesFilesystemBoundary() bool { return true }
 func (p *durableProvider) EnforcesExecutionPolicy() bool    { return true }
 func (p *durableProvider) Contract() provider.Contract {
+	if p.structured {
+		return provider.Contract{Version: provider.ContractVersionV2, Modes: []provider.ExecutionMode{provider.ExecutionModeAgent}, InvocationContextVersions: []string{provider.InvocationContextVersionV1, provider.InvocationContextVersionV2}, FilesystemBoundary: true, ExecutionPolicy: true, HandoffVersions: []string{provider.HandoffVersionV1}}
+	}
 	return provider.Contract{Version: provider.ContractVersionV1, Modes: []provider.ExecutionMode{provider.ExecutionModeAgent}, InvocationContextVersions: []string{provider.InvocationContextVersion}, FilesystemBoundary: true, ExecutionPolicy: true}
 }
 func (p *durableProvider) Run(ctx context.Context, request provider.Request) (provider.Result, error) {
 	p.calls++
 	if p.action != nil {
-		return provider.Result{}, p.action(ctx, request)
+		if err := p.action(ctx, request); err != nil {
+			return provider.Result{}, err
+		}
 	}
-	return provider.Result{}, nil
+	result := provider.Result{}
+	if request.Handoff != nil {
+		result.Handoff = []byte(`{"version":"agentflow.dev/handoff/v1","status":"complete","summary":"complete","changes":[],"findings":[],"checks":[],"risks":[],"blockers":[],"nextActions":[]}`)
+	}
+	return result, nil
 }
 
 func TestInitializeRequiresCleanWorkspaceAndCapturesState(t *testing.T) {
@@ -411,6 +421,7 @@ func TestResumeInterruptedNoChangeAuditRerunsActor(t *testing.T) {
 	w.Spec.Phases = []workflow.Phase{{ID: "audit", Kind: "audit", Label: "audit", Actor: "worker", RequiresChange: false, Prompt: "audit"}}
 	w.Spec.Flow = []workflow.FlowStep{{Phase: "audit"}, {Complete: "done"}}
 	p := &durableProvider{}
+	p.structured = true
 	p.action = func(_ context.Context, _ provider.Request) error {
 		if p.calls == 1 {
 			return context.Canceled

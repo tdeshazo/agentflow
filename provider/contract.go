@@ -6,7 +6,10 @@ import (
 )
 
 // ContractVersionV1 is the first stable AgentFlow provider contract.
-const ContractVersionV1 = "agentflow.dev/provider/v1"
+const (
+	ContractVersionV1 = "agentflow.dev/provider/v1"
+	ContractVersionV2 = "agentflow.dev/provider/v2"
+)
 
 // ExecutionMode identifies a portable class of execution. A provider declares
 // only modes it actually implements; the engine never emulates a missing mode.
@@ -28,6 +31,7 @@ type Contract struct {
 	InvocationContextVersions []string        `json:"invocationContextVersions" yaml:"invocationContextVersions"`
 	FilesystemBoundary        bool            `json:"filesystemBoundary" yaml:"filesystemBoundary"`
 	ExecutionPolicy           bool            `json:"executionPolicy" yaml:"executionPolicy"`
+	HandoffVersions           []string        `json:"handoffVersions,omitempty" yaml:"handoffVersions,omitempty"`
 }
 
 // Requirements is a portable workflow requirement. A zero value preserves
@@ -47,8 +51,18 @@ func (r Requirements) IsZero() bool {
 
 // Validate checks contract values independently of a concrete provider.
 func (c Contract) Validate() error {
-	if c.Version != ContractVersionV1 {
+	if c.Version != ContractVersionV1 && c.Version != ContractVersionV2 {
 		return fmt.Errorf("unsupported provider contract version %q", c.Version)
+	}
+	if c.Version == ContractVersionV1 && len(c.HandoffVersions) != 0 {
+		return fmt.Errorf("provider v1 contract cannot declare handoff versions")
+	}
+	seenHandoffs := map[string]bool{}
+	for _, version := range c.HandoffVersions {
+		if version != HandoffVersionV1 || seenHandoffs[version] {
+			return fmt.Errorf("provider contract has invalid or duplicate handoff version %q", version)
+		}
+		seenHandoffs[version] = true
 	}
 	if len(c.Modes) == 0 {
 		return fmt.Errorf("provider contract must declare at least one execution mode")
@@ -76,7 +90,7 @@ func (c Contract) Validate() error {
 // Validate checks portable workflow requirements before the engine creates a
 // workspace or invokes a provider.
 func (r Requirements) Validate() error {
-	if r.ContractVersion != "" && r.ContractVersion != ContractVersionV1 {
+	if r.ContractVersion != "" && r.ContractVersion != ContractVersionV1 && r.ContractVersion != ContractVersionV2 {
 		return fmt.Errorf("unsupported provider contract version %q", r.ContractVersion)
 	}
 	seen := map[ExecutionMode]bool{}
@@ -97,7 +111,7 @@ func (c Contract) Supports(r Requirements) error {
 	if err := r.Validate(); err != nil {
 		return err
 	}
-	if r.ContractVersion != "" && c.Version != r.ContractVersion {
+	if r.ContractVersion != "" && !contractVersionSupports(c, r) {
 		return fmt.Errorf("provider contract version %q does not satisfy %q", c.Version, r.ContractVersion)
 	}
 	for _, mode := range r.Modes {
@@ -115,6 +129,15 @@ func (c Contract) Supports(r Requirements) error {
 		return fmt.Errorf("provider does not enforce execution policy")
 	}
 	return nil
+}
+
+func contractVersionSupports(available Contract, required Requirements) bool {
+	if available.Version == required.ContractVersion {
+		return true
+	}
+	return available.Version == ContractVersionV2 && required.ContractVersion == ContractVersionV1 &&
+		slices.Contains(available.InvocationContextVersions, InvocationContextVersionV1) &&
+		(required.InvocationContextVersion == "" || required.InvocationContextVersion == InvocationContextVersionV1)
 }
 
 func knownExecutionMode(mode ExecutionMode) bool {

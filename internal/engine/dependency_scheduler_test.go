@@ -23,6 +23,7 @@ type schedulingProvider struct {
 	contexts      []provider.InvocationContext
 	action        func(context.Context, provider.Request) error
 	skipPhaseFile bool
+	structured    bool
 }
 
 func (p *schedulingProvider) Name() string                     { return "scheduler-test" }
@@ -35,18 +36,22 @@ func (p *schedulingProvider) Run(ctx context.Context, request provider.Request) 
 	p.calls = append(p.calls, phase+":"+request.Metadata["actor"])
 	p.contexts = append(p.contexts, request.Context)
 	p.mu.Unlock()
+	result := provider.Result{}
+	if request.Handoff != nil {
+		result.Handoff = []byte(`{"version":"agentflow.dev/handoff/v1","status":"complete","summary":"complete","changes":[],"findings":[],"checks":[],"risks":[],"blockers":[],"nextActions":[]}`)
+	}
 	if p.action != nil {
 		if err := p.action(ctx, request); err != nil {
 			return provider.Result{}, err
 		}
 	}
 	if phase == "" {
-		return provider.Result{}, nil
+		return result, nil
 	}
 	if p.skipPhaseFile {
-		return provider.Result{}, nil
+		return result, nil
 	}
-	return provider.Result{}, os.WriteFile(filepath.Join(request.Workspace, phase+".txt"), []byte(phase+"\n"), 0o644)
+	return result, os.WriteFile(filepath.Join(request.Workspace, phase+".txt"), []byte(phase+"\n"), 0o644)
 }
 
 func TestV1Alpha2SerialReadyNodeScheduler(t *testing.T) {
@@ -751,7 +756,7 @@ func TestV1Alpha2ConformanceExampleExecutesAuthorityBoundaries(t *testing.T) {
 	}
 
 	coderCalls := 0
-	p := &schedulingProvider{skipPhaseFile: true, action: func(_ context.Context, request provider.Request) error {
+	p := &schedulingProvider{skipPhaseFile: true, structured: true, action: func(_ context.Context, request provider.Request) error {
 		if request.Metadata["actor"] == "coder" {
 			coderCalls++
 			if coderCalls == 2 {
@@ -883,6 +888,12 @@ func newSchedulingEngine(t *testing.T, w *workflow.Workflow, p *schedulingProvid
 
 func newSchedulingEngineAt(t *testing.T, w *workflow.Workflow, p *schedulingProvider, repo string) *Engine {
 	t.Helper()
+	for _, phase := range w.Spec.Phases {
+		if phaseRequiresStructuredHandoff(&phase) {
+			p.structured = true
+			break
+		}
+	}
 	e, err := New(w, map[string]provider.Provider{"test": p}, Options{RepoRoot: repo})
 	if err != nil {
 		t.Fatal(err)

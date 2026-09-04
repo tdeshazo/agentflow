@@ -84,6 +84,9 @@ type Request struct {
 	// environment names; values must never be logged or rendered into Context.
 	Credentials map[string]string
 	Budget      InvocationBudget
+	// Handoff requests native structured output when a phase needs an advisory
+	// direct-dependency handoff.
+	Handoff *HandoffRequest
 }
 
 // ExecutionPolicy describes provider-enforced effects for one invocation.
@@ -121,6 +124,7 @@ type FilesystemRule struct {
 type Result struct {
 	FinalMessage string
 	Usage        Usage
+	Handoff      []byte
 }
 
 // Usage is provider-reported metering for one invocation.

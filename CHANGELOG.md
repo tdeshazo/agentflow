@@ -14,6 +14,11 @@
 
 ### Added
 
+- Added negotiated `agentflow.dev/provider/v2` and
+  `agentflow.dev/invocation-context/v2`, with deterministic 65,536-byte
+  fresh-context receipts and validated advisory `agentflow.dev/handoff/v1`
+  records bound to accepted direct dependencies.
+
 - Completed Stage 7 executor and tool extensibility: `provider/v1` portable
   capability contracts and conformance checks for Codex/local-command adapters;
   workflow-declared semantic executor requirements; and explicit `tool/v1`

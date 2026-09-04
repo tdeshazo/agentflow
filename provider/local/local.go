@@ -42,6 +42,9 @@ func (p Provider) Run(ctx context.Context, request provider.Request) (provider.R
 	if request.Context.Version != provider.InvocationContextVersion {
 		return provider.Result{}, fmt.Errorf("local command provider does not support invocation context version %q", request.Context.Version)
 	}
+	if request.Handoff != nil {
+		return provider.Result{}, fmt.Errorf("local command provider does not provide enforced structured handoff output")
+	}
 	if len(request.FilesystemBoundary) != 0 || request.Policy.Network != "" || len(request.Policy.Capabilities) != 0 || request.Policy.ApprovalGate != "" || len(request.Credentials) != 0 {
 		return provider.Result{}, fmt.Errorf("local command provider cannot enforce actor execution boundaries")
 	}

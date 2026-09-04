@@ -32,6 +32,7 @@ func (p *canonicalSelfHostingProvider) EnforcesFilesystemBoundary() bool {
 func (p *canonicalSelfHostingProvider) EnforcesExecutionPolicy() bool { return true }
 
 func (p *canonicalSelfHostingProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
+	result := structuredTestResult(request)
 	phase := request.Metadata["phase"]
 	p.mu.Lock()
 	p.calls[phase]++
@@ -45,7 +46,7 @@ func (p *canonicalSelfHostingProvider) Run(_ context.Context, request provider.R
 	case "verify-agentflow-change":
 		path = filepath.Join(request.Workspace, "docs", "guides", "canonical-verification.md")
 	default:
-		return provider.Result{}, nil
+		return result, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return provider.Result{}, err
@@ -63,7 +64,7 @@ func (p *canonicalSelfHostingProvider) Run(_ context.Context, request provider.R
 			return provider.Result{}, err
 		}
 	}
-	return provider.Result{}, nil
+	return result, nil
 }
 
 func (p *canonicalSelfHostingProvider) callCount(phase string) int {
@@ -252,16 +253,17 @@ func (p *referenceWorkflowProvider) EnforcesFilesystemBoundary() bool { return t
 func (p *referenceWorkflowProvider) EnforcesExecutionPolicy() bool    { return true }
 
 func (p *referenceWorkflowProvider) Run(_ context.Context, request provider.Request) (provider.Result, error) {
+	result := structuredTestResult(request)
 	phase := request.Metadata["phase"]
 	p.calls[phase]++
 	if phase != "01" && phase != "02" {
-		return provider.Result{}, nil
+		return result, nil
 	}
 	path := filepath.Join(request.Workspace, "internal", "reference-"+phase+".txt")
 	if err := os.WriteFile(path, []byte("implemented\n"), 0o644); err != nil {
 		return provider.Result{}, err
 	}
-	return provider.Result{}, nil
+	return result, nil
 }
 
 func canonicalSelfHostingWorkflow(t *testing.T) string {

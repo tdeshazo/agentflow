@@ -395,6 +395,9 @@ func (e *Engine) recoverActive(ctx context.Context) (runErr error) {
 	if marked, acceptedCommit, err := e.validCommitMarker(e.phaseMarkerName(p)); err != nil {
 		return err
 	} else if marked {
+		if err := e.validateRecoveredAcceptedHandoff(p, acceptedCommit, a.NodeExecutionID); err != nil {
+			return err
+		}
 		// A process may be interrupted between writing the commit-valued phase
 		// marker and clearing active state. The marker is the acceptance record;
 		// clear only the stale in-progress record and never rerun the actor.
@@ -524,6 +527,9 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	if !ok {
 		return fmt.Errorf("no provider registered for runner %q", a.Runner)
 	}
+	if phaseRequiresStructuredHandoff(p) && !providerSupportsStructuredHandoff(prov) {
+		return fmt.Errorf("actor %q provider %q requires provider contract %q with invocation context %q and structured handoff %q", actorName, prov.Name(), provider.ContractVersionV2, provider.InvocationContextVersionV2, provider.HandoffVersionV1)
+	}
 	policy, err := e.effectiveExecutionPolicy(a)
 	if err != nil {
 		return fmt.Errorf("actor %q execution policy: %w", actorName, err)
@@ -544,10 +550,23 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	if err != nil {
 		return err
 	}
-	invocationContext, err := e.compileInvocationContext(actorName, role, objective, a, p, validations)
+	semanticContext, err := e.compileInvocationContext(actorName, role, objective, a, p, validations)
 	if err != nil {
 		return err
 	}
+	structuredHandoff := phaseRequiresStructuredHandoff(p)
+	if structuredHandoff {
+		semanticContext.Handoffs, err = e.compileAcceptedHandoffs(p)
+		if err != nil {
+			return err
+		}
+		semanticContext, err = e.compileFreshInvocationContext(semanticContext)
+		if err != nil {
+			return err
+		}
+		e.traceEvent("context_compiled", map[string]string{"version": provider.InvocationContextVersionV2, "bytes": strconv.Itoa(semanticContext.Receipt.Bytes), "selected_count": strconv.Itoa(len(semanticContext.Receipt.Selected)), "omitted_count": strconv.Itoa(len(semanticContext.Receipt.Omitted)), "digest": semanticContext.Receipt.Digest})
+	}
+	invocationContext := projectInvocationContext(semanticContext)
 	metadata := map[string]string{"actor": actorName}
 	metadata["run_id"] = e.runID
 	if e.nodeExecutionID != "" {
@@ -573,6 +592,7 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		// an adapter-specific or test-supplied TTY signal.
 		presentation = provider.PresentationPlain
 	}
+	e.lastProviderHandoff = nil
 	_, err = e.invokeAgent(ctx, actorName, a, prov, provider.Request{
 		Workspace:         e.Repo.Root,
 		Model:             model,
@@ -586,6 +606,7 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		Metadata:          metadata,
 		Policy:            providerExecutionPolicy(policy),
 		Credentials:       credentials,
+		Handoff:           handoffRequest(structuredHandoff),
 	}, invocation)
 	err = redactExecutionError(err, credentials)
 	if err != nil {
@@ -612,8 +633,25 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		}
 		return fmt.Errorf("provider %s actor %s: %w", prov.Name(), actorName, err)
 	}
+	if structuredHandoff {
+		if err := e.stageHandoff(p, e.lastProviderHandoff, credentials); err != nil {
+			e.recordStructuredHandoffFailure(p, actorName, prov.Name())
+			return fmt.Errorf("provider %s actor %s structured handoff: %w", prov.Name(), actorName, err)
+		}
+	}
 	e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "success"})
 	return nil
+}
+
+func (e *Engine) recordStructuredHandoffFailure(p *workflow.Phase, actor, providerName string) {
+	if p == nil {
+		return
+	}
+	var active ActivePhase
+	if ok, err := e.Store.GetJSON(e.activeRecord(), &active); err == nil && ok && active.PhaseID == p.ID {
+		active.FailureKind, active.FailureStage, active.FailureActor, active.FailureProvider = PhaseFailureProvider, "structured_handoff", actor, providerName
+		_ = e.Store.SetJSON(e.activeRecord(), active)
+	}
 }
 
 func (e *Engine) traceSkippedNode(phase *workflow.Phase, reason string) error {
@@ -794,6 +832,7 @@ func (e *Engine) invokeAgent(ctx context.Context, actorName string, agent workfl
 	e.traceEvent("provider_request", providerRequestTraceFields(prov.Name(), actorName, agent, request, invocation))
 	providerStarted := time.Now()
 	providerResult, providerErr := prov.Run(ctx, request)
+	e.lastProviderHandoff = append(e.lastProviderHandoff[:0], providerResult.Handoff...)
 	e.traceEvent("provider_response", providerResponseTraceFields(prov.Name(), actorName, providerResult, providerErr, time.Since(providerStarted)))
 	if usageErr := e.recordModelUsage(actorName, policy, providerResult.Usage); usageErr != nil {
 		providerErr = errors.Join(providerErr, usageErr)

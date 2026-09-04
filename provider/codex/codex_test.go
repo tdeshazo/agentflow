@@ -165,6 +165,13 @@ func TestBuildArgsOutputLastMessage(t *testing.T) {
 	}
 }
 
+func TestBuildArgsStructuredHandoffUsesOutputSchema(t *testing.T) {
+	args := buildArgs(provider.Request{Workspace: "/repo", Handoff: &provider.HandoffRequest{Version: provider.HandoffVersionV1}, Metadata: map[string]string{"agentflow_handoff_schema": "/tmp/schema.json"}}, "/tmp/last")
+	if !contains(args, "--output-schema") || !contains(args, "/tmp/schema.json") || !contains(args, "--output-last-message") {
+		t.Fatalf("structured handoff args = %#v", args)
+	}
+}
+
 func TestBuildArgsResolvesPresentationAtOutputBoundary(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -522,26 +529,69 @@ func TestRunRejectsUnsupportedApprovalPolicy(t *testing.T) {
 
 func TestRenderInvocationContextIsDeterministicAndResolvesOnlyWorkspace(t *testing.T) {
 	workspace := filepath.Join(string(filepath.Separator), "tmp", "actor-quarantine")
-	context := testInvocationContext("Edit " + provider.WorkspacePlaceholder + "/src/result.txt and preserve /opt/reference.txt.")
-	context.Artifacts = []provider.ArtifactReference{{
-		Name: "result", Producer: "implement", Type: "files",
-		Path: provider.WorkspacePlaceholder + "/src/result.txt", Digest: "abc", Mode: 0o100644,
-	}}
-	context.Validations = []provider.ValidationRequirement{{Name: "gate"}}
+	for _, version := range []string{provider.InvocationContextVersionV1, provider.InvocationContextVersionV2} {
+		t.Run(version, func(t *testing.T) {
+			invocationContext := testInvocationContext("Edit " + provider.WorkspacePlaceholder + "/src/result.txt and preserve /opt/reference.txt.")
+			invocationContext.Version = version
+			invocationContext.Artifacts = []provider.ArtifactReference{{
+				Name: "result", Producer: "implement", Type: "files",
+				Path: provider.WorkspacePlaceholder + "/src/result.txt", Digest: "abc", Mode: 0o100644,
+			}}
+			invocationContext.Validations = []provider.ValidationRequirement{{Name: "gate"}}
 
-	first, err := RenderInvocationContext(context, workspace)
+			first, err := RenderInvocationContext(invocationContext, workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := RenderInvocationContext(invocationContext, workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first != second {
+				t.Fatal("equivalent context rendered differently")
+			}
+			if !strings.HasPrefix(first, "AgentFlow invocation context ("+version+"):") || strings.Contains(first, provider.WorkspacePlaceholder) || !strings.Contains(first, filepath.Join(workspace, "src", "result.txt")) || !strings.Contains(first, "/opt/reference.txt") {
+				t.Fatalf("rendered context did not label its version or resolve only the workspace placeholder:\n%s", first)
+			}
+		})
+	}
+}
+
+func TestContractRetainsExplicitProviderV1Compatibility(t *testing.T) {
+	contract := (Provider{}).Contract()
+	err := contract.Supports(provider.Requirements{
+		ContractVersion:          provider.ContractVersionV1,
+		Modes:                    []provider.ExecutionMode{provider.ExecutionModeAgent},
+		InvocationContextVersion: provider.InvocationContextVersionV1,
+		FilesystemBoundary:       true,
+		ExecutionPolicy:          true,
+	})
+	if err != nil {
+		t.Fatalf("Codex v2 contract rejected explicit v1 workflow requirements: %v", err)
+	}
+}
+
+func TestRunRendersInvocationContextV2(t *testing.T) {
+	workspace := t.TempDir()
+	fake := filepath.Join(t.TempDir(), "codex")
+	promptFile := filepath.Join(t.TempDir(), "prompt")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ncat > \"$PROMPT_FILE\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PROMPT_FILE", promptFile)
+	invocationContext := testInvocationContext("perform the task")
+	invocationContext.Version = provider.InvocationContextVersionV2
+	invocationContext.Receipt = &provider.ContextReceipt{CompilerVersion: "v2", Digest: "sha256:test", Bytes: 1, Selected: []string{}, Omitted: []provider.ContextOmission{}}
+	p := Provider{Binary: fake, Stdout: io.Discard, Stderr: io.Discard}
+	if _, err := p.Run(context.Background(), provider.Request{Workspace: workspace, Context: invocationContext, Approval: "never", Credentials: map[string]string{"PROMPT_FILE": promptFile}}); err != nil {
+		t.Fatal(err)
+	}
+	prompt, err := os.ReadFile(promptFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := RenderInvocationContext(context, workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Fatal("equivalent context rendered differently")
-	}
-	if strings.Contains(first, provider.WorkspacePlaceholder) || !strings.Contains(first, filepath.Join(workspace, "src", "result.txt")) || !strings.Contains(first, "/opt/reference.txt") {
-		t.Fatalf("rendered context did not resolve only the workspace placeholder:\n%s", first)
+	if !strings.HasPrefix(string(prompt), "AgentFlow invocation context ("+provider.InvocationContextVersionV2+"):") {
+		t.Fatalf("v2 prompt = %q", prompt)
 	}
 }
 
