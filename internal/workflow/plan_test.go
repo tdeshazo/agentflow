@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestExpandedPlanRevealsResolvedDefaultsAndAcceptanceOrder(t *testing.T) {
@@ -90,6 +92,48 @@ func TestExpandedPlansExposeContextRecipesAcrossAPIVersions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExpandedPlanExposesTypedInputIdentifiers(t *testing.T) {
+	document, err := Decode(writeWorkflow(t, v1alpha3Fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildExpandedPlan(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := plan.Phases[1].Inputs
+	if len(inputs) != 2 || inputs[0].Artifact != "implementation-result" || inputs[0].Evidence != "" || inputs[1].Artifact != "" || inputs[1].Evidence != "implementation-accepted" {
+		t.Fatalf("planned typed inputs = %#v", inputs)
+	}
+	encoded, err := yaml.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := string(encoded)
+	for _, want := range []string{"artifact: implementation-result", "evidence: implementation-accepted"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expanded plan omitted typed input %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "inputs:\n            - {}") {
+		t.Fatalf("expanded plan serialized a typed input as an empty mapping:\n%s", output)
+	}
+}
+
+func TestExpandedPlanPreservesNilInputs(t *testing.T) {
+	document, err := Decode(writeWorkflow(t, conciseFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildExpandedPlan(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Phases[0].Inputs != nil {
+		t.Fatalf("planned inputs = %#v, want nil", plan.Phases[0].Inputs)
 	}
 }
 

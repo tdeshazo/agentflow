@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/tdeshazo/agentflow/internal/executiontrace"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
 )
@@ -300,6 +302,24 @@ func TestStructuredPhaseUsesV2ContextWithReceipt(t *testing.T) {
 	if got.Version != provider.InvocationContextVersionV2 || got.Receipt == nil || got.Receipt.Digest == "" || got.Receipt.Bytes <= 0 {
 		t.Fatalf("structured context = %#v, want v2 context with compilation receipt", got)
 	}
+	events := readExecutionTrace(t, e)
+	requireTraceEvent(t, events, "context_compiled", func(event executiontrace.Event) bool {
+		return event.Fields["context_version"] == provider.InvocationContextVersionV2 &&
+			event.Fields["context_bytes"] == strconv.Itoa(got.Receipt.Bytes) &&
+			event.Fields["context_selected_count"] == strconv.Itoa(len(got.Receipt.Selected)) &&
+			event.Fields["context_omitted_count"] == strconv.Itoa(len(got.Receipt.Omitted)) &&
+			event.Fields["context_digest"] == got.Receipt.Digest
+	})
+	var accepted AcceptedHandoff
+	if ok, err := e.Store.GetJSON(e.acceptedHandoffRecord("audit"), &accepted); err != nil || !ok {
+		t.Fatalf("accepted handoff: ok=%t err=%v", ok, err)
+	}
+	requireTraceEvent(t, events, "handoff_staged", func(event executiontrace.Event) bool {
+		return event.Fields["handoff_digest"] == accepted.Digest && event.Fields["handoff_status"] == "complete"
+	})
+	requireTraceEvent(t, events, "handoff_accepted", func(event executiontrace.Event) bool {
+		return event.Fields["handoff_digest"] == accepted.Digest
+	})
 }
 
 func writeTypedContractResult(workspace string) error {

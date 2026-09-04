@@ -86,7 +86,7 @@ func (e *Engine) stageHandoff(p *workflow.Phase, raw []byte, credentials map[str
 	if err := e.Store.SetJSON(e.stagedHandoffRecord(p.ID), record); err != nil {
 		return err
 	}
-	e.traceEvent("handoff_staged", map[string]string{"phase": p.ID, "digest": record.Digest, "status": handoff.Status})
+	e.traceEvent("handoff_staged", map[string]string{"phase": p.ID, "handoff_digest": record.Digest, "handoff_status": handoff.Status})
 	return nil
 }
 
@@ -121,7 +121,7 @@ func (e *Engine) publishAcceptedHandoff(p *workflow.Phase, commit string) error 
 	if err := e.Store.SetJSON(e.acceptedHandoffRecord(p.ID), staged); err != nil {
 		return fmt.Errorf("persist accepted handoff for phase %s: %w", p.ID, err)
 	}
-	e.traceEvent("handoff_accepted", map[string]string{"phase": p.ID, "commit": commit, "digest": staged.Digest})
+	e.traceEvent("handoff_accepted", map[string]string{"phase": p.ID, "commit": commit, "handoff_digest": staged.Digest})
 	return nil
 }
 

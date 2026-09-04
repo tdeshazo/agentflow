@@ -145,6 +145,43 @@ func TestProviderRequestTraceMetadataDoesNotHashDynamicModelValues(t *testing.T)
 	}
 }
 
+func TestTraceFieldsRetainStructuredMetadataWithoutPayloads(t *testing.T) {
+	const secret = "handoff-private-payload-cyan"
+	fields := traceFields(map[string]string{
+		"context_version":        provider.InvocationContextVersionV2,
+		"context_bytes":          "512",
+		"context_selected_count": "3",
+		"context_omitted_count":  "1",
+		"context_digest":         "sha256:context",
+		"handoff_digest":         "sha256:handoff",
+		"handoff_status":         "complete",
+		"handoff_payload":        secret,
+		"raw_payload":            secret,
+		"credential":             secret,
+		"secret":                 secret,
+	})
+	for key, want := range map[string]string{
+		"context_version":        provider.InvocationContextVersionV2,
+		"context_bytes":          "512",
+		"context_selected_count": "3",
+		"context_omitted_count":  "1",
+		"context_digest":         "sha256:context",
+		"handoff_digest":         "sha256:handoff",
+		"handoff_status":         "complete",
+	} {
+		if got := fields[key]; got != want {
+			t.Errorf("trace field %q = %q, want %q", key, got, want)
+		}
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secret) {
+		t.Fatalf("trace fields retained private payload material: %s", encoded)
+	}
+}
+
 func TestToolTraceMetadataRecordsExitCodeWithoutCommandOutput(t *testing.T) {
 	repo := newDurableRepo(t)
 	const toolOutput = "failing-tool-private-output-ochre"

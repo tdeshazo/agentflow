@@ -564,7 +564,7 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 		if err != nil {
 			return err
 		}
-		e.traceEvent("context_compiled", map[string]string{"version": provider.InvocationContextVersionV2, "bytes": strconv.Itoa(semanticContext.Receipt.Bytes), "selected_count": strconv.Itoa(len(semanticContext.Receipt.Selected)), "omitted_count": strconv.Itoa(len(semanticContext.Receipt.Omitted)), "digest": semanticContext.Receipt.Digest})
+		e.traceEvent("context_compiled", map[string]string{"context_version": provider.InvocationContextVersionV2, "context_bytes": strconv.Itoa(semanticContext.Receipt.Bytes), "context_selected_count": strconv.Itoa(len(semanticContext.Receipt.Selected)), "context_omitted_count": strconv.Itoa(len(semanticContext.Receipt.Omitted)), "context_digest": semanticContext.Receipt.Digest})
 	}
 	invocationContext := projectInvocationContext(semanticContext)
 	metadata := map[string]string{"actor": actorName}

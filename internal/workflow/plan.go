@@ -93,24 +93,31 @@ type PlannedAgent struct {
 	Policy            ExecutionPolicy `yaml:"policy"`
 }
 type PlannedPhase struct {
-	ID              string               `yaml:"id"`
-	Kind            string               `yaml:"kind"`
-	Actor           string               `yaml:"actor,omitempty"`
-	DependsOn       []string             `yaml:"dependsOn,omitempty"`
-	Reasoning       string               `yaml:"reasoning,omitempty"`
-	RequiresChange  bool                 `yaml:"requiresChange"`
-	CriterionID     string               `yaml:"criterionID,omitempty"`
-	AdvanceProgress bool                 `yaml:"advanceProgress"`
-	Validation      string               `yaml:"validation"`
-	Bookkeeping     []MarkdownTransition `yaml:"bookkeeping,omitempty"`
-	Inputs          []ContractInput      `yaml:"inputs,omitempty"`
-	Outputs         []string             `yaml:"outputs,omitempty"`
-	IfEvidence      string               `yaml:"ifEvidence,omitempty"`
-	ReadOnly        bool                 `yaml:"readOnly,omitempty"`
-	Writes          []string             `yaml:"writes,omitempty"`
-	WorkItemID      string               `yaml:"workItemID,omitempty"`
-	AdvanceWorkItem bool                 `yaml:"advanceWorkItem,omitempty"`
-	Acceptance      []string             `yaml:"acceptance"`
+	ID              string                 `yaml:"id"`
+	Kind            string                 `yaml:"kind"`
+	Actor           string                 `yaml:"actor,omitempty"`
+	DependsOn       []string               `yaml:"dependsOn,omitempty"`
+	Reasoning       string                 `yaml:"reasoning,omitempty"`
+	RequiresChange  bool                   `yaml:"requiresChange"`
+	CriterionID     string                 `yaml:"criterionID,omitempty"`
+	AdvanceProgress bool                   `yaml:"advanceProgress"`
+	Validation      string                 `yaml:"validation"`
+	Bookkeeping     []MarkdownTransition   `yaml:"bookkeeping,omitempty"`
+	Inputs          []PlannedContractInput `yaml:"inputs,omitempty"`
+	Outputs         []string               `yaml:"outputs,omitempty"`
+	IfEvidence      string                 `yaml:"ifEvidence,omitempty"`
+	ReadOnly        bool                   `yaml:"readOnly,omitempty"`
+	Writes          []string               `yaml:"writes,omitempty"`
+	WorkItemID      string                 `yaml:"workItemID,omitempty"`
+	AdvanceWorkItem bool                   `yaml:"advanceWorkItem,omitempty"`
+	Acceptance      []string               `yaml:"acceptance"`
+}
+
+// PlannedContractInput exposes the declared typed handoff identifier in an
+// expanded plan without reusing the internal-only ContractInput wire type.
+type PlannedContractInput struct {
+	Artifact string `yaml:"artifact,omitempty"`
+	Evidence string `yaml:"evidence,omitempty"`
 }
 
 // PlannedContextRecipe explains invocation-time context selection without
@@ -273,7 +280,7 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 			DependsOn: n.DependencyGraph.dependenciesForPhase(phaseIndex), Reasoning: p.Reasoning,
 			RequiresChange: p.RequiresChange, CriterionID: criterionID,
 			AdvanceProgress: p.AdvanceProgress, Validation: validation,
-			Bookkeeping: p.Bookkeeping, Inputs: append([]ContractInput(nil), p.Inputs...),
+			Bookkeeping: p.Bookkeeping, Inputs: plannedContractInputs(p.Inputs),
 			Outputs: append([]string(nil), p.Outputs...), IfEvidence: p.IfEvidence,
 			ReadOnly: p.ReadOnly, Writes: append([]string(nil), p.Writes...), WorkItemID: p.WorkItemID, AdvanceWorkItem: p.AdvanceWorkItem, Acceptance: acceptance,
 		})
@@ -321,6 +328,18 @@ func BuildExpandedPlan(d *Document) (ExpandedPlan, error) {
 		}
 	}
 	return plan, nil
+}
+
+func plannedContractInputs(inputs []ContractInput) []PlannedContractInput {
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	planned := make([]PlannedContractInput, len(inputs))
+	for i, input := range inputs {
+		planned[i] = PlannedContractInput{Artifact: input.Artifact, Evidence: input.Evidence}
+	}
+	return planned
 }
 
 func plannedContextRecipe(role, phase, validation string, includeFailure bool) PlannedContextRecipe {
