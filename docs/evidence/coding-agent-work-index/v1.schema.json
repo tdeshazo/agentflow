@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "docs/evidence/coding-agent-work-index/v1.schema.json",
+  "title": "AgentFlow coding-agent work index v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema_version", "index_version", "entries", "failure_modes"],
+  "properties": {
+    "$schema": {"const": "docs/evidence/coding-agent-work-index/v1.schema.json"},
+    "schema_version": {"const": "agentflow.dev/coding-agent-work-index/v1"},
+    "index_version": {"const": 1},
+    "entries": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/entry"}},
+    "failure_modes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/failureMode"}}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "nonEmptyString": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "task_class", "title", "scope", "outcome", "evidence", "trace", "metrics"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "task_class": {"enum": ["implementation", "review_correction", "isolated_workflow_validation", "runtime_safety", "semantic_handoff", "provider_tool_extensibility"]},
+        "title": {"$ref": "#/$defs/nonEmptyString"},
+        "scope": {"$ref": "#/$defs/nonEmptyString"},
+        "outcome": {"$ref": "#/$defs/outcome"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evidence"}},
+        "trace": {"$ref": "#/$defs/trace"},
+        "metrics": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"$ref": "#/$defs/tokenMetric"},
+            {"$ref": "#/$defs/toolMetric"},
+            {"$ref": "#/$defs/reviewMetric"}
+          ],
+          "items": false
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"enum": ["implementation_evidence_present", "review_findings_documented", "validation_evidence_present"]},
+        "summary": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "repo_relative_path", "description"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "kind": {"enum": ["evidence_document", "example", "implementation", "review_document", "sanitized_trace", "test"]},
+        "repo_relative_path": {"type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\]+(?:/[^\\\\]+)*$"},
+        "description": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "trace": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["captured", "unavailable"]},
+        "source_evidence_ids": {"$ref": "#/$defs/evidenceIDs"},
+        "source": {"$ref": "#/$defs/traceSource"},
+        "actions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/traceAction"}},
+        "reason": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "required": ["status"],
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "captured"}}, "required": ["status"]},
+          "then": {"required": ["source_evidence_ids", "source", "actions"], "not": {"required": ["reason"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+          "then": {"required": ["reason"], "not": {"anyOf": [{"required": ["source_evidence_ids"]}, {"required": ["source"]}, {"required": ["actions"]}]}}
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "traceSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_type", "ledger_sha256", "sequence_first", "sequence_last", "derivation"],
+      "properties": {
+        "record_type": {"const": "structured_context_event_ledger"},
+        "ledger_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "sequence_first": {"type": "integer", "minimum": 1},
+        "sequence_last": {"type": "integer", "minimum": 1},
+        "derivation": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "traceAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order", "phase", "action_summary", "tool_categories"],
+      "properties": {
+        "order": {"type": "integer", "minimum": 1},
+        "phase": {"$ref": "#/$defs/nonEmptyString"},
+        "action_summary": {"$ref": "#/$defs/nonEmptyString"},
+        "tool_categories": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}}
+      }
+    },
+    "evidenceIDs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+    "metricProvenance": {
+      "type": "object",
+      "properties": {
+        "evidence_ids": {"$ref": "#/$defs/evidenceIDs"},
+        "measurement": {"$ref": "#/$defs/nonEmptyString"},
+        "calculation": {
+          "oneOf": [
+            {"$ref": "#/$defs/elapsedMinutesCalculation"},
+            {"$ref": "#/$defs/sumCalculation"}
+          ]
+        },
+        "reason": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "required": ["evidence_ids"],
+      "additionalProperties": false
+    },
+    "elapsedMinutesCalculation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "started_at", "ended_at", "decimal_places"],
+      "properties": {
+        "operation": {"const": "elapsed_minutes"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "decimal_places": {"type": "integer", "minimum": 0, "maximum": 6}
+      }
+    },
+    "sumCalculation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "operands"],
+      "properties": {
+        "operation": {"const": "sum"},
+        "operands": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}}
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "unit", "provenance"],
+      "properties": {
+        "name": {"enum": ["token_count", "tool_calls", "review_time"]},
+        "status": {"enum": ["exact", "derived", "unavailable", "not_applicable"]},
+        "unit": {"enum": ["calls", "minutes", "tokens"]},
+        "value": {"type": "number", "minimum": 0},
+        "provenance": {"$ref": "#/$defs/metricProvenance"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "exact"}}, "required": ["status"]},
+          "then": {"required": ["value"], "properties": {"provenance": {"required": ["measurement"], "not": {"anyOf": [{"required": ["calculation"]}, {"required": ["reason"]}]}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "derived"}}, "required": ["status"]},
+          "then": {"required": ["value"], "properties": {"provenance": {"required": ["calculation"], "not": {"anyOf": [{"required": ["measurement"]}, {"required": ["reason"]}]}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+          "then": {"not": {"required": ["value"]}, "properties": {"provenance": {"required": ["reason"], "not": {"anyOf": [{"required": ["measurement"]}, {"required": ["calculation"]}]}}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not_applicable"}}, "required": ["status"]},
+          "then": {"not": {"required": ["value"]}, "properties": {"provenance": {"required": ["reason"], "not": {"anyOf": [{"required": ["measurement"]}, {"required": ["calculation"]}]}}}}
+        }
+      ]
+    },
+    "tokenMetric": {
+      "allOf": [
+        {"$ref": "#/$defs/metric"},
+        {"properties": {"name": {"const": "token_count"}, "unit": {"const": "tokens"}, "value": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}}},
+        {
+          "if": {"properties": {"status": {"const": "derived"}}, "required": ["status"]},
+          "then": {"properties": {"provenance": {"properties": {"calculation": {"$ref": "#/$defs/sumCalculation"}}}}}
+        }
+      ]
+    },
+    "toolMetric": {
+      "allOf": [
+        {"$ref": "#/$defs/metric"},
+        {"properties": {"name": {"const": "tool_calls"}, "unit": {"const": "calls"}, "value": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}}},
+        {
+          "if": {"properties": {"status": {"const": "derived"}}, "required": ["status"]},
+          "then": {"properties": {"provenance": {"properties": {"calculation": {"$ref": "#/$defs/sumCalculation"}}}}}
+        }
+      ]
+    },
+    "reviewMetric": {
+      "allOf": [
+        {"$ref": "#/$defs/metric"},
+        {"properties": {"name": {"const": "review_time"}, "unit": {"const": "minutes"}, "value": {"type": "number", "minimum": 0}}},
+        {
+          "if": {"properties": {"status": {"const": "derived"}}, "required": ["status"]},
+          "then": {"properties": {"provenance": {"properties": {"calculation": {"$ref": "#/$defs/elapsedMinutesCalculation"}}}}}
+        }
+      ]
+    },
+    "failureMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "observed_task_ids", "frequency"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "title": {"$ref": "#/$defs/nonEmptyString"},
+        "description": {"$ref": "#/$defs/nonEmptyString"},
+        "observed_task_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "frequency": {"$ref": "#/$defs/failureFrequency"}
+      }
+    },
+    "failureFrequency": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["sample_observed", "unavailable"]},
+        "value": {"type": "integer", "minimum": 1},
+        "unit": {"const": "tasks"},
+        "calculation": {"$ref": "#/$defs/nonEmptyString"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "evidence_ids": {"$ref": "#/$defs/evidenceIDs"}
+      },
+      "required": ["status", "evidence_ids"],
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "sample_observed"}}, "required": ["status"]},
+          "then": {"required": ["value", "unit", "calculation"], "not": {"required": ["reason"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "unavailable"}}, "required": ["status"]},
+          "then": {"required": ["reason"], "not": {"anyOf": [{"required": ["value"]}, {"required": ["unit"]}, {"required": ["calculation"]}]}}
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

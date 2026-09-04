@@ -10,6 +10,10 @@ authority for field semantics or runtime behavior; use the
 
 Current closure records:
 
+- [Coding-agent work index](coding-agent-work-index/README.md) records a
+  privacy-safe, evidence-backed representative sample of AgentFlow build work
+  and its available metrics.
+
 - [Stage 7 executor and tool extensibility](stage-7-executor-tool-extensibility.md)
   records versioned provider/tool contracts, capability negotiation, typed
   deterministic plugins, and fail-closed boundaries.

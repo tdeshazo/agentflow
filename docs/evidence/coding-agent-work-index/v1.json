@@ -1,0 +1,325 @@
+{
+  "$schema": "docs/evidence/coding-agent-work-index/v1.schema.json",
+  "schema_version": "agentflow.dev/coding-agent-work-index/v1",
+  "index_version": 1,
+  "entries": [
+    {
+      "id": "implementation-structured-handoff",
+      "task_class": "implementation",
+      "title": "Implement provider-independent semantic context and handoffs",
+      "scope": "Build a closed semantic context representation, isolate provider projection, and preserve compatible runtime behavior.",
+      "outcome": {
+        "status": "implementation_evidence_present",
+        "summary": "The implementation, correction cycle, and final independent approval are represented by checked-in code, tests, and this sanitized orchestration trace."
+      },
+      "evidence": [
+        {
+          "id": "implementation-handoff-tests",
+          "kind": "test",
+          "repo_relative_path": "internal/engine/handoff_test.go",
+          "description": "Covers staged handoff integrity, semantic encoding validation, and recovery rejection paths."
+        },
+        {
+          "id": "implementation-semantic-context",
+          "kind": "implementation",
+          "repo_relative_path": "internal/engine/semantic_context.go",
+          "description": "Defines the runtime-owned semantic handoff representation."
+        },
+        {
+          "id": "implementation-trace",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted action sequence, derived from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["implementation-trace"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:f056743ad158fa309bf8c946f60fff4a0780668f2fa3024b3184b2a2a629485c",
+          "sequence_first": 2,
+          "sequence_last": 20,
+          "derivation": "Ordered role phases, summarized changes, validation categories, and final status were manually projected from allowlisted event fields; raw conversation and command material were excluded."
+        },
+        "actions": [
+          {"order": 1, "phase": "implementation", "action_summary": "Implemented semantic context types, provider projection isolation, handoff conversion, and compatibility regressions.", "tool_categories": ["cross-platform-build", "repository-editing", "static-analysis", "test-execution"]},
+          {"order": 2, "phase": "independent-review", "action_summary": "Found semantic validation, context-selection, compatibility, and repair-preflight gaps.", "tool_categories": ["code-review", "static-analysis", "test-execution"]},
+          {"order": 3, "phase": "correction", "action_summary": "Corrected the four reported gaps and extended provider-mode preflight coverage.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 4, "phase": "final-review", "action_summary": "Verified semantic boundaries and every reviewed provider invocation mode, then approved the work.", "tool_categories": ["code-review", "static-analysis", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["implementation-trace"], "reason": "The source ledger has no provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["implementation-trace"], "reason": "The source ledger records validation categories but not a complete tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 59.9, "provenance": {"evidence_ids": ["implementation-trace"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T13:19:45Z", "ended_at": "2026-09-04T14:19:39Z", "decimal_places": 1}}}
+      ]
+    },
+    {
+      "id": "isolated-workflow-validation",
+      "task_class": "isolated_workflow_validation",
+      "title": "Validate the canonical workflow in an isolated repository",
+      "scope": "Exercise ordinary and structured phases, handoff binding, scratch containment, completion, and idempotent rerun behavior.",
+      "outcome": {
+        "status": "validation_evidence_present",
+        "summary": "A corrected disposable harness produced independently verified evidence while leaving the source repository unchanged."
+      },
+      "evidence": [
+        {
+          "id": "isolated-validation-closure",
+          "kind": "evidence_document",
+          "repo_relative_path": "docs/evidence/canonical-self-hosting-migration.md",
+          "description": "Documents the canonical workflow's executable proof boundary."
+        },
+        {
+          "id": "isolated-validation-test",
+          "kind": "test",
+          "repo_relative_path": "internal/engine/reference_workflow_test.go",
+          "description": "Exercises the canonical workflow in an isolated Git repository."
+        },
+        {
+          "id": "isolated-validation-trace",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted action sequence, derived from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["isolated-validation-trace"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:c52ccd37b841055681c9a8adc429c23dd2c701dcbf558587e7821552c1fb3a1d",
+          "sequence_first": 2,
+          "sequence_last": 12,
+          "derivation": "Ordered phases and validation summaries were manually projected from allowlisted event fields; disposable paths, runtime identities, raw adapter material, and command output were excluded."
+        },
+        "actions": [
+          {"order": 1, "phase": "isolated-validation", "action_summary": "Ran the canonical workflow and retained bounded evidence for completion, handoffs, and rerun behavior.", "tool_categories": ["evidence-capture", "isolated-workflow", "test-execution"]},
+          {"order": 2, "phase": "independent-review", "action_summary": "Identified that exact adapter-boundary evidence had been discarded by the first harness.", "tool_categories": ["code-review", "evidence-verification"]},
+          {"order": 3, "phase": "correction", "action_summary": "Reran the workflow with append-only sanitized boundary records and containment assertions.", "tool_categories": ["evidence-capture", "isolated-workflow", "test-execution"]},
+          {"order": 4, "phase": "final-review", "action_summary": "Verified exact context shapes, handoff binding, containment, safe traces, completion, and idempotent rerun.", "tool_categories": ["code-review", "evidence-verification", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["isolated-validation-trace"], "reason": "The controlled validation ledger does not contain provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["isolated-validation-trace"], "reason": "The ledger reports selected validation results but not a complete comparable tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 22.3333, "provenance": {"evidence_ids": ["isolated-validation-trace"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T14:53:44Z", "ended_at": "2026-09-04T15:16:04Z", "decimal_places": 4}}}
+      ]
+    },
+    {
+      "id": "provider-tool-extensibility",
+      "task_class": "provider_tool_extensibility",
+      "title": "Correct provider capability negotiation and preflight coverage",
+      "scope": "Preserve provider-independent compilation while ensuring ordinary, structured, repair, and mixed-mode invocations are rejected before incompatible execution.",
+      "outcome": {
+        "status": "implementation_evidence_present",
+        "summary": "Successive review findings expanded preflight coverage until final review found no remaining provider invocation gap."
+      },
+      "evidence": [
+        {
+          "id": "provider-tool-tests",
+          "kind": "test",
+          "repo_relative_path": "internal/engine/extensions_test.go",
+          "description": "Covers provider contracts, typed tools, malformed configuration, and capability rejection."
+        },
+        {
+          "id": "provider-tool-trace",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted preflight correction sequence from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["provider-tool-trace"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:f056743ad158fa309bf8c946f60fff4a0780668f2fa3024b3184b2a2a629485c",
+          "sequence_first": 4,
+          "sequence_last": 20,
+          "derivation": "Provider-mode findings and bounded correction checkpoints were manually projected from allowlisted event fields and grouped without retaining provider payloads or command material."
+        },
+        "actions": [
+          {"order": 1, "phase": "review", "action_summary": "Detected that ordinary phases could preflight a provider lacking the context version used at runtime.", "tool_categories": ["code-review", "test-execution"]},
+          {"order": 2, "phase": "correction", "action_summary": "Required capability coverage for ordinary, structured, repair, and mixed-mode phase invocations.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 3, "phase": "review-addendum", "action_summary": "Found phase-less validation repair actors outside invocation-mode reachability.", "tool_categories": ["code-review", "test-execution"]},
+          {"order": 4, "phase": "correction-addendum", "action_summary": "Extended preflight across standalone and before-phase validation repair paths.", "tool_categories": ["cross-platform-build", "repository-editing", "static-analysis", "test-execution"]},
+          {"order": 5, "phase": "final-review", "action_summary": "Approved provider negotiation and preflight after all reviewed execution paths passed.", "tool_categories": ["code-review", "static-analysis", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["provider-tool-trace"], "reason": "The source ledger has no provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["provider-tool-trace"], "reason": "The source ledger names validation categories but does not establish a complete tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 59.9, "provenance": {"evidence_ids": ["provider-tool-trace"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T13:19:45Z", "ended_at": "2026-09-04T14:19:39Z", "decimal_places": 1}}}
+      ]
+    },
+    {
+      "id": "review-correction-integrity",
+      "task_class": "review_correction",
+      "title": "Review and correct expanded-plan compatibility",
+      "scope": "Independently review typed-input projection and safe trace metadata changes, then correct the observed nil-versus-empty compatibility regression.",
+      "outcome": {
+        "status": "review_findings_documented",
+        "summary": "The correction restored the prior direct-value and JSON representation and final independent review approved both scoped changes."
+      },
+      "evidence": [
+        {
+          "id": "review-correction-tests",
+          "kind": "test",
+          "repo_relative_path": "internal/workflow/plan_test.go",
+          "description": "Covers typed input projection and nil-input compatibility."
+        },
+        {
+          "id": "review-correction-trace",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted review and correction sequence from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["review-correction-trace"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:db5d6ae30352c40d4ac25f5a4653e8df7498697cdfc1760a649f6b85d92cba2b",
+          "sequence_first": 4,
+          "sequence_last": 11,
+          "derivation": "The review finding, bounded correction summary, validation categories, and approval were manually projected from allowlisted event fields."
+        },
+        "actions": [
+          {"order": 1, "phase": "independent-review", "action_summary": "Detected that zero typed inputs changed from a nil slice to a non-nil empty slice.", "tool_categories": ["code-review", "static-analysis", "test-execution"]},
+          {"order": 2, "phase": "correction", "action_summary": "Restored nil preservation and added a direct-value compatibility regression.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 3, "phase": "final-review", "action_summary": "Verified the compatibility correction and approved the original scoped changes.", "tool_categories": ["code-review", "static-analysis", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["review-correction-trace"], "reason": "The source ledger has no provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["review-correction-trace"], "reason": "The source ledger records validation categories but not a complete tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 22.0833, "provenance": {"evidence_ids": ["review-correction-trace"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T15:31:13Z", "ended_at": "2026-09-04T15:53:18Z", "decimal_places": 4}}}
+      ]
+    },
+    {
+      "id": "runtime-safety-trace-privacy",
+      "task_class": "runtime_safety",
+      "title": "Preserve safe structured trace metadata",
+      "scope": "Allowlist event-specific context and handoff metadata while excluding payload and secret material.",
+      "outcome": {
+        "status": "validation_evidence_present",
+        "summary": "Focused privacy regressions, package tests, static checks, and final independent review validated the narrow trace-field changes."
+      },
+      "evidence": [
+        {
+          "id": "runtime-trace-tests",
+          "kind": "test",
+          "repo_relative_path": "internal/engine/trace_metadata_test.go",
+          "description": "Verifies allowlisted trace metadata and private-content exclusion."
+        },
+        {
+          "id": "runtime-trace-work",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted implementation and review sequence from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["runtime-trace-work"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:db5d6ae30352c40d4ac25f5a4653e8df7498697cdfc1760a649f6b85d92cba2b",
+          "sequence_first": 2,
+          "sequence_last": 11,
+          "derivation": "Implementation, privacy validation, review, correction, and approval summaries were manually projected from allowlisted event fields; sensitive values and raw outputs were excluded."
+        },
+        "actions": [
+          {"order": 1, "phase": "implementation", "action_summary": "Added narrowly named structured-context and handoff trace fields with privacy regressions.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 2, "phase": "independent-review", "action_summary": "Verified privacy boundaries and reported one separate serialization compatibility issue.", "tool_categories": ["code-review", "static-analysis", "test-execution"]},
+          {"order": 3, "phase": "correction", "action_summary": "Corrected the compatibility issue without broadening trace metadata.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 4, "phase": "final-review", "action_summary": "Approved safe trace metadata, exclusion regressions, and compatibility behavior.", "tool_categories": ["code-review", "static-analysis", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["runtime-trace-work"], "reason": "The source ledger has no provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["runtime-trace-work"], "reason": "The source ledger records validation categories but not a complete tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 22.0833, "provenance": {"evidence_ids": ["runtime-trace-work"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T15:31:13Z", "ended_at": "2026-09-04T15:53:18Z", "decimal_places": 4}}}
+      ]
+    },
+    {
+      "id": "semantic-fresh-context-handoff",
+      "task_class": "semantic_handoff",
+      "title": "Review semantic handoff validation boundaries",
+      "scope": "Verify that accepted handoffs remain provider-independent through staging, persistence, recovery, compilation, and projection.",
+      "outcome": {
+        "status": "validation_evidence_present",
+        "summary": "Review exposed provider-projected validation, correction introduced closed semantic validation, and final review approved the boundary."
+      },
+      "evidence": [
+        {
+          "id": "semantic-handoff-tests",
+          "kind": "test",
+          "repo_relative_path": "internal/engine/handoff_test.go",
+          "description": "Covers deterministic receipts, foreign-run rejection, and semantic encoding compatibility."
+        },
+        {
+          "id": "semantic-handoff-trace",
+          "kind": "sanitized_trace",
+          "repo_relative_path": "docs/evidence/coding-agent-work-index/v1.json",
+          "description": "This entry's allowlisted semantic-boundary sequence from the digest-identified orchestration ledger."
+        }
+      ],
+      "trace": {
+        "status": "captured",
+        "source_evidence_ids": ["semantic-handoff-trace"],
+        "source": {
+          "record_type": "structured_context_event_ledger",
+          "ledger_sha256": "sha256:f056743ad158fa309bf8c946f60fff4a0780668f2fa3024b3184b2a2a629485c",
+          "sequence_first": 2,
+          "sequence_last": 20,
+          "derivation": "Semantic-boundary implementation, review, correction, validation categories, and approval were manually projected from allowlisted event fields."
+        },
+        "actions": [
+          {"order": 1, "phase": "implementation", "action_summary": "Introduced semantic context and handoff values before provider projection.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 2, "phase": "independent-review", "action_summary": "Found that persistence and recovery still validated semantic handoffs through provider projection.", "tool_categories": ["code-review", "test-execution"]},
+          {"order": 3, "phase": "correction", "action_summary": "Added closed semantic handoff validation for staging, publication, consumption, and recovery.", "tool_categories": ["repository-editing", "static-analysis", "test-execution"]},
+          {"order": 4, "phase": "final-review", "action_summary": "Verified provider-independent semantic validation and projection isolation.", "tool_categories": ["code-review", "static-analysis", "test-execution"]}
+        ]
+      },
+      "metrics": [
+        {"name": "token_count", "status": "unavailable", "unit": "tokens", "provenance": {"evidence_ids": ["semantic-handoff-trace"], "reason": "The source ledger has no provider token telemetry."}},
+        {"name": "tool_calls", "status": "unavailable", "unit": "calls", "provenance": {"evidence_ids": ["semantic-handoff-trace"], "reason": "The source ledger records validation categories but not a complete tool-call count."}},
+        {"name": "review_time", "status": "derived", "unit": "minutes", "value": 59.9, "provenance": {"evidence_ids": ["semantic-handoff-trace"], "calculation": {"operation": "elapsed_minutes", "started_at": "2026-09-04T13:19:45Z", "ended_at": "2026-09-04T14:19:39Z", "decimal_places": 1}}}
+      ]
+    }
+  ],
+  "failure_modes": [
+    {
+      "id": "discarded-validation-evidence",
+      "title": "A validation harness discards evidence needed for review",
+      "description": "The first isolated run retained conclusions but omitted exact adapter-boundary records, requiring a corrected evidence capture.",
+      "observed_task_ids": ["isolated-workflow-validation"],
+      "frequency": {"status": "sample_observed", "value": 1, "unit": "tasks", "calculation": "Count of unique observed_task_ids in this curated index.", "evidence_ids": ["isolated-validation-trace"]}
+    },
+    {
+      "id": "incomplete-provider-preflight",
+      "title": "Provider preflight omits a reachable invocation mode",
+      "description": "Review found ordinary and repair invocation paths that could accept a provider lacking the context capability used at runtime.",
+      "observed_task_ids": ["provider-tool-extensibility"],
+      "frequency": {"status": "sample_observed", "value": 1, "unit": "tasks", "calculation": "Count of unique observed_task_ids in this curated index.", "evidence_ids": ["provider-tool-trace"]}
+    },
+    {
+      "id": "nil-empty-compatibility",
+      "title": "A projection changes nil data to an empty collection",
+      "description": "Review observed a direct-value and JSON compatibility change for input-less phases after typed-input projection.",
+      "observed_task_ids": ["review-correction-integrity"],
+      "frequency": {"status": "sample_observed", "value": 1, "unit": "tasks", "calculation": "Count of unique observed_task_ids in this curated index.", "evidence_ids": ["review-correction-trace"]}
+    },
+    {
+      "id": "provider-projected-semantic-validation",
+      "title": "Semantic validation depends on provider projection",
+      "description": "Review observed persistence and recovery validating a semantic handoff by converting it back to a provider wire representation.",
+      "observed_task_ids": ["semantic-fresh-context-handoff"],
+      "frequency": {"status": "sample_observed", "value": 1, "unit": "tasks", "calculation": "Count of unique observed_task_ids in this curated index.", "evidence_ids": ["semantic-handoff-trace"]}
+    }
+  ]
+}
