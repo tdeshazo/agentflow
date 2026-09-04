@@ -11,6 +11,7 @@ import (
 
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/internal/workspacepath"
+	"github.com/tdeshazo/agentflow/tool"
 )
 
 const (
@@ -87,6 +88,7 @@ func (e *Engine) validationEvidenceKey(name string, v workflow.Validation, p *wo
 	}
 
 	tools := map[string]workflow.Tool{}
+	descriptors := map[string]tool.Descriptor{}
 	resolved := make([]resolvedValidationToolUse, 0, len(v.Steps)+len(v.OnFailure.Then))
 	for _, use := range append(append([]workflow.ToolUse{}, v.Steps...), v.OnFailure.Then...) {
 		t, ok := e.Workflow.Spec.Tools[use.Uses]
@@ -94,6 +96,13 @@ func (e *Engine) validationEvidenceKey(name string, v workflow.Validation, p *wo
 			return validationEvidenceKey{}, false, fmt.Errorf("unknown tool %q", use.Uses)
 		}
 		tools[use.Uses] = t
+		if !builtinTool(t.Type) {
+			plugin, ok := e.ToolRegistry.Lookup(t.Type)
+			if !ok {
+				return validationEvidenceKey{}, false, fmt.Errorf("tool plugin type %q is not registered", t.Type)
+			}
+			descriptors[use.Uses] = plugin.Descriptor()
+		}
 		enabled := true
 		if use.If != "" {
 			enabled, err = e.bool(p, use.If)
@@ -133,9 +142,10 @@ func (e *Engine) validationEvidenceKey(name string, v workflow.Validation, p *wo
 		})
 	}
 	definitionDigest, err := digestCanonicalJSON(struct {
-		Validation workflow.Validation      `json:"validation"`
-		Tools      map[string]workflow.Tool `json:"tools"`
-	}{Validation: v, Tools: tools})
+		Validation  workflow.Validation        `json:"validation"`
+		Tools       map[string]workflow.Tool   `json:"tools"`
+		Descriptors map[string]tool.Descriptor `json:"plugin_descriptors,omitempty"`
+	}{Validation: v, Tools: tools, Descriptors: descriptors})
 	if err != nil {
 		return validationEvidenceKey{}, false, err
 	}
@@ -205,7 +215,13 @@ func (e *Engine) validationCacheable(v workflow.Validation) (bool, error) {
 		case "git-checkpoint":
 			return false, nil
 		default:
-			return false, nil
+			if t.MutatesWorkspace {
+				return false, nil
+			}
+			plugin, ok := e.ToolRegistry.Lookup(t.Type)
+			if !ok || !plugin.Descriptor().Cacheable() {
+				return false, nil
+			}
 		}
 	}
 	return true, nil

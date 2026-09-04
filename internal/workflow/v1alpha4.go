@@ -23,7 +23,7 @@ type V1Alpha4Spec struct {
 	Execution     V1Alpha2Execution             `yaml:"execution"`
 	Workspace     V1Alpha2Workspace             `yaml:"workspace"`
 	Agents        map[string]V1Alpha2Agent      `yaml:"agents"`
-	Tools         map[string]Tool               `yaml:"tools"`
+	Tools         map[string]V1Alpha2Tool       `yaml:"tools"`
 	Preconditions []Check                       `yaml:"preconditions"`
 	Validation    map[string]V1Alpha3Validation `yaml:"validation"`
 	Artifacts     map[string]V1Alpha3Artifact   `yaml:"artifacts"`

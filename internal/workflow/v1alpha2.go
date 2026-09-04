@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tdeshazo/agentflow/internal/workspacepath"
+	"github.com/tdeshazo/agentflow/provider"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,7 +37,7 @@ type V1Alpha2Spec struct {
 	Execution     V1Alpha2Execution             `yaml:"execution"`
 	Workspace     V1Alpha2Workspace             `yaml:"workspace"`
 	Agents        map[string]V1Alpha2Agent      `yaml:"agents"`
-	Tools         map[string]Tool               `yaml:"tools"`
+	Tools         map[string]V1Alpha2Tool       `yaml:"tools"`
 	Preconditions []Check                       `yaml:"preconditions"`
 	Validation    map[string]V1Alpha2Validation `yaml:"validation"`
 	Phases        []V1Alpha2Phase               `yaml:"phases"`
@@ -54,6 +55,24 @@ type V1Alpha2Workspace struct {
 	AllowWrites    []string               `yaml:"allowWrites"`
 	Integrity      []IntegrityRule        `yaml:"integrity"`
 	Initialization V1Alpha2Initialization `yaml:"initialization"`
+}
+
+// V1Alpha2Tool adds typed plugin configuration without changing the frozen
+// v1alpha1 Tool grammar.
+type V1Alpha2Tool struct {
+	Type              string         `yaml:"type"`
+	Command           string         `yaml:"command"`
+	Policy            string         `yaml:"policy"`
+	Stage             string         `yaml:"stage"`
+	MutatesWorkspace  bool           `yaml:"mutates_workspace"`
+	Capture           Capture        `yaml:"capture"`
+	CommitIfDirty     bool           `yaml:"commit_if_dirty"`
+	RequireCleanAfter bool           `yaml:"require_clean_after"`
+	Config            map[string]any `yaml:"config"`
+}
+
+func (t V1Alpha2Tool) runtimeTool() Tool {
+	return Tool{Type: t.Type, Command: t.Command, Policy: t.Policy, Stage: t.Stage, MutatesWorkspace: t.MutatesWorkspace, Capture: t.Capture, CommitIfDirty: t.CommitIfDirty, RequireCleanAfter: t.RequireCleanAfter, Config: t.Config}
 }
 
 // V1Alpha2Initialization expresses observable repository safety policy. The
@@ -119,14 +138,15 @@ func (r *V1Alpha2Reset) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type V1Alpha2Agent struct {
-	Runner            string           `yaml:"runner"`
-	Model             string           `yaml:"model"`
-	Sandbox           string           `yaml:"sandbox"`
-	Approval          string           `yaml:"approval"`
-	Ephemeral         bool             `yaml:"ephemeral"`
-	MayCommit         bool             `yaml:"may_commit"`
-	OutputLastMessage bool             `yaml:"output_last_message"`
-	Policy            *ExecutionPolicy `yaml:"policy"`
+	Runner            string                `yaml:"runner"`
+	Model             string                `yaml:"model"`
+	Sandbox           string                `yaml:"sandbox"`
+	Approval          string                `yaml:"approval"`
+	Ephemeral         bool                  `yaml:"ephemeral"`
+	MayCommit         bool                  `yaml:"may_commit"`
+	OutputLastMessage bool                  `yaml:"output_last_message"`
+	Policy            *ExecutionPolicy      `yaml:"policy"`
+	Requirements      provider.Requirements `yaml:"requirements"`
 }
 
 // UnmarshalYAML keeps named and inline v1alpha2 agents on exactly the same
@@ -176,6 +196,8 @@ func (a *V1Alpha2Agent) UnmarshalYAML(n *yaml.Node) error {
 			var policy ExecutionPolicy
 			err = decodeKnownNode(value, &policy)
 			out.Policy = &policy
+		case "requirements":
+			err = decodeKnownNode(value, &out.Requirements)
 		default:
 			return fmt.Errorf("line %d: field %s not found in type workflow.V1Alpha2Agent", keyNode.Line, key)
 		}
@@ -446,7 +468,7 @@ func normalizeV1Alpha2(authored *V1Alpha2Workflow, locations Locations) (*Docume
 		w.Spec.Agents[name] = normalizeV1Alpha2Agent(agent)
 	}
 	for name, tool := range authored.Spec.Tools {
-		w.Spec.Tools[name] = tool
+		w.Spec.Tools[name] = tool.runtimeTool()
 	}
 	w.Spec.Preconditions = append([]Check(nil), authored.Spec.Preconditions...)
 	for name, validation := range authored.Spec.Validation {
@@ -533,6 +555,7 @@ func normalizeV1Alpha2Agent(agent V1Alpha2Agent) Agent {
 		MayCommit:         agent.MayCommit,
 		OutputLastMessage: agent.OutputLastMessage,
 		Policy:            agent.Policy,
+		Requirements:      agent.Requirements,
 	}
 }
 
@@ -738,6 +761,9 @@ func (v v1alpha2Validator) roots() {
 		if a.Model == "" {
 			v.add("spec.agents."+name+".model", "is required")
 		}
+		if err := a.Requirements.Validate(); err != nil {
+			v.add("spec.agents."+name+".requirements", "%v", err)
+		}
 	}
 	for _, name := range sortedKeys(v.w.Spec.Parameters) {
 		parameter := v.w.Spec.Parameters[name]
@@ -747,7 +773,7 @@ func (v v1alpha2Validator) roots() {
 	for _, name := range sortedKeys(v.w.Spec.Tools) {
 		tool := v.w.Spec.Tools[name]
 		v.identifier("spec.tools", "tool", name)
-		v.toolDefinition("spec.tools."+name, tool)
+		v.toolDefinition("spec.tools."+name, tool.runtimeTool())
 	}
 	v.integrity()
 	v.preconditions()
@@ -924,6 +950,9 @@ func (v v1alpha2Validator) agentFields(path string, agent V1Alpha2Agent) {
 	if agent.Model == "" {
 		v.add(path+".model", "is required")
 	}
+	if err := agent.Requirements.Validate(); err != nil {
+		v.add(path+".requirements", "%v", err)
+	}
 }
 
 func (v v1alpha2Validator) runtimeSurface() {
@@ -975,7 +1004,9 @@ func (v v1alpha2Validator) toolDefinition(path string, tool Tool) {
 		}
 	case "workspace-policy", "git-checkpoint", "file-regex", "markdown-checklist-progress":
 	default:
-		v.add(path+".type", "unsupported tool type %q", tool.Type)
+		if strings.TrimSpace(tool.Type) == "" {
+			v.add(path+".type", "is required")
+		}
 	}
 }
 
@@ -1055,7 +1086,11 @@ func (v v1alpha2Validator) condition(path, value string) {
 }
 
 func (v v1alpha2Validator) assertions(path string, assertions []Assertion) {
-	legacy := validator{result: v.result, locations: v.locations, w: &Workflow{Spec: Spec{Tools: v.w.Spec.Tools}}}
+	tools := make(map[string]Tool, len(v.w.Spec.Tools))
+	for name, configured := range v.w.Spec.Tools {
+		tools[name] = configured.runtimeTool()
+	}
+	legacy := validator{result: v.result, locations: v.locations, w: &Workflow{Spec: Spec{Tools: tools}}}
 	legacy.assertions(path, assertions)
 }
 

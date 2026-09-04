@@ -4,6 +4,7 @@ package observability
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,11 +12,20 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 )
+
+// MaxLogBytes bounds one workflow's private operational log. Logs are
+// diagnostic only, so reaching this limit must never alter workflow
+// acceptance or execution authority.
+const MaxLogBytes int64 = 1 << 20
+
+// ErrLogCapacity reports that diagnostic storage is full.
+var ErrLogCapacity = errors.New("workflow log capacity exceeded")
 
 // LogStore is one workflow's append-only local runtime log. The file is
 // outside the worktree and is never referenced by Git acceptance state.
@@ -23,6 +33,7 @@ type LogStore struct {
 	Path string
 	file *os.File
 	mu   sync.Mutex
+	size int64
 }
 
 // Path resolves the deterministic, Git-aware log path for a workflow.
@@ -39,16 +50,28 @@ func Open(repo gitstate.Repo, workflowName string) (*LogStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create workflow log directory: %w", err)
 	}
-	_ = os.Chmod(filepath.Dir(path), 0o700)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err := validatePrivateDirectory(directory); err != nil {
+		return nil, err
+	}
+	file, err := openPrivateAppend(path)
 	if err != nil {
 		return nil, fmt.Errorf("open workflow log: %w", err)
 	}
 	_ = file.Chmod(0o600)
-	return &LogStore{Path: path, file: file}, nil
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("stat workflow log: %w", err)
+	}
+	if err := validatePrivateFile(file); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return &LogStore{Path: path, file: file, size: info.Size()}, nil
 }
 
 // Close closes the append handle.
@@ -75,9 +98,14 @@ func (l *LogStore) Event(kind string, fields map[string]string) error {
 	if err != nil {
 		return err
 	}
+	line := append(b, '\n')
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, err = l.file.Write(append(b, '\n'))
+	if l.size+int64(len(line)) > MaxLogBytes {
+		return ErrLogCapacity
+	}
+	count, err := l.file.Write(line)
+	l.size += int64(count)
 	return err
 }
 
@@ -87,8 +115,65 @@ func Read(repo gitstate.Repo, workflowName string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	b, err := os.ReadFile(path)
+	file, err := openPrivateRead(path)
+	if err != nil {
+		return nil, path, err
+	}
+	defer file.Close()
+	if err := validatePrivateLog(file); err != nil {
+		return nil, path, err
+	}
+	b, err := io.ReadAll(file)
 	return b, path, err
+}
+
+// ReadBounded reads the final limit bytes of a private runtime log and returns
+// the exact byte cursor reached while reading for a lossless replay-to-follow
+// handoff.
+// A partial first JSONL record is discarded rather than decoded.
+func ReadBounded(repo gitstate.Repo, workflowName string, limit int64) ([]byte, string, int64, error) {
+	if limit <= 0 {
+		return nil, "", 0, fmt.Errorf("workflow log read limit must be positive")
+	}
+	path, err := Path(repo, workflowName)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	file, err := openPrivateRead(path)
+	if err != nil {
+		return nil, path, 0, err
+	}
+	defer file.Close()
+	if err := validatePrivateLog(file); err != nil {
+		return nil, path, 0, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, path, 0, err
+	}
+	start := int64(0)
+	if info.Size() > limit {
+		start = info.Size() - limit
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return nil, path, 0, err
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, path, 0, err
+	}
+	cursor, err := file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, path, 0, err
+	}
+	if start != 0 {
+		if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+			data = data[newline+1:]
+		} else {
+			data = []byte{}
+		}
+	}
+	return data, path, cursor, nil
 }
 
 // Tail returns the final n lines while preserving their original line endings.
@@ -115,11 +200,14 @@ func Tail(data []byte, n int) ([]byte, error) {
 // Cancellation belongs only to the logs reader; it never signals the workflow
 // process recorded in the descriptor.
 func Follow(ctx context.Context, path string, out io.Writer) error {
-	file, err := os.Open(path)
+	file, err := openPrivateRead(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	if err := validatePrivateLog(file); err != nil {
+		return err
+	}
 	reader := bufio.NewReader(file)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -153,4 +241,119 @@ func copyAvailable(reader *bufio.Reader, out io.Writer) error {
 			return err
 		}
 	}
+}
+
+// ReplayProcessOutput extracts at most limit captured process-output records
+// in chronological order. Operational events are deliberately not rendered by
+// attach, and malformed JSONL fails closed rather than being treated as
+// terminal output.
+func ReplayProcessOutput(data []byte, limit int) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("process-output replay limit must not be negative")
+	}
+	type event struct {
+		Event  string            `json:"event"`
+		Fields map[string]string `json:"fields"`
+	}
+	outputs := make([]string, 0)
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var decoded event
+		if err := json.Unmarshal(line, &decoded); err != nil {
+			return nil, fmt.Errorf("decode workflow log for process-output replay: %w", err)
+		}
+		if decoded.Event != "process_output" || decoded.Fields == nil {
+			continue
+		}
+		stream := decoded.Fields["stream"]
+		if stream != "stdout" && stream != "stderr" {
+			return nil, fmt.Errorf("workflow log has invalid process-output stream")
+		}
+		outputs = append(outputs, decoded.Fields["data"])
+	}
+	if limit == 0 || len(outputs) == 0 {
+		return []byte{}, nil
+	}
+	if len(outputs) > limit {
+		outputs = outputs[len(outputs)-limit:]
+	}
+	return []byte(strings.Join(outputs, "")), nil
+}
+
+// FollowProcessOutput writes future captured process output while ignoring
+// non-output operational events. It uses the existing local log cursor and is
+// cancellable without signaling the supervised workflow.
+func FollowProcessOutput(ctx context.Context, path string, out io.Writer) error {
+	return FollowProcessOutputFrom(ctx, path, -1, out)
+}
+
+// FollowProcessOutputFrom streams output appended after offset. An offset of
+// -1 starts at the current end. Attach captures the log length before replay
+// and passes it here, closing the replay-to-follow handoff window without
+// replaying unbounded historical output.
+func FollowProcessOutputFrom(ctx context.Context, path string, offset int64, out io.Writer) error {
+	file, err := openPrivateRead(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := validatePrivateLog(file); err != nil {
+		return err
+	}
+	if offset < 0 {
+		if _, err := file.Seek(0, io.SeekEnd); err != nil {
+			return err
+		}
+	} else if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(file)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for {
+			line, readErr := reader.ReadBytes('\n')
+			if len(line) > 0 {
+				if err := writeProcessOutputLine(line, out); err != nil {
+					return err
+				}
+			}
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return readErr
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func validatePrivateLog(file *os.File) error {
+	return validatePrivateFile(file)
+}
+
+func writeProcessOutputLine(line []byte, out io.Writer) error {
+	type event struct {
+		Event  string            `json:"event"`
+		Fields map[string]string `json:"fields"`
+	}
+	var decoded event
+	if err := json.Unmarshal(bytes.TrimSpace(line), &decoded); err != nil {
+		return fmt.Errorf("decode workflow log for process-output stream: %w", err)
+	}
+	if decoded.Event != "process_output" || decoded.Fields == nil {
+		return nil
+	}
+	if stream := decoded.Fields["stream"]; stream != "stdout" && stream != "stderr" {
+		return fmt.Errorf("workflow log has invalid process-output stream")
+	}
+	_, err := io.WriteString(out, decoded.Fields["data"])
+	return err
 }

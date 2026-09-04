@@ -2,6 +2,7 @@ package observability
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -41,5 +42,35 @@ func TestOutputBridgeWritesDetachedOutputToNormalLogStore(t *testing.T) {
 	}
 	if strings.Contains(text, "\x1b[") {
 		t.Fatalf("durable detached output contains terminal presentation escapes: %s", text)
+	}
+}
+
+func TestOutputBridgeKeepsLiveDeliveryWhenLogIsFull(t *testing.T) {
+	repo := newLogRepo(t)
+	store, err := Open(repo, "full-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.size = MaxLogBytes
+	bridge, err := NewOutputBridge(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := make(chan string, 1)
+	bridge.SetLiveSink(func(_ string, data []byte) { live <- string(data) })
+	if _, err := io.WriteString(bridge.Stdout(), "still-live\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-live:
+		if got != "still-live\n" {
+			t.Fatalf("live output = %q", got)
+		}
+	default:
+		t.Fatal("full diagnostic log suppressed live output")
 	}
 }

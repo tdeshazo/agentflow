@@ -21,16 +21,79 @@ go run . run code-styling
 go run . run --detach \
   -f workflow.yaml \
   -C /path/to/target/repository
+
+go run . attach \
+  -f workflow.yaml \
+  -C /path/to/target/repository
+
+go run . explain --node build \
+  -f workflow.yaml \
+  -C /path/to/target/repository
 ```
 
-Foreground execution is the default. `run --detach` starts the same
-AgentFlow executable in a new session and returns after the child process has
-started; it does not wait for workflow success. The child receives the same
+Foreground execution is the default. In an interactive terminal, ordinary
+`run` starts the supervised child and immediately becomes its exclusive
+authenticated foreground attachment; non-interactive callers retain direct
+execution semantics. `run --detach` starts the same
+supervised child without attaching and returns only after the child has
+acquired the run lease, established its durable run identity, and replied over
+a bounded private readiness pipe; it does not wait for workflow success. A
+startup error or readiness timeout is returned instead of being hidden after
+an optimistic success message. The child receives the same
 workflow file, repository, Codex binary, and repeated `--set` values, with
-stdin disconnected and `--detach` removed. Inspect a detached run with
-`status --all -C /path/to/target/repository` and
+stdin disconnected and `--detach` removed. The detached child creates a
+runtime-private supervised session only after it has a durable run ID. Its
+readiness reply also reports whether verified attachment is available on this
+host. For an interactive foreground launch the child then waits at this
+boundary until the parent has authenticated and reserved the attachment and
+acknowledged it over the private return pipe. No actor can run in that window.
+Detached launch does not wait for a terminal acknowledgement. Unix passes the
+two pipe ends as inherited descriptors; Windows uses its explicit inherited
+handle list rather than unsupported `Cmd.ExtraFiles`. Inspect a
+detached run with `status --all -C /path/to/target/repository` and
 `logs --workflow workflow-name -C /path/to/target/repository` (optionally
 using `--tail N` or `--follow`).
+
+`attach` is the detached-to-foreground handoff. It requires the same workflow
+definition and repository, verifies the durable run ID, the descriptor's
+process-start token, and a restrictive private session record before opening a
+local IPC endpoint. The live supervisor owns a per-run, 1 MiB rotating replay
+window and replays at most 200 output chunks by default (`--replay 0` disables
+replay), then streams later output without a handoff gap. Replay from an older
+run is never eligible. Only one terminal may be attached. Sending EOF (usually
+Ctrl-D) is the explicit foreground-to-detached handoff: it releases terminal
+ownership while the same run ID, lease, process, and in-flight work continue.
+The foreground command returns only after the supervisor acknowledges that it
+has reclaimed terminal ownership.
+`SIGINT` and `SIGTERM` forward the corresponding constrained interruption
+request; attach continues draining output until the supervisor sends its final
+cursor and completion frame. Attached input is accepted only while an active
+human gate is waiting for an acknowledgement or checklist response; it is not
+queued for later lifecycle steps. Attachment is deliberately distinct from
+`logs --follow`, which is read-only and never signals or supplies input to a
+workflow. The separate private diagnostic log is capped at 1 MiB; after that
+cap, workflow execution and live terminal delivery continue even though new
+diagnostic events are not retained. Private log directories and files must be
+owner-only regular filesystem objects; symlink substitution is rejected, with
+directory-relative no-follow descriptor opens and owner checks on supported
+Unix hosts. Platforms where AgentFlow cannot prove both properties fail closed
+instead of using an `Lstat`-then-open fallback.
+
+If the host forbids the private local IPC primitive (for example, a restricted
+sandbox), the detached workflow remains protected by its durable owner lease
+but is not attachable. AgentFlow does not weaken identity checks or substitute
+a public socket. The readiness reply reports this fallback, and `attach`
+reports that no live supervised session exists.
+
+`explain --node <phase-id>` reports a stable JSON explanation for a phase. It
+uses Git-backed active, accepted, and dependency markers to classify the node;
+the versioned trace can supply only a bounded known-safe skip reason and never
+overrides durable evidence. It does not render prompts, validation output,
+provider output, credentials, or model reasoning. Before explaining existing
+state, it compares the authored workflow-definition digest to the durable run
+identity without resolving parameter or environment secrets; definition drift
+is reported instead of producing a confident explanation. Provider failures
+retain only bounded actor/provider identity, failure kind, and stage.
 
 `-C` selects the repository explicitly. For repository-scoped commands, its
 default is the current working directory, which must be a Git repository.
@@ -580,6 +643,29 @@ type Provider interface {
 }
 ```
 
+Stage 7 adds the versioned `provider.ContractProvider` extension. Every actor
+provider must implement and positively report the Stage 2 enforcement
+interfaces; the versioned contract is additionally required when a successor
+workflow declares non-zero provider requirements.
+`agentflow.dev/provider/v1` describes portable execution modes (`agent`,
+`local-command`, `remote-service`, `human`, or `nested-workflow`), supported
+invocation-context versions, and whether filesystem-boundary and execution-
+policy enforcement are provided. Successor workflows may declare `agent.requirements`
+with those semantic requirements; they never name adapter flags. Explicit
+requirements are checked when the engine is constructed and again before a run
+starts, before durable state, a worktree, provider call, tool invocation, or
+workspace mutation. When present, contract claims are cross-checked against the
+mandatory filesystem and execution-policy enforcement interfaces. Legacy
+providers remain selectable when they implement those interfaces and the
+workflow declares no versioned requirements.
+
+The reference adapters prove the common contract suite with the isolated Codex
+adapter and an explicit local-command adapter. The latter deliberately reports
+no isolation or policy enforcement, so the actor boundary rejects it instead
+of treating host-process execution as a sandbox. Human and nested-workflow
+execution modes are modeled for negotiation but are not advertised by either
+adapter until an implementation can enforce their required boundaries.
+
 `Request` describes workspace, model, reasoning effort, structured context, sandbox,
 execution-lifetime preferences, and an engine-owned filesystem boundary without
 exposing Codex-specific command-line arguments to the interpreter. Providers
@@ -827,11 +913,32 @@ the descriptive specification. The following are explicitly non-executable in
 this runtime and are rejected by validation: for the built-in Codex provider,
 approval policies other than `never`, state backends other than
 `git-dir`, non-Git workspaces, non-Markdown progress sources, non-`on-exit` temp
-cleanup, `tool` and `human` phase kinds, and tool types outside the list above.
+cleanup, and `tool` and `human` phase kinds. Tool types outside the built-in
+set require an explicitly supplied plugin registry; an unregistered type,
+unsupported plugin contract version, malformed typed configuration, or a
+mismatch between a tool's `mutates_workspace` declaration and the plugin's
+declared mutation behavior fails before execution.
 `recovery.activePhase` is also non-executable: it is accepted structurally only
 so the validator can report a source-aware unsupported diagnostic before any
 repository access or mutation. Runtime-derived safe resume replaces it.
-Parallel DAG scheduling,
-arbitrary programming-language expressions, and custom tool plugins remain
-future work. Unsupported executable constructs produce an error rather than
-being ignored.
+Parallel DAG scheduling is implemented. Arbitrary programming-language
+expressions remain unavailable. Custom deterministic plugins use the explicit
+`agentflow.dev/tool/v1` registration contract: the plugin type is registered
+without `init`, its config is decoded with strict fields into a Go type, and
+its mutation declaration is verified before the plugin can run. Plugin version
+compatibility is exact within v1; a future incompatible contract requires a new
+versioned registration. Unsupported executable constructs produce an error
+rather than being ignored.
+Plugin-specific `config` is accepted by successor APIs and rejected by the
+grammar-frozen v1alpha1 decoder and schema.
+
+Read-only plugins must declare `MutationNone`; the runtime snapshots HEAD and
+the complete implementation worktree immediately around invocation and rejects
+any delta regardless of normal mutation allowlists. Durable validation reuse
+also requires a valid immutable behavior fingerprint. The complete descriptor,
+fingerprint, and authored configuration participate in the evidence key.
+Plugins without a fingerprint remain executable but are non-cacheable.
+
+Embedding is supported through the exported `runtime.New` constructor, which
+accepts provider implementations and a per-runtime `tool.Registry` explicitly.
+There is no global/init registration and no CLI dynamic plugin discovery.

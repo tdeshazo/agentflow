@@ -14,6 +14,31 @@
 
 ### Added
 
+- Completed Stage 7 executor and tool extensibility: `provider/v1` portable
+  capability contracts and conformance checks for Codex/local-command adapters;
+  workflow-declared semantic executor requirements; and explicit `tool/v1`
+  typed deterministic plugin registration with mutation declarations and
+  pre-execution rejection of missing/incompatible providers, malformed config,
+  and undeclared mutation.
+  Selected providers are behaviorally preflighted against mandatory enforcement
+  interfaces; read-only tools use whole-worktree mutation detection; cacheable
+  plugins carry immutable behavior fingerprints; and embedders can inject
+  providers and registries through the exported `runtime` package. v1alpha1
+  remains grammar-frozen and rejects executor requirements and plugin config;
+  both authoring features are available only in successor APIs. Legacy
+  providers remain compatible for zero-requirement actors when they implement
+  the mandatory Stage 2 enforcement interfaces.
+
+- Added `agentflow explain --node` with Git-backed blocked, skipped, failed,
+  and accepted phase explanations, plus bounded trace-only skip diagnostics.
+- Added supervised detached sessions and `agentflow attach`: restrictive
+  repository-private metadata/IPC, durable run and process identity checks,
+  exclusive terminal ownership, bounded replay plus lossless follow handoff,
+  constrained human-input/interruption forwarding, bounded startup readiness,
+  atomic foreground attachment acknowledgement, per-run replay isolation,
+  non-blocking ordered output delivery, explicit EOF detach, and final-cursor
+  completion. Readiness uses inherited descriptors on Unix and inherited
+  handles on Windows.
 - Added `agentflow status --detail` for humans and automation, with a bounded
   recent-event view, stable trace availability and truncation metadata, compact
   or pretty JSON through the existing `--json` policy, and non-fatal reporting

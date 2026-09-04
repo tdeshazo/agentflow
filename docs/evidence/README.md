@@ -10,6 +10,10 @@ authority for field semantics or runtime behavior; use the
 
 Current closure records:
 
+- [Stage 7 executor and tool extensibility](stage-7-executor-tool-extensibility.md)
+  records versioned provider/tool contracts, capability negotiation, typed
+  deterministic plugins, and fail-closed boundaries.
+
 - [Stage 3 run identity and trace foundation](stage-3-run-identity-trace.md)
   records stable run/node-execution identities, recovery behavior, and the
   separate versioned execution-trace contract.

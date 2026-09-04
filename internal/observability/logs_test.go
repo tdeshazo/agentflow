@@ -3,10 +3,12 @@ package observability
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -95,6 +97,91 @@ func TestFollowCancellationDoesNotSignalWorkflowProcess(t *testing.T) {
 	}
 }
 
+func TestReplayProcessOutputIsBoundedAndIgnoresOperationalEvents(t *testing.T) {
+	data := []byte("{\"event\":\"phase_start\"}\n" +
+		"{\"event\":\"process_output\",\"fields\":{\"stream\":\"stdout\",\"data\":\"one\\n\"}}\n" +
+		"{\"event\":\"process_output\",\"fields\":{\"stream\":\"stderr\",\"data\":\"two\\n\"}}\n")
+	got, err := ReplayProcessOutput(data, 1)
+	if err != nil || string(got) != "two\n" {
+		t.Fatalf("replay = %q, err = %v", got, err)
+	}
+	if _, err := ReplayProcessOutput([]byte("not-json\n"), 1); err == nil {
+		t.Fatal("malformed log was accepted for attach replay")
+	}
+}
+
+func TestLogStorageAndAttachReadAreBounded(t *testing.T) {
+	repo := newLogRepo(t)
+	store, err := Open(repo, "bounded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Event("process_output", map[string]string{"stream": "stdout", "data": strings.Repeat("x", int(MaxLogBytes))}); !errors.Is(err, ErrLogCapacity) {
+		t.Fatalf("log capacity error = %v", err)
+	}
+	if err := os.WriteFile(store.Path, []byte(strings.Repeat("x", 512)+"\n{\"event\":\"process_output\",\"fields\":{\"stream\":\"stdout\",\"data\":\"tail\"}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, _, offset, err := ReadBounded(repo, "bounded", 100)
+	if err != nil || offset <= int64(len(data)) || strings.Contains(string(data), strings.Repeat("x", 10)) || !strings.Contains(string(data), "tail") {
+		t.Fatalf("bounded log read = %q offset=%d err=%v", data, offset, err)
+	}
+}
+
+func TestFollowProcessOutputStreamsOnlyCapturedOutput(t *testing.T) {
+	repo := newLogRepo(t)
+	store, err := Open(repo, "attach-follow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var output synchronizedBuffer
+	done := make(chan error, 1)
+	go func() { done <- FollowProcessOutput(ctx, store.Path, &output) }()
+	time.Sleep(150 * time.Millisecond)
+	if err := store.Event("phase_start", map[string]string{"phase": "ignored"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Event("process_output", map[string]string{"stream": "stdout", "data": "attached\n"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && output.String() != "attached\n" {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "attached\n" {
+		t.Fatalf("attached output = %q", output.String())
+	}
+}
+
+func TestOpenRejectsSymlinkedPrivateLog(t *testing.T) {
+	repo := newLogRepo(t)
+	path, err := Path(repo, "symlink")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(repo, "symlink"); err == nil {
+		t.Fatal("symlinked private log was accepted")
+	}
+}
+
 func newLogRepo(t *testing.T) gitstate.Repo {
 	t.Helper()
 	dir := t.TempDir()
@@ -103,4 +190,21 @@ func newLogRepo(t *testing.T) gitstate.Repo {
 		t.Fatalf("git init: %v: %s", err, output)
 	}
 	return gitstate.Repo{Root: dir}
+}
+
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(data)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
 }

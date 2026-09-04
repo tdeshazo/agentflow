@@ -2,6 +2,7 @@ package agentflowcli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -74,6 +75,8 @@ const v1alpha1DeprecationWarning = "warning: agentflow.dev/v1alpha1 is deprecate
 	"use agentflow.dev/v1alpha4 for new workflows and run 'agentflow migrate --check' to assess an existing workflow"
 
 var statusOutputIsTTY = clioutput.IsTTY
+var supervisedRunInteractive = clioutput.IsInteractive
+var foregroundAttach = runAttachWithHook
 
 var currentWorkingDirectory = os.Getwd
 var workflowHomeDirectory = os.UserHomeDir
@@ -98,7 +101,9 @@ func runArgs(args []string) error {
 	return runArgsWithIO(args, os.Stdin, os.Stdout)
 }
 
-func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
+func runArgsWithIO(args []string, in io.Reader, out io.Writer) (runErr error) {
+	sessionReady, reportStartupFailure := detachedSessionReady()
+	defer func() { reportStartupFailure(runErr) }()
 	if len(args) == 0 {
 		return usage()
 	}
@@ -142,6 +147,8 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	all := fs.Bool("all", allDefault, "inspect every discovered workflow (status only)")
 	detail := fs.Bool("detail", detailDefault, "include bounded recent trace events (status only)")
 	workflowName := fs.String("workflow", "", "workflow name (logs only)")
+	node := fs.String("node", "", "workflow phase to explain (explain only)")
+	replay := fs.Int("replay", maxAttachReplay, "replay final captured output records before streaming (attach only)")
 	tail := fs.Int("tail", tailDefault, "show the final N log lines (logs only)")
 	follow := fs.Bool("follow", followDefault, "follow appended workflow log output (logs only)")
 	expanded := fs.Bool("expanded", expandedDefault, "show resolved executable plan")
@@ -190,7 +197,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 			return fmt.Errorf("status --all does not accept a positional workflow selector")
 		}
 		switch cmd {
-		case "run", "status", "reset", "validate", "plan", "migrate", "switch":
+		case "run", "status", "reset", "validate", "plan", "migrate", "switch", "explain", "attach":
 			if cmd == "switch" && positional[0] == "-" {
 				break
 			}
@@ -220,6 +227,15 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 	if *workflowName != "" && cmd != "logs" {
 		return fmt.Errorf("--workflow is only supported with logs")
+	}
+	if *node != "" && cmd != "explain" {
+		return fmt.Errorf("--node is only supported with explain")
+	}
+	if cmd == "explain" && *node == "" {
+		return fmt.Errorf("explain requires --node phase-id")
+	}
+	if explicit["replay"] && cmd != "attach" {
+		return fmt.Errorf("--replay is only supported with attach")
 	}
 	if *tail != -1 && cmd != "logs" {
 		return fmt.Errorf("--tail is only supported with logs")
@@ -278,7 +294,7 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	}
 
 	workflowFile := *file
-	repositoryScoped := cmd == "run" || cmd == "status" || cmd == "reset"
+	repositoryScoped := cmd == "run" || cmd == "status" || cmd == "reset" || cmd == "explain" || cmd == "attach"
 	var result workflow.Result
 	workflowValidated := false
 	if workflowFile != "" {
@@ -428,18 +444,45 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 	if result.Status == workflow.Unsupported {
 		return fmt.Errorf("workflow is valid but unsupported by this runtime: %s", diagnosticsError(result))
 	}
+	if cmd == "attach" {
+		return runAttach(repoRoot, result.Document.Workflow.Metadata.Name, *replay, in, out)
+	}
+	if cmd == "run" && !*detach && os.Getenv(detachedChildEnv) != "1" && supervisedRunInteractive(in, out) {
+		launched, err := launchForegroundRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		if !launched.startup.Attachable {
+			_ = launched.acknowledge(false, nil)
+			clioutput.NewPresenter(out).Notice(clioutput.RoleWarning, "workflow is running detached because private session IPC is unavailable")
+			return nil
+		}
+		// The foreground command is an authenticated attachment to the child
+		// supervisor. EOF explicitly hands this already-running process back to
+		// detached operation without changing its run identity or lease.
+		attachErr := foregroundAttach(repoRoot, result.Document.Workflow.Metadata.Name, maxAttachReplay, in, out, func() error {
+			return launched.acknowledge(true, nil)
+		})
+		if attachErr != nil {
+			_ = launched.acknowledge(false, attachErr)
+		}
+		return attachErr
+	}
 	if *detach {
-		pid, err := launchDetachedRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
+		pid, attachable, err := launchDetachedRun(os.Args[0], workflowFile, repoRoot, *codexBin, overrides.Values(), result.Document.Workflow.Metadata.Name)
 		if err != nil {
 			return err
 		}
 		clioutput.NewPresenter(os.Stdout).Line(clioutput.RoleSuccess, "detached workflow %q started (pid %d)", result.Document.Workflow.Metadata.Name, pid)
+		if !attachable {
+			clioutput.NewPresenter(os.Stdout).Notice(clioutput.RoleWarning, "private session IPC is unavailable; this run cannot be attached")
+		}
 		return nil
 	}
 	w := result.Document.Workflow
 	providers := map[string]provider.Provider{"codex": codexprovider.Provider{Binary: *codexBin}}
-	stateOnly := cmd == "status" || cmd == "reset"
-	e, err := engine.New(w, providers, engine.Options{RepoRoot: repoRoot, Overrides: overrides.Map(), StateOnly: stateOnly, Detached: os.Getenv(detachedChildEnv) == "1" && cmd == "run"})
+	stateOnly := cmd == "status" || cmd == "reset" || cmd == "explain"
+	e, err := engine.New(w, providers, engine.Options{RepoRoot: repoRoot, Overrides: overrides.Map(), StateOnly: stateOnly, Detached: os.Getenv(detachedChildEnv) == "1" && cmd == "run", SessionReady: sessionReady})
 	if err != nil {
 		return err
 	}
@@ -465,6 +508,12 @@ func runArgsWithIO(args []string, in io.Reader, out io.Writer) error {
 		return e.Status()
 	case "reset":
 		return e.Reset()
+	case "explain":
+		report, err := e.Explain(*node)
+		if err != nil {
+			return err
+		}
+		return clioutput.WriteJSONWithTTY(out, report, clioutput.IsTTY(out))
 	default:
 		return usage()
 	}
@@ -479,7 +528,7 @@ func appendRecoveryGuidance(err error, guidance string) error {
 
 func requiresWorkflowSelector(cmd string) bool {
 	switch cmd {
-	case "run", "status", "reset", "validate", "plan", "migrate":
+	case "run", "status", "reset", "validate", "plan", "migrate", "explain", "attach":
 		return true
 	default:
 		return false
@@ -509,7 +558,7 @@ func usage() error {
 }
 
 func writeUsage(out io.Writer, presenter clioutput.Presenter) {
-	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset|migrate --check> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--detail] [--set key=value]\n", presenter.Label("usage"))
+	fmt.Fprintf(out, "%s agentflow <validate|plan|run|status|reset|migrate --check|explain|attach> [-f workflow.yaml | workflow-name] [-C repo] [--expanded] [--json] [--detail] [--set key=value]\n", presenter.Label("usage"))
 	fmt.Fprintln(out, "       agentflow run --detach [-f workflow.yaml | workflow-name] [-C repo] [--codex-bin path] [--set key=value]")
 	fmt.Fprintln(out, "       agentflow switch [workflow-name|-] [-C repo] | agentflow switch --clear [-C repo]")
 	fmt.Fprintln(out, "       agentflow checkout ...  # compatibility alias for switch")
@@ -518,6 +567,9 @@ func writeUsage(out io.Writer, presenter clioutput.Presenter) {
 	fmt.Fprintln(out, "       omit the workflow selector in a terminal to choose a discovered workflow interactively")
 	fmt.Fprintln(out, "       agentflow status --all [-C repo] [--json]")
 	fmt.Fprintln(out, "       agentflow status [-f workflow.yaml | workflow-name] [-C repo] --detail [--json]")
+	fmt.Fprintln(out, "       agentflow explain --node phase-id [-f workflow.yaml | workflow-name] [-C repo]")
+	fmt.Fprintln(out, "       agentflow attach [-f workflow.yaml | workflow-name] [-C repo] [--replay n]")
+	fmt.Fprintln(out, "       in an attached terminal, Ctrl-D releases foreground control without stopping the run")
 	fmt.Fprintln(out, "       agentflow logs [--workflow name] [-C repo] [--tail n|--follow]")
 	fmt.Fprintln(out, "       defaults load from <repo>/.agentflow/config.toml and ~/.agentflow/config.toml")
 }
@@ -818,6 +870,10 @@ func splitCommandArgs(args []string) (flagArgs, positional []string) {
 		"-workflow":   true,
 		"--tail":      true,
 		"-tail":       true,
+		"--node":      true,
+		"-node":       true,
+		"--replay":    true,
+		"-replay":     true,
 		"--set":       true,
 		"-set":        true,
 	}
@@ -851,6 +907,10 @@ func commandLineRepo(args []string) string {
 		"-workflow":   true,
 		"--tail":      true,
 		"-tail":       true,
+		"--node":      true,
+		"-node":       true,
+		"--replay":    true,
+		"-replay":     true,
 		"--set":       true,
 		"-set":        true,
 	}
@@ -895,7 +955,7 @@ func runLogs(repoRoot, workflowName string, tail int, follow bool) error {
 	}
 	data, path, readErr := observability.Read(repo, workflowName)
 	if readErr != nil {
-		if os.IsNotExist(readErr) {
+		if errors.Is(readErr, os.ErrNotExist) {
 			return fmt.Errorf("no logs for workflow %q", workflowName)
 		}
 		return readErr

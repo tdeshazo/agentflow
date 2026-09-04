@@ -1,0 +1,10 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: frozen-v1alpha1-tool-config
+spec:
+  tools:
+    custom:
+      type: example.custom
+      config:
+        message: rejected

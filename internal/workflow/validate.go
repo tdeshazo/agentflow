@@ -141,6 +141,9 @@ func (v validator) roots() {
 	}
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
 		v.namedIdentifier("spec.agents", "agent", name)
+		if err := v.w.Spec.Agents[name].Requirements.Validate(); err != nil {
+			v.add(Invalid, "spec.agents."+name+".requirements", "%v", err)
+		}
 	}
 	for _, name := range sortedKeys(v.w.Spec.Tools) {
 		v.namedIdentifier("spec.tools", "tool", name)
@@ -1007,9 +1010,6 @@ func (v validator) runtimeSurface() {
 	}
 	for _, name := range sortedKeys(v.w.Spec.Agents) {
 		a := mergeAgent(v.w.Spec.Defaults.Agent, v.w.Spec.Agents[name])
-		if a.Runner != "codex" {
-			v.add(Unsupported, "spec.agents."+name+".runner", "runner %q is not implemented by this runtime", a.Runner)
-		}
 		if a.Approval != "" && a.Approval != "never" {
 			v.add(Unsupported, "spec.agents."+name+".approval", "approval policy %q is not implemented", a.Approval)
 		}
@@ -1019,7 +1019,8 @@ func (v validator) runtimeSurface() {
 		switch t.Type {
 		case "shell", "workspace-policy", "git-checkpoint", "file-regex", "markdown-checklist-progress":
 		default:
-			v.add(Unsupported, "spec.tools."+name+".type", "tool type %q is not implemented by this runtime", t.Type)
+			// Plugin types are resolved by the explicit Engine registry. Document
+			// validation remains portable and cannot assume host registrations.
 		}
 	}
 }

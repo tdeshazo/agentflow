@@ -1,0 +1,18 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: successor-tool-config
+spec:
+  workspace:
+    allowWrites: [output.txt]
+  tools:
+    custom:
+      type: example.custom
+      config:
+        message: accepted
+  validation:
+    custom:
+      steps:
+        - uses: custom
+  completion:
+    validation: custom

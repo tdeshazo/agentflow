@@ -769,7 +769,7 @@ func TestV1Alpha2MayCommitUsesSharedLifecyclePolicy(t *testing.T) {
 			e, err := New(&workflow.Workflow{
 				Metadata: workflow.Metadata{Name: "may-commit"},
 				Spec:     workflow.Spec{Agents: map[string]workflow.Agent{"worker": test.agent(t)}},
-			}, nil, Options{RepoRoot: repo})
+			}, map[string]provider.Provider{"codex": &capabilityActionProvider{}}, Options{RepoRoot: repo})
 			if err != nil {
 				t.Fatal(err)
 			}

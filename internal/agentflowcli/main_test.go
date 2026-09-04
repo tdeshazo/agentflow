@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/observability"
@@ -280,6 +281,32 @@ func TestStatusDetailFlagScope(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestExplainCLIReportsDurableBlockedStateWithoutLogs(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	workflowFile := filepath.Join("..", "workflow", "testdata", "conformance", "valid", "minimal.yaml")
+	var output bytes.Buffer
+	if err := runArgsWithIO([]string{"explain", "--node", "build", "-f", workflowFile, "-C", repo.Root}, strings.NewReader(""), &output); err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Workflow string `json:"workflow"`
+		Node     string `json:"node"`
+		State    string `json:"state"`
+		Source   string `json:"source"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("explain output = %q: %v", output.String(), err)
+	}
+	if report.Workflow == "" || report.Node != "build" || report.State != "blocked" || report.Source != "git-state" {
+		t.Fatalf("explain report = %+v", report)
+	}
+	for _, args := range [][]string{{"explain", "-f", workflowFile, "-C", repo.Root}, {"run", "--node", "build"}, {"status", "--replay", "1"}} {
+		if err := runArgs(args); err == nil {
+			t.Fatalf("args %#v unexpectedly succeeded", args)
+		}
 	}
 }
 
@@ -552,6 +579,7 @@ func TestDetachedSelectorPassesResolvedFilePath(t *testing.T) {
 	detachedStart = func(cmd *exec.Cmd) error {
 		childArgs = append([]string(nil), cmd.Args[1:]...)
 		cmd.Process = &os.Process{Pid: 12345}
+		writeDetachedTestReady(t, cmd, true)
 		return nil
 	}
 
@@ -588,6 +616,52 @@ func TestForegroundRunDoesNotTakeDetachedPath(t *testing.T) {
 	}
 	if called {
 		t.Fatal("foreground run used detached launcher")
+	}
+}
+
+func TestInteractiveForegroundRunIsSupervisorAttachmentAndCanHandoff(t *testing.T) {
+	repo := newCLIStatusRepo(t)
+	workflowPath := filepath.Join(repo.Root, "workflow.yaml")
+	writeCLIWorkflow(t, workflowPath, "foreground-handoff")
+	originalStart := detachedStart
+	originalInteractive := supervisedRunInteractive
+	originalAttach := foregroundAttach
+	t.Cleanup(func() {
+		detachedStart = originalStart
+		supervisedRunInteractive = originalInteractive
+		foregroundAttach = originalAttach
+	})
+	supervisedRunInteractive = func(io.Reader, io.Writer) bool { return true }
+	started := false
+	var acknowledgements <-chan startupAck
+	detachedStart = func(cmd *exec.Cmd) error {
+		started = true
+		cmd.Process = &os.Process{Pid: 12345}
+		acknowledgements = consumeForegroundAckForTest(t, cmd)
+		writeDetachedTestReady(t, cmd, true)
+		return nil
+	}
+	attached := false
+	foregroundAttach = func(root, workflow string, replay int, in io.Reader, out io.Writer, onAttached func() error) error {
+		attached = true
+		if root != repo.Root || workflow != "foreground-handoff" || replay != maxAttachReplay {
+			t.Fatalf("foreground attachment = root %q workflow %q replay %d", root, workflow, replay)
+		}
+		return onAttached()
+	}
+	if err := runArgsWithIO([]string{"run", "-f", workflowPath, "-C", repo.Root}, strings.NewReader(""), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !started || !attached {
+		t.Fatalf("foreground supervision: started=%v attached=%v", started, attached)
+	}
+	select {
+	case ack := <-acknowledgements:
+		if !ack.Attached {
+			t.Fatalf("foreground acknowledgement = %+v", ack)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("foreground attachment was not acknowledged")
 	}
 }
 

@@ -160,6 +160,10 @@ func (e *Engine) runHuman(ctx context.Context, id string) (runErr error) {
 	presenter.TextLine("%s", gate.Instructions)
 
 	reader := bufio.NewReader(e.In)
+	if e.supervisor != nil {
+		e.supervisor.EnableInput(true)
+		defer e.supervisor.EnableInput(false)
+	}
 	if e.humanGateIsInteractive() {
 		for i, item := range gate.Checklist {
 			presenter.Prompt("%d. %s [y/N]: ", i+1, item.Text)

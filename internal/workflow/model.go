@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/tdeshazo/agentflow/provider"
 	"gopkg.in/yaml.v3"
 )
 
@@ -273,6 +274,9 @@ type Agent struct {
 	Color             string `yaml:"-"` // Internal source compatibility only; not workflow schema.
 	MayCommit         bool   `yaml:"may_commit"`
 	OutputLastMessage bool   `yaml:"output_last_message"`
+	// Requirements are portable execution constraints checked against the
+	// registered provider contract before a workspace is created.
+	Requirements provider.Requirements `yaml:"-"`
 	// Policy optionally narrows spec.execution.policy for this executor. It is
 	// projected by successor APIs and is not part of frozen v1alpha1 YAML.
 	Policy  *ExecutionPolicy `yaml:"-"`
@@ -299,6 +303,9 @@ type Tool struct {
 	Capture           Capture `yaml:"capture"`
 	CommitIfDirty     bool    `yaml:"commit_if_dirty"`
 	RequireCleanAfter bool    `yaml:"require_clean_after"`
+	// Config is decoded by a versioned tool plugin into its registered Go type.
+	// The core intentionally does not interpret plugin-specific fields.
+	Config map[string]any `yaml:"-"`
 }
 type Capture struct {
 	Stdout bool   `yaml:"stdout"`

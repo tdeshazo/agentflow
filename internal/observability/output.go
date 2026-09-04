@@ -18,6 +18,17 @@ type OutputBridge struct {
 	stderrRead  *os.File
 	stderrWrite *os.File
 	wg          sync.WaitGroup
+	mu          sync.RWMutex
+	live        func(string, []byte)
+}
+
+// SetLiveSink installs the authenticated session's live output sink. The sink
+// is independent of diagnostic persistence so a full log cannot drop terminal
+// output.
+func (b *OutputBridge) SetLiveSink(sink func(string, []byte)) {
+	b.mu.Lock()
+	b.live = sink
+	b.mu.Unlock()
 }
 
 // NewOutputBridge creates independent stdout and stderr pipes. The caller must
@@ -63,6 +74,12 @@ func (b *OutputBridge) consume(stream string, read *os.File) {
 		data, err := reader.ReadBytes('\n')
 		if len(data) > 0 {
 			_ = b.store.Event("process_output", map[string]string{"stream": stream, "data": string(data)})
+			b.mu.RLock()
+			live := b.live
+			b.mu.RUnlock()
+			if live != nil {
+				live(stream, data)
+			}
 		}
 		if errors.Is(err, io.EOF) {
 			return

@@ -59,6 +59,19 @@ const isolatedPermissionsProfile = "actor_isolated"
 
 func (p Provider) Name() string { return "codex" }
 
+// Contract declares the stable provider capabilities implemented by the Codex
+// adapter. It intentionally omits modes such as human, remote-service, and
+// nested-workflow that this adapter does not implement.
+func (p Provider) Contract() provider.Contract {
+	return provider.Contract{
+		Version:                   provider.ContractVersionV1,
+		Modes:                     []provider.ExecutionMode{provider.ExecutionModeAgent},
+		InvocationContextVersions: []string{provider.InvocationContextVersion},
+		FilesystemBoundary:        true,
+		ExecutionPolicy:           true,
+	}
+}
+
 func (p Provider) EnforcesFilesystemBoundary() bool { return true }
 
 func (p Provider) EnforcesExecutionPolicy() bool { return true }

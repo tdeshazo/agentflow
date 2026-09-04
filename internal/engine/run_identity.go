@@ -350,22 +350,9 @@ type runEnvironmentValue struct {
 }
 
 func (e *Engine) expectedRunIdentity() (RunIdentity, error) {
-	identityWorkflow := e.Workflow
-	if e.identityWorkflow != nil {
-		identityWorkflow = e.identityWorkflow
-	}
-	definition := runWorkflowDefinition{
-		APIVersion: identityWorkflow.APIVersion,
-		Kind:       identityWorkflow.Kind,
-		Spec:       runIdentitySpec(identityWorkflow.Spec),
-	}
-	if usesDependencySchedule(identityWorkflow.APIVersion) {
-		graph := identityWorkflow.DependencyGraph
-		definition.DependencyGraph = &graph
-	}
-	workflowDigest, err := digestCanonicalJSON(definition)
+	workflowDigest, err := e.expectedWorkflowDigest()
 	if err != nil {
-		return RunIdentity{}, fmt.Errorf("canonicalize workflow definition: %w", err)
+		return RunIdentity{}, err
 	}
 	parametersDigest, err := digestCanonicalJSON(e.Parameters)
 	if err != nil {
@@ -386,6 +373,30 @@ func (e *Engine) expectedRunIdentity() (RunIdentity, error) {
 		ParametersDigest: parametersDigest,
 		ExecutionDigest:  executionDigest,
 	}, nil
+}
+
+// expectedWorkflowDigest deliberately excludes resolved parameters and
+// environment values so read-only explain can verify definition compatibility
+// without asking an operator to reveal secrets.
+func (e *Engine) expectedWorkflowDigest() (string, error) {
+	identityWorkflow := e.Workflow
+	if e.identityWorkflow != nil {
+		identityWorkflow = e.identityWorkflow
+	}
+	definition := runWorkflowDefinition{
+		APIVersion: identityWorkflow.APIVersion,
+		Kind:       identityWorkflow.Kind,
+		Spec:       runIdentitySpec(identityWorkflow.Spec),
+	}
+	if usesDependencySchedule(identityWorkflow.APIVersion) {
+		graph := identityWorkflow.DependencyGraph
+		definition.DependencyGraph = &graph
+	}
+	workflowDigest, err := digestCanonicalJSON(definition)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize workflow definition: %w", err)
+	}
+	return workflowDigest, nil
 }
 
 func (e *Engine) externalEnvironmentInputs() map[string]runEnvironmentValue {

@@ -2,10 +2,9 @@
 
 Date: 2026-09-01
 
-This record closes the stable run/node identity, versioned trace, complete
-orchestration-transition coverage, and provider/tool metadata targets of
-Execution Stage 3. It does not claim completion of supervised sessions or
-`explain`.
+This record closes Execution Stage 3: stable run/node identity, versioned
+traces, complete orchestration-transition coverage, provider/tool metadata,
+durable explanations, and supervised terminal handoff.
 
 ## Implemented contract
 
@@ -78,7 +77,58 @@ Execution Stage 3. It does not claim completion of supervised sessions or
   final parallel trace-attribution regression also passed under the race
   detector after the attribution-scope correction.
 
-## Remaining Stage 3 work
+## Supervised session and explain closure (2026-09-03)
 
-- Add `agentflow explain`.
-- Add exclusive supervised foreground/detached session handoff and attach.
+- `engine.Explain` classifies a requested phase from Git-backed active records,
+  deterministic acceptance markers, and declared dependency markers. A bounded
+  trace read contributes only the runtime's fixed skip vocabulary; it cannot
+  authorize or contradict the durable result.
+- `agentflow run --detach` launches a child before workflow execution, and the
+  launcher waits on a bounded inherited readiness pipe until the child owns its
+  lease, durable run identity, and verified supervision state. Startup errors
+  and timeouts fail the launch; IPC-unavailable fallback is reported explicitly.
+- An ordinary interactive `agentflow run` uses the same readiness path and
+  holds the child before workflow execution until it becomes the child's
+  exclusive authenticated attachment and acknowledges that reservation over a
+  private return pipe. Terminal EOF sends
+  the detach protocol message, so the already-running child retains its lease,
+  run ID, and in-flight work without restarting or replaying an actor.
+- Unix readiness uses inherited descriptors; Windows command construction uses
+  `AdditionalInheritedHandles`, never `Cmd.ExtraFiles`. Private output files
+  use directory-relative no-follow opens plus owner checks on supported Unix
+  hosts, and fail closed where those guarantees cannot be established.
+  `agentflow attach` verifies the run ID, descriptor process start token, and
+  private session metadata before claiming the one attachment slot.
+- Session metadata and captured output remain under the Git-aware private
+  runtime directory. Unix-domain endpoints use a short, owner-private
+  per-user directory under the system temporary directory and a fixed-length
+  opaque name; session metadata and the authenticated protocol retain the
+  repository, workflow, run, and process identity binding. Private directories
+  use `0700` permissions and files use `0600`. Unverifiable, malformed, stale,
+  mismatched, or concurrently attached sessions fail closed. If a host forbids
+  private local IPC, detached execution remains lease-protected but is
+  deliberately unavailable to `attach`; no weaker transport is substituted.
+- Attach replays a per-run rotating output window, then consumes ordered live
+  frames through the supervisor connection. Live frames remain available when
+  diagnostic persistence reaches capacity. After output producers drain, the
+  supervisor sends an authoritative final cursor/completion frame; attach does
+  not infer successful completion from socket EOF. EOF from the terminal is an
+  explicit detach that leaves the same process, lease, run ID, and work active.
+  Input uses gate-scoped generations so disabling one gate invalidates pending
+  writes and cannot feed a later gate. Input and terminal control messages are
+  not logged or added to the orchestration trace.
+- Explain verifies the durable workflow-definition digest before classifying
+  state, without resolving secret values, and retains only safe actor/provider
+  kind and stage for serial and parallel provider failures.
+- `internal/engine/explain_test.go`, `internal/supervision/session_test.go`,
+  `internal/observability/logs_test.go`, and CLI tests cover durable explain
+  classifications, stale/mismatched identity rejection, exclusive attachment,
+  generation-scoped human input, interruption forwarding, cross-run replay
+  isolation, startup readiness, terminal drain, diagnostic-capacity behavior,
+  slow-client queue saturation, concurrent cursor ordering, and symlink
+  rejection. Unix-domain listener integration is skipped only when the host
+  sandbox forbids local sockets; attachment rejects unavailable session IPC
+  rather than silently creating an unsafe transport.
+
+Stage 3 is complete: run/node identity, a versioned non-authoritative trace,
+durable explainability, and supervised terminal handoff are all implemented.

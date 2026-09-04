@@ -1,0 +1,27 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: portable-provider-requirements
+spec:
+  workspace:
+    allowWrites: [src/**]
+  agents:
+    remote:
+      runner: remote-service-provider
+      model: hosted-model
+      requirements:
+        contractVersion: agentflow.dev/provider/v1
+        modes: [remote-service]
+        invocationContextVersion: agentflow.dev/invocation-context/v1
+        filesystemBoundary: true
+        executionPolicy: true
+  validation:
+    tests:
+      run: test -d src
+  phases:
+    - id: implement
+      actor: remote
+      prompt: Implement the scoped change.
+      validation: tests
+  completion:
+    validation: tests

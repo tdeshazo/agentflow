@@ -186,12 +186,11 @@ priority is represented by table order rather than by renumbering stages.
 
 | Priority | Stage | Active focus | Required outcome before the next priority |
 | --- | --- | --- | --- |
-| 1 | 3 | Run identity, trace, and supervised sessions | Establish stable run/node identities and a versioned explainable trace before adding attach/detach supervision and interactive session handoff. |
-| 2 | 5 | Typed-contract closure | Audit the typed handoff, artifact, and evidence behavior already used by later delivered stages; close any conformance or self-hosting gaps and record durable completion evidence before extending the executor surface. Stage 5 remains active until it is explicitly marked complete. |
-| 3 | 7 | Executor and tool extensibility | Stabilize capability-aware provider and tool contracts, prove them with a second provider implementation, and fail unsupported requirements before execution. |
-| 4 | 8 | Reusable workflows and composition | Add typed, pinned, trust-aware local and remote composition only after executor capabilities and execution identity are stable. |
-| 5 | 9 | Developer tooling and observability completion | Finish formatting, linting, graph and editor support, semantic comparison, documentation drift checks, and structured operational exports after the executable semantics settle. |
-| 6 | 10 | `v1beta1` stabilization | Freeze only the semantics proven by the preceding priorities, then publish normative artifacts, migration paths, releases, and the intended license. |
+| 1 | 5 | Typed-contract closure | Audit the typed handoff, artifact, and evidence behavior already used by later delivered stages; close any conformance or self-hosting gaps and record durable completion evidence before extending the executor surface. Stage 5 remains active until it is explicitly marked complete. |
+| 2 | 7 | Executor and tool extensibility | Complete: versioned provider/tool contracts, portable requirements, a second provider conformance implementation, and pre-execution fail-closed negotiation are recorded in Stage 7 evidence. |
+| 3 | 8 | Reusable workflows and composition | Add typed, pinned, trust-aware local and remote composition only after executor capabilities and execution identity are stable. |
+| 4 | 9 | Developer tooling and observability completion | Finish formatting, linting, graph and editor support, semantic comparison, documentation drift checks, and structured operational exports after the executable semantics settle. |
+| 5 | 10 | `v1beta1` stabilization | Freeze only the semantics proven by the preceding priorities, then publish normative artifacts, migration paths, releases, and the intended license. |
 
 The following dependency stages are complete and no longer compete for active
 priority. Correctness or security regressions in them still preempt the queue.
@@ -200,6 +199,7 @@ priority. Correctness or security regressions in them still preempt the queue.
 | --- | --- |
 | 1 | Executable schema, v1alpha1 runtime parity, and runtime-owned orchestration foundation closure. |
 | 2 | Exclusive execution ownership, isolated actor workspaces, enforced effect scopes, explicit/redacted credentials, privileged-effect approval, and durable resource budgets. |
+| 3 | Stable run/node identities, versioned explainable traces, durable node explanations, and exclusive supervised terminal handoff. |
 | 4 | v1alpha1 maintenance policy and canonical successor migration. |
 | 5.5 | Deterministic invocation-context compilation; its deferred resource-budget enforcement was delivered by Stage 2. |
 | 6 | Bounded parallel dependency scheduling and durable recovery. |
@@ -417,8 +417,15 @@ replaying work. See the [Stage 3 identity and trace evidence](docs/evidence/stag
 
 Definition-aware `status --detail` now provides a bounded recent-event view in
 both human-readable and stable JSON forms without treating the diagnostic trace
-as authority. Supervised attach/detach sessions and `explain` remain open Stage
-3 work.
+as authority. `explain` derives blocked, skipped, and failed phase decisions
+from durable state, using only bounded trace diagnostics for a recorded skip.
+Detached runs publish a private, run-ID and process-start-token-bound supervised
+session only after a bounded launcher-readiness acknowledgement; `attach` uses
+a per-run rotating replay window, streams future output through an authenticated
+connection, and can forward generation-scoped human-gate input and interruption
+signals without becoming execution authority. Terminal EOF explicitly returns
+the still-live run to detached supervision, while run termination drains output
+through an authoritative final-cursor frame.
 
 This stage builds on the exclusive ownership boundary from stage 2. Stable run identity and lossless session supervision are required before migration broadens the preferred workflow surface or parallel execution increases runtime complexity.
 
@@ -429,12 +436,12 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
 - [x] Record state transitions, attempts, validations, repairs, checkpoints, human gates, and completion evidence.
 - [x] Capture provider/tool metadata without requiring private model reasoning.
 - [x] Add `agentflow status` detail suitable for both humans and automation.
-- Add `agentflow explain` for “why is this node blocked/skipped/failed?”
-- Add supervised run-session control with mutually exclusive active ownership:
+- [x] Add `agentflow explain` for “why is this node blocked/skipped/failed?”
+- [x] Add supervised run-session control with mutually exclusive active ownership:
   `agentflow attach` reconnects a terminal to a detached run, while an explicit
   detach operation hands a foreground run to runtime supervision without
   interrupting or replaying workflow work.
-- Keep attachment distinct from read-only `logs --follow`: attachment must
+- [x] Keep attachment distinct from read-only `logs --follow`: attachment must
   replay and stream session output, forward terminal signals and supported
   operator input, and reject stale identities or concurrent runners.
 
@@ -447,6 +454,7 @@ This stage builds on the exclusive ownership boundary from stage 2. Stable run i
   processes to own execution concurrently.
 - Workflow-definition data is not conflated with run-specific trace data.
 - Self-hosted development runs provide enough trace data to diagnose failed or repaired phases without inspecting ad hoc shell output.
+- [x] Stage 3 exit criteria are satisfied and linked to durable evidence.
 
 ---
 
@@ -729,6 +737,23 @@ prerequisite or a Stage 5.5 exit gap.
 
 ## Execution stage 7 — Executor and tool extensibility
 
+**Implementation status (2026-09-03): complete.** The public
+`agentflow.dev/provider/v1` capability contract keeps portable requirements
+separate from adapter flags. Codex and the explicit local-command adapter pass
+the same behavioral success/error/cancellation contract suite; the local adapter truthfully declines isolation and
+policy enforcement, so it cannot be used as an actor sandbox. The explicit
+`agentflow.dev/tool/v1` registry decodes strict typed configuration, verifies
+declared workspace mutation behavior, and lets a deterministic custom tool run
+without modifying interpreter dispatch. Missing registrations, incompatible
+versions/capabilities, malformed config, and undeclared mutation are rejected
+before execution.
+Every selected actor provider is preflighted against actual enforcement
+interfaces before mutation; the versioned contract remains optional only for
+zero-requirement legacy adapters. Read-only tools are protected by whole-worktree
+snapshots, and reusable evidence binds a required immutable plugin fingerprint
+and complete descriptor/config. The exported `runtime` package supports
+explicit embedding; CLI dynamic discovery remains out of scope.
+
 **Goal:** Make the language portable across models, deterministic tools, humans, remote agents, and composite workflows.
 
 New executors and tools must conform to the stage 2 capability boundary and the stage 5 typed contract model before they can participate in workflow execution.
@@ -745,9 +770,9 @@ New executors and tools must conform to the stage 2 capability boundary and the 
 
 ### Exit criteria
 
-- At least two distinct execution-provider implementations pass the same provider contract suite.
-- Custom deterministic tools can be registered without changing the core interpreter.
-- A workflow can declare required capabilities without naming implementation-specific command-line flags.
+- [x] At least two distinct execution-provider implementations pass the same provider contract suite.
+- [x] Custom deterministic tools can be registered without changing the core interpreter.
+- [x] A workflow can declare required capabilities without naming implementation-specific command-line flags.
 
 ---
 

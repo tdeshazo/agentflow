@@ -17,6 +17,7 @@ import (
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
+	"github.com/tdeshazo/agentflow/tool"
 )
 
 // phaseValidationFailure distinguishes an unsuccessful deterministic gate from
@@ -93,6 +94,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			if err != nil {
 				return err
 			}
+			if err := e.Store.SetJSON(e.skippedNodeRecord(p.ID), skippedNodeEvidence{Version: 1, Reason: "typed evidence condition is false"}); err != nil {
+				return fmt.Errorf("record skipped phase explanation %s: %w", id, err)
+			}
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return fmt.Errorf("record skipped phase %s: %w", id, err)
 			}
@@ -116,6 +120,9 @@ func (e *Engine) runPhase(ctx context.Context, id string) (runErr error) {
 			head, err := e.Repo.Head()
 			if err != nil {
 				return err
+			}
+			if err := e.Store.SetJSON(e.skippedNodeRecord(p.ID), skippedNodeEvidence{Version: 1, Reason: "condition is false"}); err != nil {
+				return fmt.Errorf("record skipped phase explanation %s: %w", id, err)
 			}
 			if err := e.Store.SetCommit(e.phaseMarkerName(p), head); err != nil {
 				return fmt.Errorf("record skipped phase %s: %w", id, err)
@@ -583,6 +590,20 @@ func (e *Engine) runAgentWithInvocation(ctx context.Context, actorName, reasonin
 	err = redactExecutionError(err, credentials)
 	if err != nil {
 		e.logEvent("provider_end", map[string]string{"provider": prov.Name(), "actor": actorName, "result": "failure"})
+		if p != nil {
+			var failed ActivePhase
+			if ok, stateErr := e.Store.GetJSON(e.activeRecord(), &failed); stateErr != nil {
+				return stateErr
+			} else if ok && failed.PhaseID == p.ID {
+				failed.FailureKind = PhaseFailureProvider
+				failed.FailureStage = "provider"
+				failed.FailureActor = actorName
+				failed.FailureProvider = prov.Name()
+				if stateErr := e.Store.SetJSON(e.activeRecord(), failed); stateErr != nil {
+					return stateErr
+				}
+			}
+		}
 		var safetyErr *safetyViolation
 		if errors.As(err, &safetyErr) {
 			if persistErr := e.persistSafetyFailure(p, err); persistErr != nil {
@@ -1488,6 +1509,15 @@ func (e *Engine) runToolUses(ctx context.Context, steps []workflow.ToolUse, p *w
 func (e *Engine) runTool(ctx context.Context, name string, p *workflow.Phase) error {
 	return e.runToolUse(ctx, workflow.ToolUse{Uses: name}, p)
 }
+
+// ExecuteTool runs one configured deterministic tool through the same budget,
+// condition, and mutation boundaries used by workflow validation.
+func (e *Engine) ExecuteTool(ctx context.Context, name string) error {
+	if err := e.initializeOrResumeState(); err != nil {
+		return err
+	}
+	return e.runToolUses(ctx, []workflow.ToolUse{{Uses: name}}, nil)
+}
 func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workflow.Phase) (runErr error) {
 	name := use.Uses
 	if err := e.consumeToolCall(name); err != nil {
@@ -1565,6 +1595,36 @@ func (e *Engine) runToolUse(ctx context.Context, use workflow.ToolUse, p *workfl
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported tool type %q for %s", t.Type, name)
+		plugin, ok := e.ToolRegistry.Lookup(t.Type)
+		if !ok {
+			return fmt.Errorf("tool %q plugin type %q is not registered", name, t.Type)
+		}
+		config, ok := e.toolConfigs[name]
+		if !ok {
+			return fmt.Errorf("tool %q plugin configuration was not validated", name)
+		}
+		descriptor := plugin.Descriptor()
+		var before string
+		if descriptor.Mutation == tool.MutationNone {
+			var err error
+			before, err = e.authoritativeWorkspaceSnapshot()
+			if err != nil {
+				return fmt.Errorf("tool %q read-only pre-invocation snapshot: %w", name, err)
+			}
+		}
+		runErr := plugin.Run(ctx, tool.Invocation{Name: name, Workspace: e.Repo.Root}, config)
+		if descriptor.Mutation == tool.MutationNone {
+			after, err := e.authoritativeWorkspaceSnapshot()
+			if err != nil {
+				return fmt.Errorf("tool %q read-only post-invocation snapshot: %w", name, err)
+			}
+			if after != before {
+				return fmt.Errorf("tool %q plugin %q violated MutationNone: authoritative repository state changed", name, t.Type)
+			}
+		}
+		if runErr != nil {
+			return fmt.Errorf("tool %q plugin %q: %w", name, t.Type, runErr)
+		}
+		return nil
 	}
 }

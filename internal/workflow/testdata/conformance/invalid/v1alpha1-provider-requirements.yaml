@@ -1,0 +1,10 @@
+apiVersion: agentflow.dev/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: frozen-v1alpha1-provider-requirements
+spec:
+  agents:
+    worker:
+      runner: codex
+      requirements:
+        contractVersion: agentflow.dev/provider/v1

@@ -223,6 +223,30 @@
       },
       "type": "object"
     },
+    "Requirements": {
+      "additionalProperties": false,
+      "properties": {
+        "contractVersion": {
+          "type": "string"
+        },
+        "executionPolicy": {
+          "type": "boolean"
+        },
+        "filesystemBoundary": {
+          "type": "boolean"
+        },
+        "invocationContextVersion": {
+          "type": "string"
+        },
+        "modes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ResourceBudgets": {
       "additionalProperties": false,
       "properties": {
@@ -240,36 +264,6 @@
         },
         "toolCalls": {
           "type": "integer"
-        }
-      },
-      "type": "object"
-    },
-    "Tool": {
-      "additionalProperties": false,
-      "properties": {
-        "capture": {
-          "$ref": "#/$defs/Capture"
-        },
-        "command": {
-          "type": "string"
-        },
-        "commit_if_dirty": {
-          "type": "boolean"
-        },
-        "mutates_workspace": {
-          "type": "boolean"
-        },
-        "policy": {
-          "type": "string"
-        },
-        "require_clean_after": {
-          "type": "boolean"
-        },
-        "stage": {
-          "type": "string"
-        },
-        "type": {
-          "type": "string"
         }
       },
       "type": "object"
@@ -321,6 +315,9 @@
         },
         "policy": {
           "$ref": "#/$defs/ExecutionPolicy"
+        },
+        "requirements": {
+          "$ref": "#/$defs/Requirements"
         },
         "runner": {
           "type": "string"
@@ -441,6 +438,40 @@
         },
         "requireCleanWorkspace": {
           "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "V1Alpha2Tool": {
+      "additionalProperties": false,
+      "properties": {
+        "capture": {
+          "$ref": "#/$defs/Capture"
+        },
+        "command": {
+          "type": "string"
+        },
+        "commit_if_dirty": {
+          "type": "boolean"
+        },
+        "config": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "mutates_workspace": {
+          "type": "boolean"
+        },
+        "policy": {
+          "type": "string"
+        },
+        "require_clean_after": {
+          "type": "boolean"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
         }
       },
       "type": "object"
@@ -659,7 +690,7 @@
         },
         "tools": {
           "additionalProperties": {
-            "$ref": "#/$defs/Tool"
+            "$ref": "#/$defs/V1Alpha2Tool"
           },
           "type": "object"
         },

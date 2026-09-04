@@ -1,0 +1,19 @@
+apiVersion: agentflow.dev/v1alpha2
+kind: AgentWorkflow
+metadata:
+  name: embedded-custom-tool
+spec:
+  workspace:
+    allowWrites: [output.txt]
+  tools:
+    custom:
+      type: example.custom
+      mutates_workspace: true
+      config:
+        path: output.txt
+  validation:
+    custom:
+      steps:
+        - uses: custom
+  completion:
+    validation: custom

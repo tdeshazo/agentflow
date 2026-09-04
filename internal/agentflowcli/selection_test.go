@@ -327,6 +327,7 @@ func TestActiveSelectionFallsBackForEveryWorkflowCommand(t *testing.T) {
 	detachedStart = func(cmd *exec.Cmd) error {
 		childArgs = append([]string(nil), cmd.Args[1:]...)
 		cmd.Process = &os.Process{Pid: 12345}
+		writeDetachedTestReady(t, cmd, true)
 		return nil
 	}
 	if err := runArgs([]string{"run", "--detach", "-C", repo.Root}); err != nil {

@@ -21,8 +21,10 @@ import (
 	"github.com/tdeshazo/agentflow/internal/executiontrace"
 	"github.com/tdeshazo/agentflow/internal/gitstate"
 	"github.com/tdeshazo/agentflow/internal/observability"
+	"github.com/tdeshazo/agentflow/internal/supervision"
 	"github.com/tdeshazo/agentflow/internal/workflow"
 	"github.com/tdeshazo/agentflow/provider"
+	"github.com/tdeshazo/agentflow/tool"
 )
 
 // Engine orchestrates workflow execution, managing durability, phase lifecycle,
@@ -33,6 +35,8 @@ type Engine struct {
 	Repo             gitstate.Repo
 	Store            gitstate.Store
 	Providers        map[string]provider.Provider
+	ToolRegistry     *tool.Registry
+	toolConfigs      map[string]any
 	Parameters       map[string]any
 	In               io.Reader
 	Out              io.Writer
@@ -51,12 +55,15 @@ type Engine struct {
 	traceStore         *executiontrace.Store
 	outputBridge       *observability.OutputBridge
 	outputRestore      func()
+	supervisor         *supervision.Server
 	// completionValidation scopes the validation evidence and bounded repair
 	// state for a final validation. A phase gate and the final gate may
 	// deliberately have the same name, but they are different authority
 	// transitions and therefore must never share durable proof.
 	completionValidation string
 	detached             bool
+	stateOnly            bool
+	sessionReady         func(SessionStatus) error
 	// recoveryEligible is set only after this invocation has passed the
 	// run-identity boundary and established or resumed a durable active phase.
 	// It prevents a later invocation that fails during initialization or input
@@ -131,6 +138,9 @@ type ActivePhase struct {
 	BookkeepingStateDigests map[string][]string          `json:"bookkeeping_state_digests,omitempty"`
 	RepairAttempts          map[string]int               `json:"repair_attempts,omitempty"`
 	FailureKind             PhaseFailureKind             `json:"failure_kind,omitempty"`
+	FailureStage            string                       `json:"failure_stage,omitempty"`
+	FailureActor            string                       `json:"failure_actor,omitempty"`
+	FailureProvider         string                       `json:"failure_provider,omitempty"`
 	Validation              string                       `json:"validation,omitempty"`
 	ValidationError         string                       `json:"validation_error,omitempty"`
 	QuarantinePath          string                       `json:"quarantine_path,omitempty"`
@@ -191,6 +201,7 @@ type PhaseFailureKind string
 const (
 	PhaseFailureValidation PhaseFailureKind = "validation"
 	PhaseFailureSafety     PhaseFailureKind = "safety"
+	PhaseFailureProvider   PhaseFailureKind = "provider"
 )
 
 // IntegrityRuleBaseline retains the historical aggregate digest and adds
@@ -215,11 +226,25 @@ type Options struct {
 	// Detached enables child-process diagnostic capture. It does not change
 	// workflow semantics or state authority.
 	Detached bool
+	// SessionReady is called exactly once after a detached run has established
+	// its durable identity and either owns private IPC or has verified that the
+	// platform cannot provide it. It is intended for the private launcher pipe.
+	SessionReady func(SessionStatus) error
 	// StateOnly constructs an engine for status or explicit reset. When the
 	// repository root is supplied, it deliberately avoids resolving run
 	// parameters so operators need not re-enter a task or secret just to inspect
 	// or discard durable state.
 	StateOnly bool
+	// ToolRegistry supplies explicit, versioned deterministic tool plugins.
+	// Built-in tool types remain available without registration.
+	ToolRegistry *tool.Registry
+}
+
+// SessionStatus is the non-secret detached startup acknowledgement.
+type SessionStatus struct {
+	RunID      string `json:"run_id"`
+	Attachable bool   `json:"attachable"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // New creates a new Engine for executing the given workflow with the provided providers.
@@ -289,7 +314,14 @@ func New(w *workflow.Workflow, providers map[string]provider.Provider, opts Opti
 		return nil, err
 	}
 	repo := gitstate.Repo{Root: abs}
-	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved, detached: opts.Detached, resourceMu: &sync.Mutex{}}
+	registry := opts.ToolRegistry
+	if registry == nil {
+		registry = tool.NewRegistry()
+	}
+	e := &Engine{Workflow: w, identityWorkflow: authored, Repo: repo, Store: gitstate.NewStore(repo, w.Metadata.Name), Providers: providers, ToolRegistry: registry, Parameters: params, In: os.Stdin, Out: os.Stdout, invocationID: fmt.Sprintf("%d", atomic.AddUint64(&invocationSequence, 1)), parametersResolved: parametersResolved, detached: opts.Detached, stateOnly: opts.StateOnly, sessionReady: opts.SessionReady, resourceMu: &sync.Mutex{}}
+	if err := e.validateExtensions(); err != nil {
+		return nil, err
+	}
 	if !opts.StateOnly && w.Spec.Temp.Directory != "" {
 		pattern, err := ctx.Expand(w.Spec.Temp.Directory)
 		if err != nil {
@@ -435,6 +467,9 @@ func coerce(kind string, v any) (any, error) {
 func (e *Engine) Run(ctx context.Context) (runErr error) {
 	e.recoveryEligible = false
 	e.runStage = "startup"
+	if err := e.validateExtensions(); err != nil {
+		return err
+	}
 	if e.tempDirectory != "" && e.Workflow.Spec.Temp.Cleanup == "on-exit" {
 		defer os.RemoveAll(e.tempDirectory)
 	}
@@ -500,8 +535,22 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 				_ = e.outputBridge.Close()
 				e.outputBridge = nil
 			}
+			if e.supervisor != nil {
+				result := "success"
+				if runErr != nil {
+					result = "failure"
+				}
+				e.supervisor.Complete(result)
+				_ = e.supervisor.Close()
+				e.supervisor = nil
+			}
 			_ = e.logStore.Close()
 			e.logStore = nil
+		}
+		if e.supervisor != nil {
+			e.supervisor.Complete("failure")
+			_ = e.supervisor.Close()
+			e.supervisor = nil
 		}
 		if e.traceStore != nil {
 			_ = e.traceStore.Close()
@@ -575,6 +624,10 @@ func (e *Engine) Run(ctx context.Context) (runErr error) {
 		return err
 	}
 	if err := e.startExecutionTrace(); err != nil {
+		return err
+	}
+	ctx, err = e.startSupervision(ctx)
+	if err != nil {
 		return err
 	}
 	resumed := false
@@ -706,6 +759,54 @@ func (e *Engine) startObservation() error {
 		e.Out = bridge.Stdout()
 	}
 	return nil
+}
+
+// startSupervision converts a detached child into a locally attachable
+// session only after its durable run identity and trace are available. Setup
+// failures stop the run, except that a host which cannot provide local IPC
+// may retain lease-protected detached execution without an attach fallback.
+func (e *Engine) startSupervision(ctx context.Context) (context.Context, error) {
+	if !e.detached {
+		return ctx, nil
+	}
+	if e.runID == "" {
+		return ctx, fmt.Errorf("cannot establish supervised session without a durable run identity")
+	}
+	sessionCtx, cancel := context.WithCancel(ctx)
+	server, err := supervision.Start(e.Repo, e.Workflow.Metadata.Name, e.runID, cancel)
+	if err != nil {
+		if errors.Is(err, supervision.ErrUnavailable) {
+			// Detached execution remains safe under the durable owner lease even
+			// when this host forbids local IPC (for example a restricted sandbox).
+			// Do not create a weaker fallback: attach will report no live session.
+			cancel()
+			e.logEvent("session_unavailable", map[string]string{"workflow": e.Workflow.Metadata.Name})
+			if e.sessionReady != nil {
+				if readyErr := e.sessionReady(SessionStatus{RunID: e.runID, Reason: "ipc_unavailable"}); readyErr != nil {
+					return ctx, readyErr
+				}
+				e.sessionReady = nil
+			}
+			return ctx, nil
+		}
+		cancel()
+		return ctx, err
+	}
+	e.supervisor = server
+	if e.outputBridge != nil {
+		e.outputBridge.SetLiveSink(server.Publish)
+	}
+	e.In = server.Input()
+	e.logEvent("session_started", map[string]string{"workflow": e.Workflow.Metadata.Name})
+	if e.sessionReady != nil {
+		if err := e.sessionReady(SessionStatus{RunID: e.runID, Attachable: true}); err != nil {
+			_ = server.Close()
+			e.supervisor = nil
+			return ctx, err
+		}
+		e.sessionReady = nil
+	}
+	return sessionCtx, nil
 }
 
 func (e *Engine) finishObservation() error {
